@@ -4,3 +4,6 @@
 [submodule "ThirdParty/freetype"]
 	path = ThirdParty/freetype
 	url = https://gitlab.freedesktop.org/freetype/freetype.git
+[submodule "ThirdParty/libusb"]
+	path = ThirdParty/libusb
+	url = https://github.com/libusb/libusb.git
