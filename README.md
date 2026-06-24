@@ -28,31 +28,49 @@ git submodule add https://github.com/chrispurusha/SynthLib.git SynthLib
 git submodule update --init --recursive
 ```
 
-Build the third-party libraries before building the consuming project:
+The `--recursive` flag is required to also initialise glfw, freetype, and libusb inside SynthLib.
+
+Build the third-party libraries from the consuming project's root directory:
+
+**glfw:**
 
 ```
-cd SynthLib/ThirdParty/glfw
-cmake -S . -B build
-cmake --build build
+cmake -S SynthLib/ThirdParty/glfw -B SynthLib/ThirdParty/glfw/build \
+  -DGLFW_BUILD_DOCS=OFF \
+  -DGLFW_BUILD_EXAMPLES=OFF \
+  -DGLFW_BUILD_TESTS=OFF
+cmake --build SynthLib/ThirdParty/glfw/build
+```
 
-cd ../freetype
-cmake -S . -B build
-cmake --build build
+**freetype:**
 
-# G2-Edit only:
-cd ../libusb
-./autogen.sh
+```
+cmake -S SynthLib/ThirdParty/freetype -B SynthLib/ThirdParty/freetype/build \
+  -DFT_DISABLE_BROTLI=ON \
+  -DFT_DISABLE_BZIP2=ON \
+  -DFT_DISABLE_PNG=ON \
+  -DFT_DISABLE_ZLIB=ON
+cmake --build SynthLib/ThirdParty/freetype/build
+```
+
+**libusb** (G2-Edit only):
+
+```
+cd SynthLib/ThirdParty/libusb
+./bootstrap.sh
 ./configure
 make
+cd ../../..
 ```
 
-In Xcode, add `SynthLib/src` as a file system synchronized root group in the target. Add the following to Header Search Paths:
+libusb requires autoconf, automake, and libtool: `brew install autoconf automake libtool`
+
+In Xcode, add `SynthLib/src` as a file system synchronized root group in the target. Add to Header Search Paths:
 
 ```
 $(PROJECT_DIR)/SynthLib/src
 $(PROJECT_DIR)/SynthLib/ThirdParty/glfw/include
 $(PROJECT_DIR)/SynthLib/ThirdParty/freetype/include
-# G2-Edit only:
 $(PROJECT_DIR)/SynthLib/ThirdParty/libusb/libusb
 ```
 
