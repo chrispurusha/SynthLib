@@ -16,6 +16,7 @@ SynthLib/
   ThirdParty/
     glfw/        — submodule: window/input/OpenGL context
     freetype/    — submodule: font rendering
+    libusb/      — submodule: USB device access (used by G2-Edit)
 ```
 
 ## Using SynthLib in a project
@@ -37,6 +38,12 @@ cmake --build build
 cd ../freetype
 cmake -S . -B build
 cmake --build build
+
+# G2-Edit only:
+cd ../libusb
+./autogen.sh
+./configure
+make
 ```
 
 In Xcode, add `SynthLib/src` as a file system synchronized root group in the target. Add the following to Header Search Paths:
@@ -45,6 +52,8 @@ In Xcode, add `SynthLib/src` as a file system synchronized root group in the tar
 $(PROJECT_DIR)/SynthLib/src
 $(PROJECT_DIR)/SynthLib/ThirdParty/glfw/include
 $(PROJECT_DIR)/SynthLib/ThirdParty/freetype/include
+# G2-Edit only:
+$(PROJECT_DIR)/SynthLib/ThirdParty/libusb/libusb
 ```
 
 SynthLib headers include `sysIncludes.h` and `defs.h`, which must be provided by each consuming project's own `src/`.
