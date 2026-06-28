@@ -67,6 +67,7 @@ void write_uint16(uint8_t * buff, uint16_t val) {
     buff[1] = val & 0xff;
 }
 
+// Called from both threads — re-entrant (no shared state).
 uint32_t read_bit_stream(uint8_t * buff, uint32_t * bitPos, uint32_t numBits) {
     int      i   = 0;
     uint32_t val = 0;
@@ -88,6 +89,7 @@ uint32_t read_bit_stream(uint8_t * buff, uint32_t * bitPos, uint32_t numBits) {
     return val;
 }
 
+// Called from both threads — re-entrant (no shared state).
 void write_bit_stream(uint8_t * buff, uint32_t * bitPos, uint32_t numBits, uint32_t val) {
     uint32_t i         = 0;
     uint8_t  bit       = 0;
@@ -108,6 +110,7 @@ void write_bit_stream(uint8_t * buff, uint32_t * bitPos, uint32_t numBits, uint3
     }
 }
 
+// Called from both threads — re-entrant (no shared state).
 double get_time_ms(void) {
     struct timespec currentTime = {0};
 
