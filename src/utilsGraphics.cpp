@@ -768,8 +768,10 @@ tRectangle draw_slider(tArea area, tRectangle rectangle, uint32_t value, uint32_
         set_rgb_colour((tRgb)RGB_ORANGE_1);
         internal_render_rectangle((tRectangle){{rectangle.coord.x, loY}, {rectangle.size.w, hiY - loY}});
     }
-    set_rgb_colour((tRgb)RGB_BLACK);
-    internal_render_rectangle((tRectangle){{rectangle.coord.x, fillY}, {rectangle.size.w, borderLineWidth}});
+    if (fillHeight > 0.0) {
+        set_rgb_colour((tRgb)RGB_BLACK);
+        internal_render_rectangle((tRectangle){{rectangle.coord.x, fillY}, {rectangle.size.w, borderLineWidth}});
+    }
 
     line = (tRectangle){{
                             rectangle.coord.x, rectangle.coord.y + trackH - borderLineWidth
