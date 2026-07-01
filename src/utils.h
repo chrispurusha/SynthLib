@@ -20,7 +20,11 @@
 #ifndef __UTILS_H__
 #define __UTILS_H__
 
-#include "sysIncludes.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#include <stdint.h>
 
 #define BIT_TO_BYTE(x)             ((x) >> 3) // Divide by 8
 #define BYTE_TO_BIT(x)             ((x) << 3) // Multiply by 8
@@ -38,5 +42,9 @@ double get_time_delta(void);
 uint8_t reverse_bits_in_byte(uint8_t byte);
 uint32_t byteSwap32(uint32_t x);
 uint16_t byteSwap16(uint16_t x);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // __UTILS_H__

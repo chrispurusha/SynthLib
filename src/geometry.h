@@ -20,27 +20,16 @@
 #ifndef __GEOMETRY_H__
 #define __GEOMETRY_H__
 
-#include <stdint.h>
-#include <stdbool.h>
-
-typedef struct {
-    double x;
-    double y;
-} tCoord;
-
-typedef struct {
-    double w;
-    double h;
-} tSize;
-
-typedef struct {
-    tCoord coord;
-    tSize  size;
-} tRectangle;
-
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#include <stdint.h>
+
+#include "synthlibTypes.h"
+
+extern double          gGlobalGuiScale;
+extern tScrollState    gScrollState;
 
 double value_to_angle(uint32_t value, uint32_t range);
 uint32_t angle_to_value(double angle, uint32_t range);

@@ -21,11 +21,6 @@
 extern "C" {
 #endif
 
-// System header files
-#include <math.h>
-// #include <png.h>
-
-
 // Disable warnings from external library headers etc.
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Weverything"
@@ -37,11 +32,11 @@ extern "C" {
 #include FT_FREETYPE_H
 #pragma clang diagnostic pop
 
-#include <stdio.h>
+#include <math.h>
 
+#include "synthlibDefs.h"
 #include "geometry.h"
 #include "utilsGraphics.h"
-#include "globalVars.h"
 
 static GlyphInfo glyphInfo[MAX_GLYPH_CHAR] = {0};              // Array to store glyph metadata TODO: Not being freed!?
 static GLuint    textureAtlas              = 0;                // OpenGL texture handle

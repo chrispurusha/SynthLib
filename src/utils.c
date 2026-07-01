@@ -21,6 +21,8 @@
 extern "C" {
 #endif
 
+#include <time.h>
+    
 #include "utils.h"
 
 uint16_t crc_iterator(int32_t seed, int32_t val) {

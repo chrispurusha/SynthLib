@@ -20,8 +20,11 @@
 #ifndef __UTILS_GRAPHICS_H__
 #define __UTILS_GRAPHICS_H__
 
-#include "sysIncludes.h"
-#include "types.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#include "synthlibTypes.h"
 
 void set_rgb_colour(tRgb rgb);
 void set_rgba_colour(tRgba rgba);
@@ -66,5 +69,9 @@ tRectangle rectangle_scale_from_percent(tRectangle rectangle);
 double scale_from_percent(double val);
 tRectangle render_dial(tArea area, tRectangle rectangle, uint32_t value, uint32_t range, uint32_t morphRange, tRgb colour);
 tRectangle render_dial_with_text(tArea area, tRectangle rectangle, const char * label, const char * buff, double labelH, uint32_t value, uint32_t range, uint32_t morphRange, tRgb colour);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // __UTILS_GRAPHICS_H__

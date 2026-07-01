@@ -17,11 +17,18 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+    
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 
 #include "geometry.h"
+
+double          gGlobalGuiScale = 1.0;
+tScrollState    gScrollState    = {0};
 
 double value_to_angle(uint32_t value, uint32_t range) {
     if (range < 2) {
@@ -68,3 +75,7 @@ bool within_lower_half_of_rectangle(tCoord coord, tRectangle rectangle) {
     return within_rectangle(coord, rectangle)
            && coord.y >= rectangle.coord.y + rectangle.size.h / 2;
 }
+
+#ifdef __cplusplus
+}
+#endif
