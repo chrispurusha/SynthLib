@@ -34,6 +34,7 @@ extern "C" {
 
 #include <math.h>
 
+#include "defs.h"
 #include "synthlibDefs.h"
 #include "geometry.h"
 #include "utilsGraphics.h"

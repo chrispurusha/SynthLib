@@ -25,15 +25,69 @@
 extern "C" {
 #endif
 
-#if ENABLE_DEBUG
-#define LOG_DEBUG(fmt, ...)    fprintf(stderr, "[DBG] " fmt, ## __VA_ARGS__)
+#ifdef ENABLE_USB_LOG
+void usb_log_text(const char * fmt, ...);
+#define _USB_LOG(fmt, ...)    usb_log_text(fmt, ## __VA_ARGS__)
 #else
-#define LOG_DEBUG(fmt, ...)    do {} while (0)
+#define _USB_LOG(fmt, ...)    ((void)0)
 #endif
-#define LOG_ERROR(fmt, ...)    fprintf(stderr, "[ERR] " fmt, ## __VA_ARGS__)
+
+#define LOG_ERROR(fmt, ...)                                      \
+   do {fprintf(stderr, "E %s() " fmt, __func__, ## __VA_ARGS__); \
+       _USB_LOG("E %s() " fmt, __func__, ## __VA_ARGS__);} while (0)
+#define LOG_WARNING(fmt, ...)                                    \
+   do {fprintf(stderr, "W %s() " fmt, __func__, ## __VA_ARGS__); \
+       _USB_LOG("W %s() " fmt, __func__, ## __VA_ARGS__);} while (0)
+#define LOG_INFO(fmt, ...)                                       \
+   do {fprintf(stdout, "I %s() " fmt, __func__, ## __VA_ARGS__); \
+       _USB_LOG("I %s() " fmt, __func__, ## __VA_ARGS__);} while (0)
+#ifdef ENABLE_LOG_DEBUG
+#define LOG_DEBUG(fmt, ...)                                      \
+   do {fprintf(stdout, "D %s() " fmt, __func__, ## __VA_ARGS__); \
+       _USB_LOG("D %s() " fmt, __func__, ## __VA_ARGS__);} while (0)
+#define LOG_DEBUG_DIRECT(fmt, ...)           \
+   do {fprintf(stdout, fmt, ## __VA_ARGS__); \
+       _USB_LOG(fmt, ## __VA_ARGS__);} while (0)
+#else
+#define LOG_DEBUG(fmt, ...)           ((void)0)
+#define LOG_DEBUG_DIRECT(fmt, ...)    ((void)0)
+#endif
+#ifdef ENABLE_LOG_MODULE_DATA
+#define LOG_MODULE_DATA(fmt, ...)                                \
+   do {fprintf(stdout, "D %s() " fmt, __func__, ## __VA_ARGS__); \
+       _USB_LOG("D %s() " fmt, __func__, ## __VA_ARGS__);} while (0)
+#define LOG_MODULE_DATA_DIRECT(fmt, ...)     \
+   do {fprintf(stdout, fmt, ## __VA_ARGS__); \
+       _USB_LOG(fmt, ## __VA_ARGS__);} while (0)
+#else
+#define LOG_MODULE_DATA(fmt, ...)           ((void)0)
+#define LOG_MODULE_DATA_DIRECT(fmt, ...)    ((void)0)
+#endif
 
 #define MAX_GLYPH_CHAR          (127)
 
+#ifdef G2_EDIT
+#define RGB_BLACK                    {0.0, 0.0, 0.0}
+#define RGB_WHITE                    {1.0, 1.0, 1.0}
+#define RGB_GREEN                    {0.0, 0.8, 0.0}
+#define RGB_BACKGROUND_GREY          {0.8, 0.8, 0.8}
+#define RGB_GREY_2                   {0.2, 0.2, 0.2}
+#define RGB_GREY_3                   {0.3, 0.3, 0.3}
+#define RGB_GREY_5                   {0.5, 0.5, 0.5}
+#define RGB_GREY_7                   {0.7, 0.7, 0.7}
+#define RGB_GREY_9                   {0.9, 0.9, 0.9}
+#define RGB_GREEN_ON                 {0.3, 0.7, 0.3}
+#define RGB_GREEN_3                  {0.0, 0.3, 0.0}
+#define RGB_GREEN_7                  {0.0, 0.7, 0.0}
+#define RGB_CONTEXT_MENU_GREEN       {0.2, 0.6, 0.2}
+#define RGB_YELLOW_7                 {0.7, 0.7, 0.0}
+#define RGB_RED_7                    {0.7, 0.0, 0.0}
+#define RGB_RED_5                    {0.7, 0.2, 0.2}
+#define RGB_ORANGE_0                 {0.8, 0.7, 0.5}
+#define RGB_ORANGE_1                 {0.8, 0.3, 0.1}
+#define RGB_ORANGE_2                 {0.8, 0.5, 0.2}
+#define RGBA_BLACK_ON_TRANSPARENT    {0.0, 0.0, 0.0, 1.0}
+#else
 #define RGB_WHITE              {1.0, 1.0, 1.0}
 #define RGB_BLACK              {0.0, 0.0, 0.0}
 #define RGB_GREY               {0.5, 0.5, 0.5}
@@ -45,8 +99,31 @@ extern "C" {
 #define RGB_GREEN_ON           {0.00, 0.80, 0.00}
 #define RGB_ORANGE_1            {1.00, 0.50, 0.00}
 #define RGB_ORANGE_2            {1.00, 0.70, 0.00}
+#endif
 
-// TODO - Might want to either conditionally not define these if not G2 editor, or come up with another mechanism for them
+// TODO - Might want to come up with another mechanism for switching these between projects
+#ifdef G2_EDIT
+#define TOP_BAR_HEIGHT                 (80.0)
+#define SCROLLBAR_WIDTH                (15.0)
+#define SCROLLBAR_LENGTH               (100.0)
+#define SCROLLBAR_MARGIN               SCROLLBAR_WIDTH
+
+#define MODULE_WIDTH                   (350.0)
+#define MODULE_X_GAP                   (10.0)
+#define MODULE_X_SPAN                  (MODULE_WIDTH + MODULE_X_GAP)
+#define MODULE_TITLE_X_OFFSET          (3.0)
+#define MODULE_HEIGHT                  (38.0)       // 1 row
+#define MODULE_MARGIN                  (5.0)
+#define MODULE_Y_GAP                   (5.0)
+#define MODULE_Y_SPAN                  (MODULE_HEIGHT + MODULE_Y_GAP)
+#define MODULE_TITLE_Y_OFFSET          (20.0)
+#define MODULE_AREA_X_MARGINS          ((MODULE_MARGIN * 2.0) + SCROLLBAR_WIDTH)
+#define MODULE_AREA_Y_MARGINS          ((MODULE_MARGIN * 2.0) + TOP_BAR_HEIGHT + SCROLLBAR_WIDTH)
+#define MODULE_AREA_X_WIDTH            ((double)renderWidth - (MODULE_AREA_X_MARGINS))
+#define MODULE_AREA_Y_HEIGHT           ((double)renderHeight - (MODULE_AREA_Y_MARGINS))
+#define NO_ZOOM                        (1.0)
+#define ZOOM_DELTA                     (0.1)
+#else
 #define TOP_BAR_HEIGHT          (0.0)
 #define MODULE_MARGIN           (5.0)
 #define MODULE_WIDTH            (350.0)
@@ -64,9 +141,11 @@ extern "C" {
 #define SCROLLBAR_WIDTH         (15.0)
 #define SCROLLBAR_LENGTH        (100.0)
 #define SCROLLBAR_MARGIN        SCROLLBAR_WIDTH
-
 #define NO_ZOOM                 (1.0)
 #define MAX_COLUMNS             (127)
+#define NO_ZOOM                        (1.0)
+#define ZOOM_DELTA                     (0.1)
+#endif
 
 #ifdef __cplusplus
 }
