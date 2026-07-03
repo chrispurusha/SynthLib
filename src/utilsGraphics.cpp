@@ -190,6 +190,28 @@ static void internal_render_rectangle(tRectangle rectangle) {
     }
 }
 
+static void internal_render_texture(tRectangle rectangle, uint32_t texture) {
+    if ((rectangle.size.w > 0.0) && (rectangle.size.h > 0.0)) {
+        glEnable(GL_TEXTURE_2D);
+        glBindTexture(GL_TEXTURE_2D, texture);
+        glColor3f(1.0f, 1.0f, 1.0f);
+        
+        glBegin(GL_QUADS);
+        glTexCoord2f(0.0f, 0.0f);
+        glVertex2d(rectangle.coord.x, rectangle.coord.y);
+        glTexCoord2f(1.0f, 0.0f);
+        glVertex2d(rectangle.coord.x + rectangle.size.w, rectangle.coord.y);
+        glTexCoord2f(1.0f, 1.0f);
+        glVertex2d(rectangle.coord.x + rectangle.size.w, rectangle.coord.y + rectangle.size.h);
+        glTexCoord2f(0.0f, 1.0f);
+        glVertex2d(rectangle.coord.x, rectangle.coord.y + rectangle.size.h);
+        glEnd();
+        
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glDisable(GL_TEXTURE_2D);
+    }
+}
+
 static void internal_render_circle_part(tCoord coord, double radius, int segments, int startSeg, int numSegs) {
     double angle = 0.0;
     double x     = 0.0;
@@ -341,6 +363,21 @@ tRectangle render_rectangle(tArea area, tRectangle rectangle) {
     rectangle    = global_scale_rectangle(rectangle);
 
     internal_render_rectangle(rectangle);
+
+    return retRectangle;
+}
+
+tRectangle render_texture(tArea area, tRectangle rectangle, uint32_t texture) {
+    tRectangle retRectangle = {0};
+
+    if (area == moduleArea) {
+        rectangle = scale_scroll_adjust_rectangle(rectangle);
+    }
+    retRectangle = rectangle;
+
+    rectangle    = global_scale_rectangle(rectangle);
+
+    internal_render_texture(rectangle, texture);
 
     return retRectangle;
 }

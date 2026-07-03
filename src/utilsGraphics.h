@@ -32,6 +32,7 @@ void set_rgba_colour(tRgba rgba);
 tRectangle module_area(void);
 tRectangle render_line(tArea area, tCoord start, tCoord end, double thickness);
 tRectangle render_rectangle(tArea area, tRectangle rectangle);
+tRectangle render_texture(tArea area, tRectangle rectangle, uint32_t texture);
 tRectangle render_rectangle_with_border(tArea area, tRectangle rectangle);
 tRectangle render_triangle(tArea area, tTriangle triangle);
 tRectangle render_circle_line(tArea area, tCoord coord, double radius, int segments, double thickness);
