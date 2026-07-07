@@ -18,9 +18,12 @@
  */
 
 #include <stdbool.h>
+#include <stdint.h>
 
 #ifndef __SYNTHLIB_TYPES_H__
 #define __SYNTHLIB_TYPES_H__
+
+#include "synthlibDefs.h"
 
 typedef struct {
     double x;
@@ -88,5 +91,47 @@ typedef enum {
     eNoCache = 0,
     eCache   = 1,
 } tCache;
+
+// ── Context menu (see contextMenu.h) ────────────────────────────────────────
+//
+// Deliberately app-agnostic: an item knows only its label, colour, an
+// action(index) callback, an opaque param the callback can read back out, and
+// optionally a subMenu it opens instead of running that action. Nothing here
+// knows what a "module" or "param" is — an app that needs to recall what a
+// menu was raised against (e.g. G2-Edit's moduleKey/paramIndex) keeps that in
+// its own app-local struct, set before opening the menu and read back from
+// inside its own action callbacks.
+typedef struct _struct_menuItem {
+    char *                    label;
+    tRgb                      colour;
+    void (*action)(int index);
+    uint32_t                  param;
+    struct _struct_menuItem * subMenu;          // Non-NULL: hovering (after MENU_HOVER_DELAY_SECS) or clicking this item opens it as a flyout instead of running action
+    uint32_t                  subMenuColumns;   // Layout for that flyout — same meaning as tMenuFrame's own columns (0/1 = single column)
+    double                    subMenuCellWidth; // Layout for that flyout — 0 = auto width
+} tMenuItem;
+
+// One visible level of the menu — the top-level menu plus zero or more
+// submenu flyouts opened beneath it (see push_menu_frame() in contextMenu.c).
+typedef struct {
+    tCoord      coord;      // Position of this level (may be clamped to stay on screen)
+    tMenuItem * items;      // Pointer to a NULL-terminated array of menu items
+    uint32_t    columns;    // 0 or 1 = single column; >1 = multi-column grid
+    double      cellWidth;  // Override cell width when non-zero
+} tMenuFrame;
+
+typedef struct {
+    bool        active;                // Is any menu level currently visible?
+    tCoord      originCoord;           // Original click position that opened the top level, unmodified by clamping
+    tMenuFrame  frame[MAX_MENU_DEPTH]; // frame[0] = top-level menu; frame[depth-1] = deepest open flyout
+    uint32_t    depth;                 // Number of currently open frames, 0 = menu fully closed
+    tMenuItem * items;                 // Array containing the most recently hovered/clicked item — kept in sync by
+                                       // handle_context_menu_click()/update_context_menu_hover() so action(index)
+                                       // callbacks can read gContextMenu.items[index].param unchanged regardless of
+                                       // which frame the item actually lives in
+    int32_t hoverFrame;                // Frame index the mouse is currently over an item of, -1 = none
+    int32_t hoverIndex;                // Item index within hoverFrame, -1 = none
+    double  hoverStartTime;            // glfwGetTime() timestamp when (hoverFrame, hoverIndex) last changed
+} tContextMenu;
 
 #endif // __SYNTHLIB_TYPES_H__

@@ -64,7 +64,13 @@ void usb_log_text(const char * fmt, ...);
 #define LOG_MODULE_DATA_DIRECT(fmt, ...)    ((void)0)
 #endif
 
-#define MAX_GLYPH_CHAR          (127)
+#define MAX_GLYPH_CHAR    (127)
+
+// Mac-style nested context menu (see contextMenu.h) — top-level menu plus
+// however many submenu flyouts can be open beneath it, and how long the mouse
+// must dwell on a submenu-bearing item before it auto-opens.
+#define MAX_MENU_DEPTH               (4)
+#define MENU_HOVER_DELAY_SECS        (0.3)
 
 #ifdef G2_EDIT
 #define RGB_BLACK                    {0.0, 0.0, 0.0}
@@ -88,63 +94,63 @@ void usb_log_text(const char * fmt, ...);
 #define RGB_ORANGE_2                 {0.8, 0.5, 0.2}
 #define RGBA_BLACK_ON_TRANSPARENT    {0.0, 0.0, 0.0, 1.0}
 #else
-#define RGB_WHITE              {1.0, 1.0, 1.0}
-#define RGB_BLACK              {0.0, 0.0, 0.0}
-#define RGB_GREY               {0.5, 0.5, 0.5}
-#define RGB_BACKGROUND_GREY    {0.30, 0.30, 0.30}
-#define RGB_GREY_2             {0.20, 0.20, 0.20}
-#define RGB_GREY_3             {0.30, 0.30, 0.30}
-#define RGB_GREY_5             {0.50, 0.50, 0.50}
-#define RGB_GREY_7             {0.70, 0.70, 0.70}
-#define RGB_GREEN_ON           {0.00, 0.80, 0.00}
-#define RGB_ORANGE_1            {1.00, 0.50, 0.00}
-#define RGB_ORANGE_2            {1.00, 0.70, 0.00}
+#define RGB_WHITE                    {1.0, 1.0, 1.0}
+#define RGB_BLACK                    {0.0, 0.0, 0.0}
+#define RGB_GREY                     {0.5, 0.5, 0.5}
+#define RGB_BACKGROUND_GREY          {0.30, 0.30, 0.30}
+#define RGB_GREY_2                   {0.20, 0.20, 0.20}
+#define RGB_GREY_3                   {0.30, 0.30, 0.30}
+#define RGB_GREY_5                   {0.50, 0.50, 0.50}
+#define RGB_GREY_7                   {0.70, 0.70, 0.70}
+#define RGB_GREEN_ON                 {0.00, 0.80, 0.00}
+#define RGB_ORANGE_1                 {1.00, 0.50, 0.00}
+#define RGB_ORANGE_2                 {1.00, 0.70, 0.00}
 #endif
 
 // TODO - Might want to come up with another mechanism for switching these between projects
 #ifdef G2_EDIT
-#define TOP_BAR_HEIGHT                 (80.0)
-#define SCROLLBAR_WIDTH                (15.0)
-#define SCROLLBAR_LENGTH               (100.0)
-#define SCROLLBAR_MARGIN               SCROLLBAR_WIDTH
+#define TOP_BAR_HEIGHT           (80.0)
+#define SCROLLBAR_WIDTH          (15.0)
+#define SCROLLBAR_LENGTH         (100.0)
+#define SCROLLBAR_MARGIN         SCROLLBAR_WIDTH
 
-#define MODULE_WIDTH                   (350.0)
-#define MODULE_X_GAP                   (10.0)
-#define MODULE_X_SPAN                  (MODULE_WIDTH + MODULE_X_GAP)
-#define MODULE_TITLE_X_OFFSET          (3.0)
-#define MODULE_HEIGHT                  (38.0)       // 1 row
-#define MODULE_MARGIN                  (5.0)
-#define MODULE_Y_GAP                   (5.0)
-#define MODULE_Y_SPAN                  (MODULE_HEIGHT + MODULE_Y_GAP)
-#define MODULE_TITLE_Y_OFFSET          (20.0)
-#define MODULE_AREA_X_MARGINS          ((MODULE_MARGIN * 2.0) + SCROLLBAR_WIDTH)
-#define MODULE_AREA_Y_MARGINS          ((MODULE_MARGIN * 2.0) + TOP_BAR_HEIGHT + SCROLLBAR_WIDTH)
-#define MODULE_AREA_X_WIDTH            ((double)renderWidth - (MODULE_AREA_X_MARGINS))
-#define MODULE_AREA_Y_HEIGHT           ((double)renderHeight - (MODULE_AREA_Y_MARGINS))
-#define NO_ZOOM                        (1.0)
-#define ZOOM_DELTA                     (0.1)
+#define MODULE_WIDTH             (350.0)
+#define MODULE_X_GAP             (10.0)
+#define MODULE_X_SPAN            (MODULE_WIDTH + MODULE_X_GAP)
+#define MODULE_TITLE_X_OFFSET    (3.0)
+#define MODULE_HEIGHT            (38.0)             // 1 row
+#define MODULE_MARGIN            (5.0)
+#define MODULE_Y_GAP             (5.0)
+#define MODULE_Y_SPAN            (MODULE_HEIGHT + MODULE_Y_GAP)
+#define MODULE_TITLE_Y_OFFSET    (20.0)
+#define MODULE_AREA_X_MARGINS    ((MODULE_MARGIN * 2.0) + SCROLLBAR_WIDTH)
+#define MODULE_AREA_Y_MARGINS    ((MODULE_MARGIN * 2.0) + TOP_BAR_HEIGHT + SCROLLBAR_WIDTH)
+#define MODULE_AREA_X_WIDTH      ((double)renderWidth - (MODULE_AREA_X_MARGINS))
+#define MODULE_AREA_Y_HEIGHT     ((double)renderHeight - (MODULE_AREA_Y_MARGINS))
+#define NO_ZOOM                  (1.0)
+#define ZOOM_DELTA               (0.1)
 #else
-#define TOP_BAR_HEIGHT          (0.0)
-#define MODULE_MARGIN           (5.0)
-#define MODULE_WIDTH            (350.0)
-#define MODULE_HEIGHT           (38.0)
-#define MAX_ROWS                (127)
-#define MAX_ROWS_MODULE         (12)
-#define MODULE_WIDTH            (350.0)
-#define MODULE_X_GAP            (10.0)
-#define MODULE_X_SPAN           (MODULE_WIDTH + MODULE_X_GAP)
-#define MODULE_Y_GAP            (5.0)
-#define MODULE_Y_SPAN           (MODULE_HEIGHT + MODULE_Y_GAP)
-#define BORDER_LINE_WIDTH       (2.0)
-#define STANDARD_TEXT_HEIGHT    (12.0)
-#define BLANK_SIZE              (0.0)
-#define SCROLLBAR_WIDTH         (15.0)
-#define SCROLLBAR_LENGTH        (100.0)
-#define SCROLLBAR_MARGIN        SCROLLBAR_WIDTH
-#define NO_ZOOM                 (1.0)
-#define MAX_COLUMNS             (127)
-#define NO_ZOOM                        (1.0)
-#define ZOOM_DELTA                     (0.1)
+#define TOP_BAR_HEIGHT           (0.0)
+#define MODULE_MARGIN            (5.0)
+#define MODULE_WIDTH             (350.0)
+#define MODULE_HEIGHT            (38.0)
+#define MAX_ROWS                 (127)
+#define MAX_ROWS_MODULE          (12)
+#define MODULE_WIDTH             (350.0)
+#define MODULE_X_GAP             (10.0)
+#define MODULE_X_SPAN            (MODULE_WIDTH + MODULE_X_GAP)
+#define MODULE_Y_GAP             (5.0)
+#define MODULE_Y_SPAN            (MODULE_HEIGHT + MODULE_Y_GAP)
+#define BORDER_LINE_WIDTH        (2.0)
+#define STANDARD_TEXT_HEIGHT     (12.0)
+#define BLANK_SIZE               (0.0)
+#define SCROLLBAR_WIDTH          (15.0)
+#define SCROLLBAR_LENGTH         (100.0)
+#define SCROLLBAR_MARGIN         SCROLLBAR_WIDTH
+#define NO_ZOOM                  (1.0)
+#define MAX_COLUMNS              (127)
+#define NO_ZOOM                  (1.0)
+#define ZOOM_DELTA               (0.1)
 #endif
 
 #ifdef __cplusplus
