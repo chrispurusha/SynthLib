@@ -74,7 +74,7 @@ $(PROJECT_DIR)/SynthLib/ThirdParty/freetype/include
 $(PROJECT_DIR)/SynthLib/ThirdParty/libusb/libusb
 ```
 
-SynthLib headers include `sysIncludes.h` and `defs.h`, which must be provided by each consuming project's own `src/`.
+SynthLib source doesn't include any header from outside SynthLib. The one exception was `utilsGraphics.cpp` reaching into the consuming project's `defs.h` to pick up the `G2_EDIT` identity macro and the `ENABLE_LOG_DEBUG`/`ENABLE_USB_LOG` logging toggles — that's now resolved two different ways: app identity is passed in at runtime via `configure_synthlib_theme()` (see `utilsGraphics.h`), and the logging toggles are supplied as Preprocessor Macros in each consuming project's own Xcode build settings (`ENABLE_LOG_DEBUG` on the Debug configuration only) rather than via a header include.
 
 ## License
 
