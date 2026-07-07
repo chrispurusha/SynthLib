@@ -26,6 +26,25 @@ extern "C" {
 
 #include "synthlibTypes.h"
 
+// The handful of visual values that genuinely differ between apps (colours,
+// top bar height) and that this file's own drawing code needs — everything
+// else app-specific stays a compile-time macro in each app's own defs.h,
+// resolved normally since those files define G2_EDIT (or don't) for
+// themselves. This is how utilsGraphics.cpp itself gets told which app it's
+// drawing for, without including that app's defs.h (see configure_synthlib_theme()).
+typedef struct {
+    double topBarHeight;
+    tRgb   orange1;
+    tRgb   orange2;
+    tRgb   greenOn;
+    tRgb   backgroundGrey;
+} tSynthLibTheme;
+
+// Call once, early at startup (before any rendering), with values built from
+// the calling app's own macros — e.g. G2-Edit's init_graphics() passes
+// TOP_BAR_HEIGHT/RGB_ORANGE_1/etc from its own defs.h.
+void configure_synthlib_theme(tSynthLibTheme theme);
+
 void set_rgb_colour(tRgb rgb);
 void set_rgba_colour(tRgba rgba);
 

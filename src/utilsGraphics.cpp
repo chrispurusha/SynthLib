@@ -34,23 +34,27 @@ extern "C" {
 
 #include <math.h>
 
-#include "defs.h"
 #include "synthlibDefs.h"
 #include "geometry.h"
 #include "utilsGraphics.h"
 
-static GlyphInfo glyphInfo[MAX_GLYPH_CHAR] = {0};              // Array to store glyph metadata TODO: Not being freed!?
-static GLuint    textureAtlas              = 0;                // OpenGL texture handle
-static int       atlasWidth                = 1024 * 8;         // Initial atlas width
-static int       atlasHeight               = 1024 * 8;         // Initial atlas height
-static double    gMaxAscent                = 0.0;              // Used for dealing with preloaded text character height
-static double    gMaxDescent               = 0.0;
-static double    gMetricsHeight            = 0.0;
-static double    gXScrollPercent           = 0.0;
-static double    gYScrollPercent           = 0.0;
-static double    gZoomFactor               = NO_ZOOM;
-static int       gRenderWidth              = 0;
-static int       gRenderHeight             = 0;
+static GlyphInfo      glyphInfo[MAX_GLYPH_CHAR] = {0};         // Array to store glyph metadata TODO: Not being freed!?
+static GLuint         textureAtlas              = 0;           // OpenGL texture handle
+static int            atlasWidth                = 1024 * 8;    // Initial atlas width
+static int            atlasHeight               = 1024 * 8;    // Initial atlas height
+static double         gMaxAscent                = 0.0;         // Used for dealing with preloaded text character height
+static double         gMaxDescent               = 0.0;
+static double         gMetricsHeight            = 0.0;
+static double         gXScrollPercent           = 0.0;
+static double         gYScrollPercent           = 0.0;
+static double         gZoomFactor               = NO_ZOOM;
+static int            gRenderWidth              = 0;
+static int            gRenderHeight             = 0;
+static tSynthLibTheme gTheme                    = {0};         // Set once via configure_synthlib_theme() — see utilsGraphics.h
+
+void configure_synthlib_theme(tSynthLibTheme theme) {
+    gTheme = theme;
+}
 
 static inline double scale(double value) {
     return value * gZoomFactor;
@@ -146,9 +150,9 @@ static tRectangle scale_scroll_adjust_rectangle(tRectangle rectangle) {
 
 tRectangle module_area(void) {
     double left   = MODULE_MARGIN;
-    double top    = TOP_BAR_HEIGHT + MODULE_MARGIN;
+    double top    = gTheme.topBarHeight + MODULE_MARGIN;
     double width  = (gRenderWidth / gGlobalGuiScale) - SCROLLBAR_WIDTH - (MODULE_MARGIN * 2.0);
-    double height = (gRenderHeight / gGlobalGuiScale) - TOP_BAR_HEIGHT - SCROLLBAR_WIDTH - (MODULE_MARGIN * 2.0);
+    double height = (gRenderHeight / gGlobalGuiScale) - gTheme.topBarHeight - SCROLLBAR_WIDTH - (MODULE_MARGIN * 2.0);
 
     return {{left, top}, {width, height}};
 }
@@ -195,7 +199,7 @@ static void internal_render_texture(tRectangle rectangle, uint32_t texture) {
         glEnable(GL_TEXTURE_2D);
         glBindTexture(GL_TEXTURE_2D, texture);
         glColor3f(1.0f, 1.0f, 1.0f);
-        
+
         glBegin(GL_QUADS);
         glTexCoord2f(0.0f, 0.0f);
         glVertex2d(rectangle.coord.x, rectangle.coord.y);
@@ -206,7 +210,7 @@ static void internal_render_texture(tRectangle rectangle, uint32_t texture) {
         glTexCoord2f(0.0f, 1.0f);
         glVertex2d(rectangle.coord.x, rectangle.coord.y + rectangle.size.h);
         glEnd();
-        
+
         glBindTexture(GL_TEXTURE_2D, 0);
         glDisable(GL_TEXTURE_2D);
     }
@@ -685,9 +689,9 @@ tRectangle draw_power_button(tArea area, tRectangle rectangle, bool active) {
     rectangle     = global_scale_rectangle(rectangle);
 
     if (active) {
-        set_rgb_colour(RGB_GREEN_ON);         // Green when ON
+        set_rgb_colour(gTheme.greenOn);         // Green when ON
     } else {
-        set_rgb_colour(RGB_BACKGROUND_GREY);  // Grey when OFF
+        set_rgb_colour(gTheme.backgroundGrey);  // Grey when OFF
     }
     internal_render_rectangle(rectangle);
 
@@ -771,13 +775,13 @@ tRectangle draw_slider(tArea area, tRectangle rectangle, uint32_t value, uint32_
     fillHeight   = (range > 1) ? ((double)value / (double)(range - 1)) * trackH : 0.0;
     fillY        = rectangle.coord.y + trackH - fillHeight;
 
-    set_rgb_colour((tRgb)RGB_BACKGROUND_GREY);
+    set_rgb_colour(gTheme.backgroundGrey);
     internal_render_rectangle(rectangle);
 
     if (morphRange == 0) {
         set_rgb_colour(colour);
     } else {
-        set_rgb_colour((tRgb)RGB_ORANGE_2);
+        set_rgb_colour(gTheme.orange2);
     }
 
     if (fillHeight > 0.0) {
@@ -798,14 +802,14 @@ tRectangle draw_slider(tArea area, tRectangle rectangle, uint32_t value, uint32_
         double  loY              = (fillY < morphY) ? fillY : morphY;
         double  hiY              = (fillY > morphY) ? fillY : morphY;
 
-        set_rgb_colour((tRgb)RGB_ORANGE_1);
+        set_rgb_colour(gTheme.orange1);
         internal_render_rectangle((tRectangle){{rectangle.coord.x, loY}, {rectangle.size.w, hiY - loY}});
     }
+
     if (fillHeight > 0.0) {
         set_rgb_colour((tRgb)RGB_BLACK);
         internal_render_rectangle((tRectangle){{rectangle.coord.x, fillY}, {rectangle.size.w, borderLineWidth}});
     }
-
     line = (tRectangle){{
                             rectangle.coord.x, rectangle.coord.y + trackH - borderLineWidth
                         }, {rectangle.size.w, borderLineWidth}};
@@ -1217,7 +1221,7 @@ tRectangle render_dial(tArea area, tRectangle rectangle, uint32_t value, uint32_
     if (morphRange == 0) {
         set_rgb_colour(colour);
     } else {
-        set_rgb_colour(RGB_ORANGE_2);
+        set_rgb_colour(gTheme.orange2);
     }
     render_circle_part_angle(area, {x, y}, radius, 0.0, 360.0, 25);
 
@@ -1237,7 +1241,7 @@ tRectangle render_dial(tArea area, tRectangle rectangle, uint32_t value, uint32_
             morphPos = range - 1;
         }
         morphAngle  = value_to_angle((uint32_t)morphPos, range);
-        set_rgb_colour(RGB_ORANGE_1);
+        set_rgb_colour(gTheme.orange1);
 
         if (morphAngle > angle) {
             render_circle_part_angle(area, {x, y}, radius, angle, morphAngle, 25);
