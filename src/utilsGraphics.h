@@ -48,6 +48,13 @@ void configure_synthlib_theme(tSynthLibTheme theme);
 void set_rgb_colour(tRgb rgb);
 void set_rgba_colour(tRgba rgba);
 
+// Perceptual (Rec. 601) luminance of bg, thresholded at 0.5 — the usual
+// black/white crossover point for this formula. Lets callers put a label on
+// a caller-supplied background colour (module/category colours, which range
+// from near-black to near-white) without needing to know in advance whether
+// black or white text will read against it.
+tRgb contrasting_text_colour(tRgb bg);
+
 tRectangle module_area(void);
 tRectangle render_line(tArea area, tCoord start, tCoord end, double thickness);
 tRectangle render_rectangle(tArea area, tRectangle rectangle);

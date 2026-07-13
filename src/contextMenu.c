@@ -268,18 +268,6 @@ void update_context_menu_hover(void) {
 // Renders every currently open level (gContextMenu.frame[0..depth-1]) —
 // ancestors are drawn first so the deepest, frontmost flyout paints on top.
 
-// Menu item backgrounds are the dial's own category colour (see
-// open_dial_value_menu() in the embedding app's menus.c), which ranges from
-// near-black to near-white depending on category — a label hardcoded to one
-// colour is unreadable against roughly half of them. Perceptual (not linear)
-// luminance, standard Rec. 601 weights; 0.5 is the usual black/white
-// crossover point for this formula.
-static tRgb menu_item_text_colour(tRgb bg) {
-    double luminance = (0.299 * bg.red) + (0.587 * bg.green) + (0.114 * bg.blue);
-
-    return (luminance > 0.5) ? (tRgb)RGB_BLACK : (tRgb)RGB_WHITE;
-}
-
 static void render_menu_frame(const tMenuFrame * frameData, tCoord mouseCoord) {
     double     size        = 0.0;
     double     largestSize = 0.0;
@@ -319,7 +307,7 @@ static void render_menu_frame(const tMenuFrame * frameData, tCoord mouseCoord) {
         set_rgb_colour(frameData->items[i].colour);
         render_rectangle(mainArea, menuItem);
 
-        set_rgb_colour(menu_item_text_colour(frameData->items[i].colour));
+        set_rgb_colour(contrasting_text_colour(frameData->items[i].colour));
         render_text(mainArea, (tRectangle){
             {x + 5, y + 5}, {BLANK_SIZE, itemHeight}
         }, frameData->items[i].label);

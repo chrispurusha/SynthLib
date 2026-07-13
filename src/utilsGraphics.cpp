@@ -584,6 +584,31 @@ void set_rgba_colour(tRgba rgba) {
     glColor4f(rgba.red, rgba.green, rgba.blue, rgba.alpha);
 }
 
+tRgb contrasting_text_colour(tRgb bg) {
+    // These three sit just under the 0.5 luminance line but read fine with
+    // the black text draw_button() always used pre-luminance — pinned here
+    // rather than following the general rule below, since flipping already-
+    // fine buttons to white wasn't asked for (2026-07-13 user call):
+    //   - SynthEdit's RGB_GREEN_ON (0.0, 0.8, 0.0) — the on/off toggle
+    //     "on" state, explicitly meant to be left alone by that same call.
+    //   - G2-Edit's RGB_GREEN_7 (0.0, 0.7, 0.0) — comms Online / Tx / Rx.
+    //   - G2-Edit's RGB_RED_5 (0.7, 0.2, 0.2) — voice-count conflict.
+    // Compared by literal value, not the macros, since not all of these
+    // names are defined outside their own app's synthlibDefs.h branch.
+    if (  ((bg.red == 0.0) && (bg.green == 0.8) && (bg.blue == 0.0))
+       || ((bg.red == 0.0) && (bg.green == 0.7) && (bg.blue == 0.0))
+       || ((bg.red == 0.7) && (bg.green == 0.2) && (bg.blue == 0.2))) {
+        return (tRgb)RGB_BLACK;
+    }
+    double luminance = (0.299 * bg.red) + (0.587 * bg.green) + (0.114 * bg.blue);
+
+    // >= not > : RGB_GREY_5 (0.5 exactly, e.g. render_page_tabs()'s pressed
+    // state) sits right on the boundary and every caller of draw_button()
+    // used to get fixed black text, so the midpoint keeps resolving to black
+    // rather than flipping existing UI to white on a change nobody asked for.
+    return (luminance >= 0.5) ? (tRgb)RGB_BLACK : (tRgb)RGB_WHITE;
+}
+
 tRectangle render_bezier_curve(tArea area, tCoord start, tCoord control, tCoord end, double thickness, int segments) {
     tRectangle   retRectangle   = {0};
 
@@ -752,6 +777,7 @@ tRectangle draw_button(tArea area, tRectangle rectangle, const char * text, tRgb
                                           }, {borderLineWidth, rectangle.size.h}};
     internal_render_rectangle(line); // Right
 
+    set_rgb_colour(contrasting_text_colour(backgroundColour));
     internal_render_text(textRectangle, text);
 
     return retRectangle;
