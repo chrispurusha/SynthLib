@@ -67,6 +67,7 @@ struct tFileBrowserState {
     double                scrollOffset  = 0.0;
     char                 filenameBuffer[512] = {0};
     uint32_t             filenameCursor = 0;
+    bool                 filenameFocused = false; // Only accepts keyboard input / shows a cursor once clicked
     bool                 overwriteArmed = false; // Save mode: first click on an existing name arms a second confirm
     tRectangle            panelRect      = {0};
     bool                 closePressed   = false;
@@ -231,6 +232,7 @@ void begin_browse(tFileBrowserMode mode, tFileBrowserCallback callback, const ch
     sState.currentDir = sLastDirectory;
 
     std::memset(sState.filenameBuffer, 0, sizeof(sState.filenameBuffer));
+    sState.filenameFocused = false;
 
     if (defaultName != nullptr) {
         std::strncpy(sState.filenameBuffer, defaultName, sizeof(sState.filenameBuffer) - 1);
@@ -507,6 +509,10 @@ bool handle_file_browser_click(tCoord coord) {
         return true; // Modal — swallow clicks outside without closing (matches other G2-Edit popups)
     }
 
+    // Clicking anywhere other than the filename field itself (handled below) takes focus away
+    // from it — re-armed to true only if the click actually landed there.
+    sState.filenameFocused = false;
+
     if (within_rectangle(coord, close_button_rect())) {
         finish_browse(nullptr);
         return true;
@@ -564,8 +570,9 @@ bool handle_file_browser_click(tCoord coord) {
     if ((sState.mode == fileBrowserModeSaveFile) && within_rectangle(coord, filename_field_rect())) {
         tRectangle fieldRect = filename_field_rect();
 
-        sState.filenameCursor = filename_cursor_from_click_x(coord.x - (fieldRect.coord.x + 6.0));
-        gReDraw                = true;
+        sState.filenameFocused = true;
+        sState.filenameCursor  = filename_cursor_from_click_x(coord.x - (fieldRect.coord.x + 6.0));
+        gReDraw                 = true;
         return true;
     }
 
@@ -604,7 +611,7 @@ void handle_file_browser_key(int key, int action) {
         return;
     }
 
-    if (sState.mode == fileBrowserModeSaveFile) {
+    if ((sState.mode == fileBrowserModeSaveFile) && sState.filenameFocused) {
         size_t len = std::strlen(sState.filenameBuffer);
 
         if (key == GLFW_KEY_BACKSPACE) {
@@ -640,7 +647,7 @@ void handle_file_browser_key(int key, int action) {
 }
 
 void handle_file_browser_char(unsigned int codepoint) {
-    if (!sState.active || (sState.mode != fileBrowserModeSaveFile)) {
+    if (!sState.active || (sState.mode != fileBrowserModeSaveFile) || !sState.filenameFocused) {
         return;
     }
 
@@ -786,11 +793,13 @@ void render_file_browser(void) {
         }, truncate_to_width(label, rowRect.size.w - 12.0).c_str());
     }
 
-    // Filename field (Save mode only)
+    // Filename field (Save mode only) — a lighter (white) background plus a visible cursor
+    // means "you're editing this"; unfocused is a flat grey with no cursor, so it's clear a
+    // click is needed before typing does anything.
     if (sState.mode == fileBrowserModeSaveFile) {
         tRectangle fieldRect = filename_field_rect();
 
-        set_rgb_colour((tRgb)RGB_WHITE);
+        set_rgb_colour(sState.filenameFocused ? (tRgb)RGB_WHITE : (tRgb)RGB_GREY_7);
         render_rectangle(mainArea, fieldRect);
         set_rgb_colour((tRgb)RGB_GREY_5);
         render_rectangle_with_border(mainArea, fieldRect);
@@ -800,7 +809,10 @@ void render_file_browser(void) {
         // already uses for patch name/notes editing (see graphics.cpp's gPatchNameEdit handling)
         // — a visible cursor, and confirmation the field really is editable.
         std::string display(sState.filenameBuffer);
-        display.insert((size_t)sState.filenameCursor, "|");
+
+        if (sState.filenameFocused) {
+            display.insert((size_t)sState.filenameCursor, "|");
+        }
         render_text(mainArea, (tRectangle){
             {fieldRect.coord.x + 6.0, fieldRect.coord.y + 6.0}, {BLANK_SIZE, STANDARD_TEXT_HEIGHT}
         }, display.c_str());
