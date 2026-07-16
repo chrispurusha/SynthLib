@@ -551,6 +551,18 @@ void render_bank_browser(void) {
             }
         };
 
+        // Highlight fills are inset from the list box's own left/right border by BORDER_LINE_WIDTH
+        // — rowRect itself runs edge-to-edge with listRect (matching render_rectangle_with_border()'s
+        // border, which is drawn as a ring just inside listRect's bounds), so painting a highlight at
+        // the full rowRect width would overwrite that border on every highlighted row.
+        tRectangle highlightRect = {
+            {
+                rowRect.coord.x + BORDER_LINE_WIDTH, rowRect.coord.y
+            }, {
+                rowRect.size.w - (2.0 * BORDER_LINE_WIDTH), rowRect.size.h
+            }
+        };
+
         if (r.kind == rowSeparator) {
             set_rgb_colour((tRgb)RGB_GREY_5);
             render_rectangle(mainArea, (tRectangle){
@@ -572,10 +584,10 @@ void render_bank_browser(void) {
 
         if (selected) {
             set_rgb_colour((tRgb)RGB_ORANGE_2);
-            render_rectangle(mainArea, rowRect);
+            render_rectangle(mainArea, highlightRect);
         } else if (hovered) {
             set_rgb_colour((tRgb)RGB_GREY_7);
-            render_rectangle(mainArea, rowRect);
+            render_rectangle(mainArea, highlightRect);
         }
 
         set_rgb_colour((tRgb)RGB_BLACK);

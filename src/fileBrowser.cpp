@@ -370,11 +370,14 @@ tRectangle close_button_rect(void) {
 tRectangle filename_field_rect(void) {
     double y = sState.panelRect.coord.y + kPanelHeight - 70.0;
 
+    // kButtonH + 12.0, not + 6.0 — extra headroom below the text baseline so descenders (g, y, p)
+    // aren't clipped by the field's own border (same margin graphics.cpp's Patch Notes editor uses
+    // for the same reason).
     return (tRectangle){
         {
             content_x(), y
         }, {
-            kPanelWidth - kSidebarWidth - 20.0, kButtonH + 6.0
+            kPanelWidth - kSidebarWidth - 20.0, kButtonH + 12.0
         }
     };
 }
@@ -738,12 +741,14 @@ void render_file_browser(void) {
         bool isCurrent = (item.path == sState.currentDir);
         bool isHovered = within_rectangle(mouseCoord, rowRect);
 
-        if (isCurrent) {
-            set_rgb_colour((tRgb)RGB_ORANGE_2);
-            render_rectangle(mainArea, rowRect);
-        } else if (isHovered) {
-            set_rgb_colour((tRgb)RGB_GREY_7);
-            render_rectangle(mainArea, rowRect);
+        // Inset from the sidebar box's own left/right border by BORDER_LINE_WIDTH — rowRect runs
+        // edge-to-edge with sidebarRect, so a full-width highlight fill would otherwise paint over
+        // that border (drawn as a ring just inside sidebarRect's own bounds) on every current/hovered row.
+        if (isCurrent || isHovered) {
+            set_rgb_colour(isCurrent ? (tRgb)RGB_ORANGE_2 : (tRgb)RGB_GREY_7);
+            render_rectangle(mainArea, (tRectangle){
+                {rowRect.coord.x + BORDER_LINE_WIDTH, rowRect.coord.y}, {rowRect.size.w - (2.0 * BORDER_LINE_WIDTH), rowRect.size.h}
+            });
         }
         set_rgb_colour((tRgb)RGB_BLACK);
         render_text(mainArea, (tRectangle){
@@ -777,12 +782,13 @@ void render_file_browser(void) {
         bool       selected = (sState.mode == fileBrowserModeOpenFile) && (index == sState.selectedIndex);
         bool       hovered   = within_rectangle(mouseCoord, rowRect);
 
-        if (selected) {
-            set_rgb_colour((tRgb)RGB_ORANGE_2);
-            render_rectangle(mainArea, rowRect);
-        } else if (hovered) {
-            set_rgb_colour((tRgb)RGB_GREY_7);
-            render_rectangle(mainArea, rowRect);
+        // Inset from the list box's own left/right border by BORDER_LINE_WIDTH — see the matching
+        // comment on the sidebar's highlight above.
+        if (selected || hovered) {
+            set_rgb_colour(selected ? (tRgb)RGB_ORANGE_2 : (tRgb)RGB_GREY_7);
+            render_rectangle(mainArea, (tRectangle){
+                {rowRect.coord.x + BORDER_LINE_WIDTH, rowRect.coord.y}, {rowRect.size.w - (2.0 * BORDER_LINE_WIDTH), rowRect.size.h}
+            });
         }
 
         set_rgb_colour((tRgb)RGB_BLACK);
@@ -793,15 +799,17 @@ void render_file_browser(void) {
         }, truncate_to_width(label, rowRect.size.w - 12.0).c_str());
     }
 
-    // Filename field (Save mode only) — a lighter (white) background plus a visible cursor
-    // means "you're editing this"; unfocused is a flat grey with no cursor, so it's clear a
-    // click is needed before typing does anything.
+    // Filename field (Save mode only) — a lighter grey background plus a visible cursor means
+    // "you're editing this"; unfocused is a darker flat grey with no cursor, so it's clear a click
+    // is needed before typing does anything.
     if (sState.mode == fileBrowserModeSaveFile) {
         tRectangle fieldRect = filename_field_rect();
 
-        set_rgb_colour(sState.filenameFocused ? (tRgb)RGB_WHITE : (tRgb)RGB_GREY_7);
-        render_rectangle(mainArea, fieldRect);
-        set_rgb_colour((tRgb)RGB_GREY_5);
+        // render_rectangle_with_border() fills the whole rectangle with whatever colour is
+        // current when it's called (see utilsGraphics.cpp) — a separate render_rectangle() fill
+        // beforehand would just be overwritten by it, so the focused/unfocused colour has to be
+        // set immediately before this one call, not before a preceding plain fill.
+        set_rgb_colour(sState.filenameFocused ? (tRgb)RGB_GREY_7 : (tRgb)RGB_GREY_5);
         render_rectangle_with_border(mainArea, fieldRect);
         set_rgb_colour((tRgb)RGB_BLACK);
 
