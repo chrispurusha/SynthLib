@@ -41,8 +41,9 @@ enum tBankBrowserRowKind {
     rowHeader,
 };
 
-// One row of the flattened, rebuilt-per-sort-mode display list — mirrors fileDialogue.mm's
-// G2BankLocationListSource rowLabels/rowKinds/rowBanks/rowLocs, collapsed into one struct.
+// One row of the flattened, rebuilt-per-sort-mode display list — mirrors the design of the Cocoa
+// NSTableView data source this panel replaced (rowLabels/rowKinds/rowBanks/rowLocs arrays),
+// collapsed into one struct.
 // itemIndex is -1 for separator/header rows (nothing to select).
 struct tBankBrowserRow {
     std::string          label;
@@ -160,7 +161,7 @@ const std::string & category_name_for(uint8_t category) {
 }
 
 // Rebuilds the flattened display list from sState.items for the current sState.sortMode — mirrors
-// fileDialogue.mm's G2BankLocationListSource.rebuildForSortMode:. mode 0 keeps the caller's raw
+// the Cocoa data source's rebuildForSortMode: this panel replaced. mode 0 keeps the caller's raw
 // order (assumed Bank/Loc already) with a separator between banks; mode 1 groups alphabetically by
 // category with a header row per group (skipped entirely if the caller supplied no category
 // names); mode 2 is fully alphabetical with no grouping.

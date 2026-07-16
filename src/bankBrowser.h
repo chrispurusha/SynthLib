@@ -27,9 +27,9 @@ extern "C" {
 #endif
 
 // In-window, cross-platform replacement for the Cocoa NSAlert+NSTableView bank/location picker
-// (fileDialogue.mm's show_bank_location_list_dialogue_async) — a scrollable named list with a
-// Bank/Loc, Category, A-Z sort switcher, drawn with the same GLFW/OpenGL primitives as the rest
-// of the app. Every call site rebuilds and passes its own item list, so the picker has no notion
+// this panel replaced — a scrollable named list with a Bank/Loc, Category, A-Z sort switcher,
+// drawn with the same GLFW/OpenGL primitives as the rest of the app. Every call site rebuilds and
+// passes its own item list, so the picker has no notion
 // of where the data came from — a device-cached name-table sweep (G2-Edit), a live device query,
 // or anything else a future caller (Z1-Edit, EmuUtility) might dynamically populate the list from.
 //
