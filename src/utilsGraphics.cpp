@@ -157,6 +157,22 @@ tRectangle module_area(void) {
     return {{left, top}, {width, height}};
 }
 
+// Returns true if any part of `rectangle` (moduleArea-local coordinates, i.e. the same
+// space passed to render_rectangle(moduleArea, ...) / render_module()'s own moduleRectangle)
+// would land within the currently visible, scrolled/zoomed module canvas. Callers can use
+// this to skip rendering work for things that are entirely off-screen — it applies the exact
+// same scale/scroll transform real rendering does, so it can't drift out of sync with what's
+// actually drawn. A rectangle straddling the edge of the viewport still counts as visible.
+bool rectangle_visible_in_module_area(tRectangle rectangle) {
+    tRectangle screenRect = scale_scroll_adjust_rectangle(rectangle);
+    tRectangle viewport   = module_area();
+
+    return !((screenRect.coord.x + screenRect.size.w) < viewport.coord.x
+           || screenRect.coord.x > (viewport.coord.x + viewport.size.w)
+           || (screenRect.coord.y + screenRect.size.h) < viewport.coord.y
+           || screenRect.coord.y > (viewport.coord.y + viewport.size.h));
+}
+
 static void internal_render_line(tCoord start, tCoord end, double thickness) {
     double half_thickness = thickness * 0.5;
     double dx             = end.x - start.x;

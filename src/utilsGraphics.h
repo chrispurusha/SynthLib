@@ -56,6 +56,7 @@ void set_rgba_colour(tRgba rgba);
 tRgb contrasting_text_colour(tRgb bg);
 
 tRectangle module_area(void);
+bool       rectangle_visible_in_module_area(tRectangle rectangle);
 tRectangle render_line(tArea area, tCoord start, tCoord end, double thickness);
 tRectangle render_rectangle(tArea area, tRectangle rectangle);
 tRectangle render_texture(tArea area, tRectangle rectangle, uint32_t texture);
