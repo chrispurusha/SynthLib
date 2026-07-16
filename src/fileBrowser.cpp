@@ -630,6 +630,10 @@ void handle_file_browser_key(int key, int action) {
             if (sState.filenameCursor < len) {
                 sState.filenameCursor++;
             }
+        } else if (key == GLFW_KEY_HOME) {
+            sState.filenameCursor = 0;
+        } else if (key == GLFW_KEY_END) {
+            sState.filenameCursor = (uint32_t)len;
         }
     }
     gReDraw = true;
