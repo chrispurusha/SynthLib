@@ -27,11 +27,8 @@
 #include "synthlibDefs.h"
 #include "geometry.h"
 #include "utilsGraphics.h"
+#include "synthlibHost.h"
 #include "bankBrowser.h"
-
-// Supplied by the embedding app under these exact names — see bankBrowser.h.
-extern "C" _Atomic bool gReDraw;
-extern "C" void get_global_gui_scaled_mouse_coord(tCoord * coord);
 
 namespace {
 
@@ -304,7 +301,7 @@ void finish_browse(bool confirmed, uint32_t bank1Indexed, uint32_t location1Inde
 
     sState.active   = false;
     sState.callback = nullptr;
-    gReDraw         = true;
+    synthlib_request_redraw();
 
     if (callback != nullptr) {
         callback(confirmed, bank1Indexed, location1Indexed);
@@ -375,7 +372,7 @@ void open_bank_browser(const char * title, const char * message, const char * co
         }
     };
 
-    gReDraw = true;
+    synthlib_request_redraw();
 }
 
 bool bank_browser_active(void) {
@@ -393,7 +390,7 @@ void handle_bank_browser_mouse_down(tCoord coord) {
     sState.closePressed   = within_rectangle(coord, close_button_rect());
     sState.cancelPressed  = within_rectangle(coord, button_rect(1, button_row_y()));
     sState.confirmPressed = within_rectangle(coord, button_rect(0, button_row_y()));
-    gReDraw = true;
+    synthlib_request_redraw();
 }
 
 bool handle_bank_browser_click(tCoord coord) {
@@ -420,7 +417,7 @@ bool handle_bank_browser_click(tCoord coord) {
             if (!disabled && (sState.sortMode != i)) {
                 sState.sortMode = i;
                 rebuild_rows();
-                gReDraw          = true;
+                synthlib_request_redraw();
             }
             return true;
         }
@@ -434,7 +431,7 @@ bool handle_bank_browser_click(tCoord coord) {
 
         if ((index >= 0) && (index < (int32_t)sState.rows.size()) && (sState.rows[(size_t)index].kind == rowNormal)) {
             sState.selectedRow = index;
-            gReDraw              = true;
+            synthlib_request_redraw();
         }
         return true;
     }
@@ -481,7 +478,7 @@ void handle_bank_browser_scroll(double yDelta) {
     }
     sState.scrollOffset -= yDelta;
     sState.scrollOffset  = std::max(0.0, std::min(sState.scrollOffset, (double)row_count_scrolled()));
-    gReDraw = true;
+    synthlib_request_redraw();
 }
 
 // Called once per frame while bank_browser_active() (see the embedding app's main render loop) —
@@ -495,7 +492,7 @@ void update_bank_browser_hover(void) {
     }
     tCoord mouseCoord = {0};
 
-    get_global_gui_scaled_mouse_coord(&mouseCoord);
+    synthlib_host_mouse_coord(&mouseCoord);
 
     tRectangle listRect = list_area_rect();
     int32_t    hovered   = -1;
@@ -511,7 +508,7 @@ void update_bank_browser_hover(void) {
 
     if (hovered != sState.hoveredRow) {
         sState.hoveredRow = hovered;
-        gReDraw            = true;
+        synthlib_request_redraw();
     }
 }
 

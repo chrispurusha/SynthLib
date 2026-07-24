@@ -40,15 +40,13 @@ extern "C" {
 // app-local struct (see G2-Edit's tMenuContext), set before opening the menu
 // and read back inside its own action callbacks.
 //
-// The embedding app must provide two symbols under these exact names for
-// contextMenu.c to link against:
-//   _Atomic bool gReDraw;                              — set true to request a redraw
-//   void get_global_gui_scaled_mouse_coord(tCoord *);   — current mouse position, in the
-//                                                          same logical space menu coords are opened in
-// It must also call update_context_menu_hover() once per frame (e.g. from its
-// main render loop) for the hover-dwell timer to elapse even while the mouse
-// sits still, and should keep that loop polling at a short timeout (rather
-// than blocking indefinitely on events) while gContextMenu.active is true.
+// The embedding app must call synthlib_host_init() (synthlibHost.h) once at startup, before
+// opening any menu, wiring up a redraw request and the current mouse position (in the same
+// logical space menu coords are opened in) — contextMenu.c calls synthlib_request_redraw()/
+// synthlib_host_mouse_coord() rather than declaring its own externs for either. It must also call
+// update_context_menu_hover() once per frame (e.g. from its main render loop) for the hover-dwell
+// timer to elapse even while the mouse sits still, and should keep that loop polling at a short
+// timeout (rather than blocking indefinitely on events) while gContextMenu.active is true.
 
 extern tContextMenu gContextMenu;
 

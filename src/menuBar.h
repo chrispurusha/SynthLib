@@ -37,9 +37,8 @@ extern "C" {
 //
 // items is a NULL-label-terminated array, mirroring tMenuItem.
 //
-// The embedding app must provide the same two symbols contextMenu.c requires
-// (see contextMenu.h) — gReDraw and get_global_gui_scaled_mouse_coord() —
-// and must, once per frame:
+// The embedding app must call synthlib_host_init() (synthlibHost.h) once at startup, same as
+// contextMenu.c requires (see contextMenu.h), and must, once per frame:
 //   - call update_menu_bar_hover() so moving the mouse from one open
 //     top-level label to another switches the dropdown immediately, the way
 //     a native menu bar does, without requiring a second click;

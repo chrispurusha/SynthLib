@@ -27,12 +27,9 @@
 #include "synthlibDefs.h"
 #include "geometry.h"
 #include "utilsGraphics.h"
+#include "synthlibHost.h"
 #include "contextMenu.h"
 #include "alertDialog.h"
-
-// Supplied by the embedding app under these exact names — see alertDialog.h.
-extern "C" _Atomic bool gReDraw;
-extern "C" void get_global_gui_scaled_mouse_coord(tCoord * coord);
 
 namespace {
 
@@ -182,7 +179,7 @@ tRectangle button_rect(int fromRight, double y) {
 // bankLabels/bankMenuItems comment for why the two loops below can't be merged.
 void on_bank_picker_item_chosen(int index) {
     sState.selectedBank1Indexed = gContextMenu.items[index].param;
-    gReDraw = true;
+    synthlib_request_redraw();
 }
 
 void build_bank_picker_items(void) {
@@ -218,7 +215,7 @@ void finish_dialog(bool confirmed) {
     sState.active          = false;
     sState.confirmCallback = nullptr;
     sState.bankCallback    = nullptr;
-    gReDraw = true;
+    synthlib_request_redraw();
 
     if ((kind == alertKindConfirm) && (confirmCb != nullptr)) {
         confirmCb(confirmed);
@@ -253,7 +250,7 @@ void begin_dialog(tAlertKind kind, const char * title, const char * message, con
     sState.cancelPressed  = false;
     sState.confirmPressed = false;
     sState.pickerPressed  = false;
-    gReDraw = true;
+    synthlib_request_redraw();
 }
 
 } // namespace
@@ -300,7 +297,7 @@ void handle_alert_dialog_mouse_down(tCoord coord) {
         sState.cancelPressed  = within_rectangle(coord, button_rect(1, button_row_y()));
         sState.confirmPressed = within_rectangle(coord, button_rect(0, button_row_y()));
     }
-    gReDraw = true;
+    synthlib_request_redraw();
 }
 
 bool handle_alert_dialog_click(tCoord coord) {

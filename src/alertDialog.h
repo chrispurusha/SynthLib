@@ -34,8 +34,8 @@ extern "C" {
 //                          (built on the app's own context-menu system, see contextMenu.h) for
 //                          choosing a bank number in [1, maxBank1Indexed]
 //
-// The embedding app must provide the same symbols contextMenu.h/fileBrowser.h require (gReDraw,
-// get_global_gui_scaled_mouse_coord()) and must, once per frame, call render_alert_dialog() (order
+// The embedding app must call synthlib_host_init() (synthlibHost.h) once at startup, same as
+// contextMenu.h/fileBrowser.h require, and must, once per frame, call render_alert_dialog() (order
 // relative to its own render_context_menu() call doesn't matter — render_alert_dialog() re-invokes
 // render_context_menu() itself when the picker dropdown is open, so that flyout always paints over
 // this panel regardless of where the app's own call happens to sit). Route mouse-down through

@@ -33,16 +33,16 @@ extern "C" {
 // of where the data came from — a device-cached name-table sweep (G2-Edit), a live device query,
 // or anything else a future caller (Z1-Edit, EmuUtility) might dynamically populate the list from.
 //
-// The embedding app must provide the same symbols contextMenu.c/fileBrowser.c require (gReDraw,
-// get_global_gui_scaled_mouse_coord()) and must, once per frame, call render_bank_browser(); route
+// The embedding app must call synthlib_host_init() (synthlibHost.h) once at startup, same as
+// contextMenu.c/fileBrowser.c require, and must, once per frame, call render_bank_browser(); route
 // mouse-down through handle_bank_browser_mouse_down() (press-state only, no action); route
 // mouse-up through handle_bank_browser_click() ahead of other click handling (returns true if the
 // click landed inside the browser); route key events through handle_bank_browser_key(); and route
 // scroll-wheel deltas through handle_bank_browser_scroll(). All four are safe to call
 // unconditionally — they no-op when bank_browser_active() is false. It must also call
 // update_bank_browser_hover() once per frame — same contract as contextMenu.h's
-// update_context_menu_hover() — since the app only repaints when gReDraw is set, and this is the
-// thing that requests a redraw when the mouse moves onto a new row.
+// update_context_menu_hover() — since the app only repaints on a requested redraw, and this is the
+// thing that requests one when the mouse moves onto a new row.
 
 // One row's worth of data. name is copied internally before open_bank_browser() returns, so the
 // caller's array/strings only need to survive the call itself. category indexes into the

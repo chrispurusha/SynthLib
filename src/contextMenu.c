@@ -30,11 +30,8 @@ extern "C" {
 #include "synthlibDefs.h"
 #include "geometry.h"
 #include "utilsGraphics.h"
+#include "synthlibHost.h"
 #include "contextMenu.h"
-
-// Supplied by the embedding app under these exact names — see contextMenu.h.
-extern _Atomic bool gReDraw;
-void get_global_gui_scaled_mouse_coord(tCoord * coord);
 
 tContextMenu        gContextMenu = {0};
 
@@ -221,7 +218,7 @@ void update_context_menu_hover(void) {
     }
     tCoord  mouseCoord = {0};
 
-    get_global_gui_scaled_mouse_coord(&mouseCoord);
+    synthlib_host_mouse_coord(&mouseCoord);
 
     int32_t hitFrame   = -1;
     int32_t hitIndex   = -1;
@@ -248,7 +245,7 @@ void update_context_menu_hover(void) {
         gContextMenu.hoverFrame     = hitFrame;
         gContextMenu.hoverIndex     = hitIndex;
         gContextMenu.hoverStartTime = glfwGetTime();
-        gReDraw                     = true;
+        synthlib_request_redraw();
         return;
     }
     tMenuItem * item = &gContextMenu.frame[hitFrame].items[hitIndex];
@@ -259,7 +256,7 @@ void update_context_menu_hover(void) {
         tRectangle itemRect = menu_item_rect(&gContextMenu.frame[hitFrame], hitIndex);
 
         push_menu_frame(side_of_rect(itemRect), item->subMenu, item->subMenuColumns, item->subMenuCellWidth);
-        gReDraw = true;
+        synthlib_request_redraw();
     }
 }
 
@@ -355,7 +352,7 @@ void render_context_menu(void) {
     if (!gContextMenu.active) {
         return;
     }
-    get_global_gui_scaled_mouse_coord(&mouseCoord);
+    synthlib_host_mouse_coord(&mouseCoord);
 
     for (uint32_t f = 0; f < gContextMenu.depth; f++) {
         render_menu_frame(&gContextMenu.frame[f], mouseCoord);

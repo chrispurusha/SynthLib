@@ -38,9 +38,9 @@ extern "C" {
 // Confirm button commits — in Choose Folder mode it always targets the currently-open directory,
 // not a clicked row, matching how NSOpenPanel's own folder mode works.
 //
-// The embedding app must provide the same two symbols contextMenu.c/menuBar.c require (see
-// contextMenu.h) — gReDraw and get_global_gui_scaled_mouse_coord() — and must, once per frame,
-// call render_file_browser(); route mouse-down clicks through handle_file_browser_click() ahead
+// The embedding app must call synthlib_host_init() (synthlibHost.h) once at startup, same as
+// contextMenu.c/menuBar.c require, and must, once per frame, call render_file_browser(); route
+// mouse-down clicks through handle_file_browser_click() ahead
 // of other click handling (it returns true if the click landed inside the browser, whether or
 // not it hit something specific); route key/char events through handle_file_browser_key()/
 // handle_file_browser_char(); and route scroll-wheel deltas through handle_file_browser_scroll().

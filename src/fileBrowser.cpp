@@ -30,13 +30,10 @@
 #include "synthlibDefs.h"
 #include "geometry.h"
 #include "utilsGraphics.h"
+#include "synthlibHost.h"
 #include "fileBrowser.h"
 
 namespace fs = std::filesystem;
-
-// Supplied by the embedding app under these exact names — see fileBrowser.h.
-extern "C" _Atomic bool gReDraw;
-extern "C" void get_global_gui_scaled_mouse_coord(tCoord * coord);
 
 namespace {
 
@@ -217,7 +214,7 @@ void refresh_directory_listing(void) {
 void navigate_to(const std::string & dir) {
     sState.currentDir = dir;
     refresh_directory_listing();
-    gReDraw = true;
+    synthlib_request_redraw();
 }
 
 void begin_browse(tFileBrowserMode mode, tFileBrowserCallback callback, const char * title, const char * defaultName) {
@@ -255,7 +252,7 @@ void begin_browse(tFileBrowserMode mode, tFileBrowserCallback callback, const ch
         }
     };
 
-    gReDraw = true;
+    synthlib_request_redraw();
 }
 
 void finish_browse(const char * resultPath) {
@@ -270,7 +267,7 @@ void finish_browse(const char * resultPath) {
     }
     sState.active   = false;
     sState.callback = nullptr;
-    gReDraw         = true;
+    synthlib_request_redraw();
 
     if (callback != nullptr) {
         callback(resultPath);
@@ -436,7 +433,7 @@ void confirm_current(void) {
 
         if (fs::exists(target) && !sState.overwriteArmed) {
             sState.overwriteArmed = true; // Confirm button becomes "Replace" — next click actually confirms
-            gReDraw                = true;
+            synthlib_request_redraw();
             return;
         }
         finish_browse(target.string().c_str());
@@ -497,7 +494,7 @@ void handle_file_browser_mouse_down(tCoord coord) {
     sState.closePressed   = within_rectangle(coord, close_button_rect());
     sState.cancelPressed  = within_rectangle(coord, button_rect(1, button_row_y()));
     sState.confirmPressed = within_rectangle(coord, button_rect(0, button_row_y()));
-    gReDraw = true;
+    synthlib_request_redraw();
 }
 
 bool handle_file_browser_click(tCoord coord) {
@@ -561,10 +558,10 @@ bool handle_file_browser_click(tCoord coord) {
                 std::strncpy(sState.filenameBuffer, entry.name.c_str(), sizeof(sState.filenameBuffer) - 1);
                 sState.filenameCursor = (uint32_t)std::strlen(sState.filenameBuffer);
                 sState.overwriteArmed = false;
-                gReDraw                = true;
+                synthlib_request_redraw();
             } else if (sState.mode == fileBrowserModeOpenFile) {
                 sState.selectedIndex = index;
-                gReDraw               = true;
+                synthlib_request_redraw();
             }
         }
         return true;
@@ -575,7 +572,7 @@ bool handle_file_browser_click(tCoord coord) {
 
         sState.filenameFocused = true;
         sState.filenameCursor  = filename_cursor_from_click_x(coord.x - (fieldRect.coord.x + 6.0));
-        gReDraw                 = true;
+        synthlib_request_redraw();
         return true;
     }
 
@@ -646,7 +643,7 @@ void handle_file_browser_key(int key, int action) {
             sState.filenameCursor = (uint32_t)len;
         }
     }
-    gReDraw = true;
+    synthlib_request_redraw();
 }
 
 void handle_file_browser_char(unsigned int codepoint) {
@@ -656,7 +653,7 @@ void handle_file_browser_char(unsigned int codepoint) {
 
     if ((codepoint >= 0x20) && (codepoint <= 0x7e)) {
         insert_char_in_filename((char)codepoint);
-        gReDraw = true;
+        synthlib_request_redraw();
     }
 }
 
@@ -666,7 +663,7 @@ void handle_file_browser_scroll(double yDelta) {
     }
     sState.scrollOffset -= yDelta;
     sState.scrollOffset  = std::max(0.0, std::min(sState.scrollOffset, (double)row_count_scrolled()));
-    gReDraw               = true;
+    synthlib_request_redraw();
 }
 
 void render_file_browser(void) {
@@ -676,7 +673,7 @@ void render_file_browser(void) {
 
     tCoord mouseCoord = {0};
 
-    get_global_gui_scaled_mouse_coord(&mouseCoord);
+    synthlib_host_mouse_coord(&mouseCoord);
 
     // Dim background overlay — solid, not translucent, matching every other modal panel in the
     // app (draw_dialog_background_overlay() in graphics.cpp uses the same RGB_GREY_2 technique;

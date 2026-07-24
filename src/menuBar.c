@@ -27,12 +27,9 @@ extern "C" {
 #include "synthlibDefs.h"
 #include "geometry.h"
 #include "utilsGraphics.h"
+#include "synthlibHost.h"
 #include "contextMenu.h"
 #include "menuBar.h"
-
-// Supplied by the embedding app under these exact names — see menuBar.h.
-extern _Atomic bool gReDraw;
-void get_global_gui_scaled_mouse_coord(tCoord * coord);
 
 #define MENU_BAR_ITEM_PADDING_X    (15.0)
 
@@ -75,13 +72,13 @@ static void open_menu_bar_item(const tMenuBarItem * items, tRectangle bar, int32
     close_context_menu();
     sOpenIndex = index;
     items[index].open(below_rect(menu_bar_item_rect(items, bar, index)));
-    gReDraw = true;
+    synthlib_request_redraw();
 }
 
 void render_menu_bar(const tMenuBarItem * items, tRectangle bar) {
     tCoord mouseCoord = {0};
 
-    get_global_gui_scaled_mouse_coord(&mouseCoord);
+    synthlib_host_mouse_coord(&mouseCoord);
 
     if ((sOpenIndex >= 0) && !gContextMenu.active) {
         sOpenIndex = -1;
@@ -123,7 +120,7 @@ bool handle_menu_bar_click(const tMenuBarItem * items, tRectangle bar, tCoord co
     if ((index == sOpenIndex) && gContextMenu.active) {
         close_context_menu();
         sOpenIndex = -1;
-        gReDraw    = true;
+        synthlib_request_redraw();
         return true;
     }
 
@@ -144,7 +141,7 @@ void update_menu_bar_hover(const tMenuBarItem * items, tRectangle bar) {
 
     tCoord mouseCoord = {0};
 
-    get_global_gui_scaled_mouse_coord(&mouseCoord);
+    synthlib_host_mouse_coord(&mouseCoord);
 
     int32_t index = menu_bar_hit_test(items, bar, mouseCoord);
 
