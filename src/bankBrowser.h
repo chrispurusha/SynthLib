@@ -39,7 +39,10 @@ extern "C" {
 // mouse-up through handle_bank_browser_click() ahead of other click handling (returns true if the
 // click landed inside the browser); route key events through handle_bank_browser_key(); and route
 // scroll-wheel deltas through handle_bank_browser_scroll(). All four are safe to call
-// unconditionally — they no-op when bank_browser_active() is false.
+// unconditionally — they no-op when bank_browser_active() is false. It must also call
+// update_bank_browser_hover() once per frame — same contract as contextMenu.h's
+// update_context_menu_hover() — since the app only repaints when gReDraw is set, and this is the
+// thing that requests a redraw when the mouse moves onto a new row.
 
 // One row's worth of data. name is copied internally before open_bank_browser() returns, so the
 // caller's array/strings only need to survive the call itself. category indexes into the
@@ -69,6 +72,7 @@ void handle_bank_browser_mouse_down(tCoord coord);
 bool handle_bank_browser_click(tCoord coord);
 void handle_bank_browser_key(int key, int action);
 void handle_bank_browser_scroll(double yDelta);
+void update_bank_browser_hover(void);
 void render_bank_browser(void);
 
 #ifdef __cplusplus

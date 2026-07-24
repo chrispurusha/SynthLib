@@ -77,6 +77,7 @@ struct tBankBrowserState {
     bool                  closePressed  = false;
     bool                  cancelPressed = false;
     bool                  confirmPressed = false;
+    int32_t               hoveredRow    = -1;
 };
 
 tBankBrowserState sState;
@@ -214,6 +215,13 @@ void rebuild_rows(void) {
 
         std::string label = "Bank " + std::to_string(item.bank1Indexed) + ", Loc " +
                             std::to_string(item.location1Indexed) + ": " + item.name;
+
+        // Category mode already conveys it via the group header above — anywhere else (Bank/Loc,
+        // A-Z) it'd otherwise be invisible, so append it here. Skipped entirely for a device with
+        // no categories at all (categoryNames empty), rather than showing "— Unknown" on every row.
+        if (!groupByCategory && !sState.categoryNames.empty()) {
+            label += " — " + category_name_for(item.category);
+        }
         sState.rows.push_back({label, rowNormal, idx});
     }
 
@@ -476,14 +484,41 @@ void handle_bank_browser_scroll(double yDelta) {
     gReDraw = true;
 }
 
+// Called once per frame while bank_browser_active() (see the embedding app's main render loop) —
+// same "redraw only happens when gReDraw fires, so pure mouse-move never repaints" gap that
+// update_context_menu_hover() (contextMenu.c) was built to close. Without this, the row highlight
+// only catches up with the mouse on whatever redraw next happens to fire for an unrelated reason,
+// which is exactly the "only highlights sometimes" symptom reported against this picker.
+void update_bank_browser_hover(void) {
+    if (!sState.active) {
+        return;
+    }
+    tCoord mouseCoord = {0};
+
+    get_global_gui_scaled_mouse_coord(&mouseCoord);
+
+    tRectangle listRect = list_area_rect();
+    int32_t    hovered   = -1;
+
+    if (within_rectangle(mouseCoord, listRect)) {
+        int32_t rowInView = (int32_t)((mouseCoord.y - listRect.coord.y) / kRowHeight);
+        int32_t index      = rowInView + (int32_t)sState.scrollOffset;
+
+        if ((index >= 0) && (index < (int32_t)sState.rows.size()) && (sState.rows[(size_t)index].kind == rowNormal)) {
+            hovered = index;
+        }
+    }
+
+    if (hovered != sState.hoveredRow) {
+        sState.hoveredRow = hovered;
+        gReDraw            = true;
+    }
+}
+
 void render_bank_browser(void) {
     if (!sState.active) {
         return;
     }
-
-    tCoord mouseCoord = {0};
-
-    get_global_gui_scaled_mouse_coord(&mouseCoord);
 
     // Dim background overlay — solid, not translucent, matching every other modal panel in the
     // app (see fileBrowser.cpp's identical comment).
@@ -581,7 +616,7 @@ void render_bank_browser(void) {
         }
 
         bool selected = (index == sState.selectedRow);
-        bool hovered   = within_rectangle(mouseCoord, rowRect);
+        bool hovered   = (index == sState.hoveredRow);
 
         if (selected) {
             set_rgb_colour((tRgb)RGB_ORANGE_2);
