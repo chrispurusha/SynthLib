@@ -92,6 +92,14 @@ typedef enum {
     eCache   = 1,
 } tCache;
 
+// How a dial responds to a mouse drag — identical across G2-Edit, EmuUtility, and SynthEdit, so
+// pushed down here rather than each app declaring its own copy.
+typedef enum {
+    eDialModeRotary     = 0, // circular drag around dial centre; cursor visible
+    eDialModeVertical   = 1, // drag up/down; cursor hidden
+    eDialModeHorizontal = 2, // drag left/right; cursor hidden
+} tDialMode;
+
 // ── Context menu (see contextMenu.h) ────────────────────────────────────────
 //
 // Deliberately app-agnostic: an item knows only its label, colour, an

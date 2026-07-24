@@ -31,6 +31,7 @@
 #include "geometry.h"
 #include "utilsGraphics.h"
 #include "synthlibHost.h"
+#include "synthlibGlobals.h"
 #include "fileBrowser.h"
 
 namespace fs = std::filesystem;

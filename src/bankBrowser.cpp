@@ -28,6 +28,7 @@
 #include "geometry.h"
 #include "utilsGraphics.h"
 #include "synthlibHost.h"
+#include "synthlibGlobals.h"
 #include "bankBrowser.h"
 
 namespace {

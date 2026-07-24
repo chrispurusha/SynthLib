@@ -26,34 +26,24 @@
 extern "C" {
 #endif
 
-// Single injection point for the two things every SynthLib popup/panel mechanism (contextMenu.c,
-// menuBar.c, alertDialog.cpp, bankBrowser.cpp, fileBrowser.cpp) needs from the embedding app:
-// a way to request a redraw, and the current mouse position in the app's own logical/scaled
-// coordinate space. Previously each of those 5 files declared its own
-// `extern "C" _Atomic bool gReDraw;` / `extern "C" void get_global_gui_scaled_mouse_coord(tCoord *);`,
-// trusting the app to define symbols under those exact names — harmless while there was only ever
-// one app-side implementation of each, but it meant every new file that needed a redraw had to
-// remember to redeclare both externs verbatim, and nothing enforced that the names or signatures
-// actually matched what the app provided. This replaces that with one real function call: the app
-// calls synthlib_host_init() once at startup (see configure_synthlib_theme()'s own call site for
-// the existing "tell SynthLib about the app" precedent this mirrors), and every file below calls
-// synthlib_request_redraw()/synthlib_host_mouse_coord() instead of declaring its own extern.
-typedef void (*tSynthLibRequestRedrawFn)(void);
+// Injection point for the one thing every SynthLib popup/panel mechanism (contextMenu.c,
+// menuBar.c, alertDialog.cpp, bankBrowser.cpp, fileBrowser.cpp) still needs from the embedding
+// app that SynthLib itself can't provide: the current mouse position, in the app's own
+// logical/scaled coordinate space (depends on the app's own window and GLFW cursor query).
+// Previously each of those 5 files also declared its own
+// `extern "C" _Atomic bool gReDraw;` for requesting a redraw — gReDraw itself now lives in
+// SynthLib (synthlibGlobals.h's synthlib_request_redraw()), so that half of this mechanism was
+// retired; only the mouse-coord half remains app-specific.
 typedef void (*tSynthLibMouseCoordFn)(tCoord * coord);
 
 typedef struct {
-    tSynthLibRequestRedrawFn requestRedraw; // must not be NULL
-    tSynthLibMouseCoordFn    mouseCoord;    // NULL if the app never opens a mechanism that needs it
+    tSynthLibMouseCoordFn mouseCoord; // NULL if the app never opens a mechanism that needs it
 } tSynthLibHost;
 
 // Call once, before any SynthLib UI mechanism (contextMenu, menuBar, alertDialog, bankBrowser,
 // fileBrowser) is used — in practice, right alongside configure_synthlib_theme() at the top of the
 // app's own init_graphics().
 void synthlib_host_init(tSynthLibHost host);
-
-// A no-op if synthlib_host_init() was never called, or was called with requestRedraw == NULL —
-// safe to call unconditionally.
-void synthlib_request_redraw(void);
 
 // Writes {0, 0} into *coord if synthlib_host_init() was never called, or was called with
 // mouseCoord == NULL, rather than leaving it uninitialised.

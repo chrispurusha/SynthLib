@@ -31,12 +31,6 @@ void synthlib_host_init(tSynthLibHost host) {
     sHost = host;
 }
 
-void synthlib_request_redraw(void) {
-    if (sHost.requestRedraw != NULL) {
-        sHost.requestRedraw();
-    }
-}
-
 void synthlib_host_mouse_coord(tCoord * coord) {
     if (coord == NULL) {
         return;

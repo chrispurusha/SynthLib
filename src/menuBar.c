@@ -28,6 +28,7 @@ extern "C" {
 #include "geometry.h"
 #include "utilsGraphics.h"
 #include "synthlibHost.h"
+#include "synthlibGlobals.h"
 #include "contextMenu.h"
 #include "menuBar.h"
 
