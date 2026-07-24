@@ -72,6 +72,10 @@ void usb_log_text(const char * fmt, ...);
 #define MAX_MENU_DEPTH               (4)
 #define MENU_HOVER_DELAY_SECS        (0.3)
 
+// Clickable-rectangle registry (see clickRegion.h) — upper bound on how many
+// regions a single frame can register across every render function combined.
+#define MAX_CLICK_REGIONS            (4096)
+
 #ifdef G2_EDIT
 #define RGB_BLACK                    {0.0, 0.0, 0.0}
 #define RGB_WHITE                    {1.0, 1.0, 1.0}
