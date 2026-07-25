@@ -43,6 +43,12 @@ extern "C" {
 // update_bank_browser_hover() once per frame — same contract as contextMenu.h's
 // update_context_menu_hover() — since the app only repaints on a requested redraw, and this is the
 // thing that requests one when the mouse moves onto a new row.
+//
+// The list's scrollbar thumb (utilsGraphics.h's list_scrollbar_* family) is draggable: route every
+// mouse-move through handle_bank_browser_mouse_move() while the mouse button is held (same pattern
+// as G2-Edit's other drag state, e.g. gScrollState.yBarDragging in mouseHandle.c) — it no-ops and
+// returns false unless a drag is actually in progress, so it's safe to call unconditionally
+// alongside the app's other drag checks.
 
 // One row's worth of data. name is copied internally before open_bank_browser() returns, so the
 // caller's array/strings only need to survive the call itself. category indexes into the
@@ -69,6 +75,7 @@ void open_bank_browser(const char * title, const char * message, const char * co
 
 bool bank_browser_active(void);
 void handle_bank_browser_mouse_down(tCoord coord);
+bool handle_bank_browser_mouse_move(tCoord coord);
 bool handle_bank_browser_click(tCoord coord);
 void handle_bank_browser_key(int key, int action);
 void handle_bank_browser_scroll(double yDelta);

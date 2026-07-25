@@ -76,6 +76,7 @@ struct tBankBrowserState {
     bool                  cancelPressed = false;
     bool                  confirmPressed = false;
     int32_t               hoveredRow    = -1;
+    double                lastClickTime = 0.0; // glfwGetTime() of the last row click - double-click detection
 };
 
 tBankBrowserState sState;
@@ -391,7 +392,17 @@ void handle_bank_browser_mouse_down(tCoord coord) {
     sState.closePressed   = within_rectangle(coord, close_button_rect());
     sState.cancelPressed  = within_rectangle(coord, button_rect(1, button_row_y()));
     sState.confirmPressed = within_rectangle(coord, button_rect(0, button_row_y()));
+    list_scrollbar_mouse_down(list_area_rect(), (int32_t)sState.rows.size(), kVisibleRows, sState.scrollOffset, coord);
     synthlib_request_redraw();
+}
+
+bool handle_bank_browser_mouse_move(tCoord coord) {
+    if (!sState.active || !list_scrollbar_dragging()) {
+        return false;
+    }
+    sState.scrollOffset = list_scrollbar_mouse_drag(coord);
+    synthlib_request_redraw();
+    return true;
 }
 
 bool handle_bank_browser_click(tCoord coord) {
@@ -401,6 +412,11 @@ bool handle_bank_browser_click(tCoord coord) {
     sState.closePressed   = false;
     sState.cancelPressed  = false;
     sState.confirmPressed = false;
+
+    if (list_scrollbar_dragging()) {
+        list_scrollbar_mouse_up();
+        return true; // Swallow the release that ends a drag - not also a row click.
+    }
 
     if (!within_rectangle(coord, sState.panelRect)) {
         return true; // Modal — swallow clicks outside without closing (matches other G2-Edit popups)
@@ -424,15 +440,25 @@ bool handle_bank_browser_click(tCoord coord) {
         }
     }
 
-    tRectangle listRect = list_area_rect();
+    tRectangle listRect       = list_area_rect();
+    bool       hasScrollbar   = sState.rows.size() > (size_t)kVisibleRows;
+    double     scrollbarStripX = listRect.coord.x + listRect.size.w - LIST_SCROLLBAR_WIDTH;
 
-    if (within_rectangle(coord, listRect)) {
+    if (within_rectangle(coord, listRect) && !(hasScrollbar && (coord.x >= scrollbarStripX))) {
         int32_t rowInView = (int32_t)((coord.y - listRect.coord.y) / kRowHeight);
         int32_t index      = rowInView + (int32_t)sState.scrollOffset;
 
         if ((index >= 0) && (index < (int32_t)sState.rows.size()) && (sState.rows[(size_t)index].kind == rowNormal)) {
-            sState.selectedRow = index;
+            double now           = glfwGetTime();
+            bool   isDoubleClick = (index == sState.selectedRow) && ((now - sState.lastClickTime) <= DOUBLE_CLICK_DELAY_SECS);
+
+            sState.selectedRow   = index;
+            sState.lastClickTime = now;
             synthlib_request_redraw();
+
+            if (isDoubleClick) {
+                confirm_current();
+            }
         }
         return true;
     }
@@ -495,10 +521,12 @@ void update_bank_browser_hover(void) {
 
     synthlib_host_mouse_coord(&mouseCoord);
 
-    tRectangle listRect = list_area_rect();
-    int32_t    hovered   = -1;
+    tRectangle listRect        = list_area_rect();
+    int32_t    hovered         = -1;
+    bool       hasScrollbar    = sState.rows.size() > (size_t)kVisibleRows;
+    double     scrollbarStripX = listRect.coord.x + listRect.size.w - LIST_SCROLLBAR_WIDTH;
 
-    if (within_rectangle(mouseCoord, listRect)) {
+    if (within_rectangle(mouseCoord, listRect) && !(hasScrollbar && (mouseCoord.x >= scrollbarStripX))) {
         int32_t rowInView = (int32_t)((mouseCoord.y - listRect.coord.y) / kRowHeight);
         int32_t index      = rowInView + (int32_t)sState.scrollOffset;
 
@@ -563,7 +591,8 @@ void render_bank_browser(void) {
     }
 
     // List
-    tRectangle listRect = list_area_rect();
+    tRectangle listRect     = list_area_rect();
+    bool       hasScrollbar = sState.rows.size() > (size_t)kVisibleRows;
 
     set_rgb_colour((tRgb)RGB_WHITE);
     render_rectangle(mainArea, listRect);
@@ -581,7 +610,7 @@ void render_bank_browser(void) {
             {
                 listRect.coord.x, listRect.coord.y + ((double)row * kRowHeight)
             }, {
-                listRect.size.w, kRowHeight
+                listRect.size.w - (hasScrollbar ? LIST_SCROLLBAR_WIDTH : 0.0), kRowHeight
             }
         };
 
@@ -629,6 +658,8 @@ void render_bank_browser(void) {
             {rowRect.coord.x + 6.0, rowRect.coord.y + 4.0}, {BLANK_SIZE, STANDARD_TEXT_HEIGHT}
         }, truncate_to_width(r.label, rowRect.size.w - 12.0).c_str());
     }
+
+    render_list_scrollbar(listRect, (int32_t)sState.rows.size(), kVisibleRows, sState.scrollOffset);
 
     // Confirm / Cancel buttons — Confirm rightmost (primary action), Cancel to its left.
     double buttonY        = button_row_y();

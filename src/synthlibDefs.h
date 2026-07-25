@@ -157,6 +157,17 @@ void usb_log_text(const char * fmt, ...);
 #define ZOOM_DELTA               (0.1)
 #endif
 
+// Vertical scrollbar for list-style popups (bankBrowser.cpp, fileBrowser.cpp) — a proportional
+// track+thumb, distinct from the main canvas's fixed-length pan scrollbar (SCROLLBAR_WIDTH above,
+// which represents infinite-pan percent rather than a finite row count). Same width in both
+// project variants, so it lives outside the G2_EDIT split above.
+#define LIST_SCROLLBAR_WIDTH     (8.0)
+
+// Double-click-to-confirm on list rows (bankBrowser.cpp, fileBrowser.cpp) — second click on the
+// same row within this window counts as a double-click, same glfwGetTime()-based timing
+// convention as MENU_HOVER_DELAY_SECS above (contextMenu.c).
+#define DOUBLE_CLICK_DELAY_SECS  (0.4)
+
 #ifdef __cplusplus
 }
 #endif

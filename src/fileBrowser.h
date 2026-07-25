@@ -45,6 +45,11 @@ extern "C" {
 // not it hit something specific); route key/char events through handle_file_browser_key()/
 // handle_file_browser_char(); and route scroll-wheel deltas through handle_file_browser_scroll().
 // All four are safe to call unconditionally — they no-op when file_browser_active() is false.
+//
+// The directory listing's scrollbar thumb (utilsGraphics.h's list_scrollbar_* family) is
+// draggable: route every mouse-move through handle_file_browser_mouse_move() while the mouse
+// button is held (same pattern as bankBrowser.h's handle_bank_browser_mouse_move()) — it no-ops
+// and returns false unless a drag is actually in progress.
 
 typedef enum {
     fileBrowserModeOpenFile = 0,   // Pick an existing file
@@ -71,6 +76,7 @@ void set_file_browser_directory_changed_callback(tFileBrowserDirectoryChangedCal
 
 bool file_browser_active(void);
 void handle_file_browser_mouse_down(tCoord coord);
+bool handle_file_browser_mouse_move(tCoord coord);
 bool handle_file_browser_click(tCoord coord);
 void handle_file_browser_key(int key, int action);
 void handle_file_browser_char(unsigned int codepoint);

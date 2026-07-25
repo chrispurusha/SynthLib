@@ -71,6 +71,8 @@ struct tFileBrowserState {
     bool                 closePressed   = false;
     bool                 cancelPressed  = false;
     bool                 confirmPressed = false;
+    int32_t              lastClickedRow = -1;  // Double-click detection - tracked across all row
+    double               lastClickTime  = 0.0; // kinds/modes, since selectedIndex only applies in Open mode
 };
 
 tFileBrowserState sState;
@@ -495,7 +497,17 @@ void handle_file_browser_mouse_down(tCoord coord) {
     sState.closePressed   = within_rectangle(coord, close_button_rect());
     sState.cancelPressed  = within_rectangle(coord, button_rect(1, button_row_y()));
     sState.confirmPressed = within_rectangle(coord, button_rect(0, button_row_y()));
+    list_scrollbar_mouse_down(list_area_rect(), (int32_t)sState.entries.size(), kVisibleRows, sState.scrollOffset, coord);
     synthlib_request_redraw();
+}
+
+bool handle_file_browser_mouse_move(tCoord coord) {
+    if (!sState.active || !list_scrollbar_dragging()) {
+        return false;
+    }
+    sState.scrollOffset = list_scrollbar_mouse_drag(coord);
+    synthlib_request_redraw();
+    return true;
 }
 
 bool handle_file_browser_click(tCoord coord) {
@@ -505,6 +517,11 @@ bool handle_file_browser_click(tCoord coord) {
     sState.closePressed   = false;
     sState.cancelPressed  = false;
     sState.confirmPressed = false;
+
+    if (list_scrollbar_dragging()) {
+        list_scrollbar_mouse_up();
+        return true; // Swallow the release that ends a drag - not also a row click.
+    }
 
     if (!within_rectangle(coord, sState.panelRect)) {
         return true; // Modal — swallow clicks outside without closing (matches other G2-Edit popups)
@@ -543,14 +560,21 @@ bool handle_file_browser_click(tCoord coord) {
         return true;
     }
 
-    tRectangle listRect = list_area_rect();
+    tRectangle listRect        = list_area_rect();
+    bool       hasScrollbar    = sState.entries.size() > (size_t)kVisibleRows;
+    double     scrollbarStripX = listRect.coord.x + listRect.size.w - LIST_SCROLLBAR_WIDTH;
 
-    if (within_rectangle(coord, listRect)) {
+    if (within_rectangle(coord, listRect) && !(hasScrollbar && (coord.x >= scrollbarStripX))) {
         int32_t rowInView = (int32_t)((coord.y - listRect.coord.y) / kRowHeight);
         int32_t index     = rowInView + (int32_t)sState.scrollOffset;
 
         if ((index >= 0) && (index < (int32_t)sState.entries.size())) {
             const tFileBrowserEntry & entry = sState.entries[(size_t)index];
+            double                    now           = glfwGetTime();
+            bool                      isDoubleClick = (index == sState.lastClickedRow) && ((now - sState.lastClickTime) <= DOUBLE_CLICK_DELAY_SECS);
+
+            sState.lastClickedRow = index;
+            sState.lastClickTime  = now;
 
             if (entry.isDir) {
                 fs::path next = fs::path(sState.currentDir) / entry.name;
@@ -560,9 +584,17 @@ bool handle_file_browser_click(tCoord coord) {
                 sState.filenameCursor = (uint32_t)std::strlen(sState.filenameBuffer);
                 sState.overwriteArmed = false;
                 synthlib_request_redraw();
+
+                if (isDoubleClick) {
+                    confirm_current();
+                }
             } else if (sState.mode == fileBrowserModeOpenFile) {
                 sState.selectedIndex = index;
                 synthlib_request_redraw();
+
+                if (isDoubleClick) {
+                    confirm_current();
+                }
             }
         }
         return true;
@@ -755,7 +787,8 @@ void render_file_browser(void) {
     }
 
     // Directory listing
-    tRectangle listRect = list_area_rect();
+    tRectangle listRect     = list_area_rect();
+    bool       hasScrollbar = sState.entries.size() > (size_t)kVisibleRows;
 
     set_rgb_colour((tRgb)RGB_WHITE);
     render_rectangle(mainArea, listRect);
@@ -774,7 +807,7 @@ void render_file_browser(void) {
             {
                 listRect.coord.x, listRect.coord.y + (row * kRowHeight)
             }, {
-                listRect.size.w, kRowHeight
+                listRect.size.w - (hasScrollbar ? LIST_SCROLLBAR_WIDTH : 0.0), kRowHeight
             }
         };
         bool       selected = (sState.mode == fileBrowserModeOpenFile) && (index == sState.selectedIndex);
@@ -796,6 +829,8 @@ void render_file_browser(void) {
             {rowRect.coord.x + 6.0, rowRect.coord.y + 4.0}, {BLANK_SIZE, STANDARD_TEXT_HEIGHT}
         }, truncate_to_width(label, rowRect.size.w - 12.0).c_str());
     }
+
+    render_list_scrollbar(listRect, (int32_t)sState.entries.size(), kVisibleRows, sState.scrollOffset);
 
     // Filename field (Save mode only) — a lighter grey background plus a visible cursor means
     // "you're editing this"; unfocused is a darker flat grey with no cursor, so it's clear a click

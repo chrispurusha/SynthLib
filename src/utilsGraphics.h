@@ -98,6 +98,24 @@ double scale_from_percent(double val);
 tRectangle render_dial(tArea area, tRectangle rectangle, uint32_t value, uint32_t range, uint32_t morphRange, tRgb colour);
 tRectangle render_dial_with_text(tArea area, tRectangle rectangle, const char * label, const char * buff, double labelH, uint32_t value, uint32_t range, uint32_t morphRange, tRgb colour);
 
+// Shared vertical scrollbar for list-style popups (bankBrowser.cpp, fileBrowser.cpp, and similar) —
+// listRect is the list's own content box; totalRows/visibleRows/scrollOffset are the same terms
+// each caller already tracks for scroll-wheel handling (scrollOffset is the index of the first
+// visible row, a double so it can be compared/clamped against fractional drag positions).
+//
+// Drag state lives here as file-static, not per-caller — safe because bankBrowser/fileBrowser
+// are mutually exclusive modals, so only one list scrollbar can ever be mid-drag at a time.
+// Usage: list_scrollbar_mouse_down() on mouse-down (returns true if the thumb was hit, and starts
+// the drag); while list_scrollbar_dragging() is true, feed every mouse-move to
+// list_scrollbar_mouse_drag() and store its returned (already-clamped) scrollOffset back; call
+// list_scrollbar_mouse_up() on mouse-up regardless.
+tRectangle list_scrollbar_thumb_rect(tRectangle listRect, int32_t totalRows, int32_t visibleRows, double scrollOffset);
+void render_list_scrollbar(tRectangle listRect, int32_t totalRows, int32_t visibleRows, double scrollOffset);
+bool list_scrollbar_mouse_down(tRectangle listRect, int32_t totalRows, int32_t visibleRows, double scrollOffset, tCoord coord);
+bool list_scrollbar_dragging(void);
+double list_scrollbar_mouse_drag(tCoord coord);
+void list_scrollbar_mouse_up(void);
+
 #ifdef __cplusplus
 }
 #endif

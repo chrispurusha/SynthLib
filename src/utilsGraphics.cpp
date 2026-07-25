@@ -1129,6 +1129,84 @@ void set_y_scroll_percent(double percent) {
     gYScrollPercent = percent;
 }
 
+// ── List scrollbar (bankBrowser.cpp, fileBrowser.cpp, and similar) ──────────────────────────────
+//
+// Drag state is file-static rather than passed in/out by each caller — safe only because the
+// callers are mutually exclusive modals, so at most one list scrollbar can ever be mid-drag.
+
+static bool       sListScrollbarDragging    = false;
+static double     sListScrollbarGrabOffset  = 0.0; // distance from the thumb's own top edge to the
+                                                    // initial click Y, so the thumb doesn't jump to
+                                                    // re-centre under the cursor on grab
+static tRectangle sListScrollbarListRect    = {0};
+static int32_t    sListScrollbarTotalRows   = 0;
+static int32_t    sListScrollbarVisibleRows = 0;
+
+tRectangle list_scrollbar_thumb_rect(tRectangle listRect, int32_t totalRows, int32_t visibleRows, double scrollOffset) {
+    double trackX   = listRect.coord.x + listRect.size.w - LIST_SCROLLBAR_WIDTH;
+    double trackH   = listRect.size.h;
+    double thumbH   = fmin(trackH, fmax((trackH * (double)visibleRows) / (double)totalRows, LIST_SCROLLBAR_WIDTH));
+    double maxScroll = (double)(totalRows - visibleRows);
+    double travel   = trackH - thumbH;
+    double thumbY   = listRect.coord.y + ((maxScroll > 0.0) ? (travel * (scrollOffset / maxScroll)) : 0.0);
+
+    return (tRectangle){{trackX, thumbY}, {LIST_SCROLLBAR_WIDTH, thumbH}};
+}
+
+void render_list_scrollbar(tRectangle listRect, int32_t totalRows, int32_t visibleRows, double scrollOffset) {
+    if (totalRows <= visibleRows) {
+        return; // Nothing to scroll - no scrollbar shown, matching native list behaviour.
+    }
+    double     trackX    = listRect.coord.x + listRect.size.w - LIST_SCROLLBAR_WIDTH;
+    tRectangle trackRect = {{trackX, listRect.coord.y}, {LIST_SCROLLBAR_WIDTH, listRect.size.h}};
+
+    set_rgb_colour((tRgb)RGB_GREY_3);
+    render_rectangle(mainArea, trackRect);
+
+    set_rgb_colour((tRgb)RGB_GREY_7);
+    render_rectangle(mainArea, list_scrollbar_thumb_rect(listRect, totalRows, visibleRows, scrollOffset));
+}
+
+bool list_scrollbar_mouse_down(tRectangle listRect, int32_t totalRows, int32_t visibleRows, double scrollOffset, tCoord coord) {
+    if (totalRows <= visibleRows) {
+        return false;
+    }
+    tRectangle thumbRect = list_scrollbar_thumb_rect(listRect, totalRows, visibleRows, scrollOffset);
+
+    if (!within_rectangle(coord, thumbRect)) {
+        return false;
+    }
+    sListScrollbarDragging    = true;
+    sListScrollbarGrabOffset  = coord.y - thumbRect.coord.y;
+    sListScrollbarListRect    = listRect;
+    sListScrollbarTotalRows   = totalRows;
+    sListScrollbarVisibleRows = visibleRows;
+    return true;
+}
+
+bool list_scrollbar_dragging(void) {
+    return sListScrollbarDragging;
+}
+
+double list_scrollbar_mouse_drag(tCoord coord) {
+    double trackH    = sListScrollbarListRect.size.h;
+    double thumbH    = fmin(trackH, fmax((trackH * (double)sListScrollbarVisibleRows) / (double)sListScrollbarTotalRows, LIST_SCROLLBAR_WIDTH));
+    double travel    = trackH - thumbH;
+    double maxScroll = (double)(sListScrollbarTotalRows - sListScrollbarVisibleRows);
+
+    if (travel <= 0.0) {
+        return 0.0;
+    }
+    double thumbY  = (coord.y - sListScrollbarGrabOffset) - sListScrollbarListRect.coord.y;
+    double percent = fmax(0.0, fmin(1.0, thumbY / travel));
+
+    return percent * maxScroll;
+}
+
+void list_scrollbar_mouse_up(void) {
+    sListScrollbarDragging = false;
+}
+
 void set_zoom_factor(double newZoom, tCoord mouseCoord) {
     if (newZoom < 0.25) {
         newZoom = 0.25;
