@@ -831,7 +831,7 @@ tRectangle draw_slider(tArea area, tRectangle rectangle, uint32_t value, uint32_
     }
 
     if (morphRange != 0) {
-        int32_t signedMorphRange = (morphRange < 127) ? (int32_t)morphRange : (int32_t)morphRange - 256;
+        int32_t signedMorphRange = (morphRange < 128) ? (int32_t)morphRange : (int32_t)morphRange - 256;
         int32_t morphPos         = (int32_t)value + signedMorphRange;
 
         if (morphPos < 0) {
