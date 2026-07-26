@@ -30,8 +30,10 @@
 #include "synthlibHost.h"
 #include "synthlibGlobals.h"
 #include "bankBrowser.h"
+#include "prefs.h"
 
-namespace {
+namespace
+{
 
 enum tBankBrowserRowKind {
     rowNormal,
@@ -44,9 +46,9 @@ enum tBankBrowserRowKind {
 // collapsed into one struct.
 // itemIndex is -1 for separator/header rows (nothing to select).
 struct tBankBrowserRow {
-    std::string          label;
-    tBankBrowserRowKind  kind;
-    int32_t              itemIndex;
+    std::string         label;
+    tBankBrowserRowKind kind;
+    int32_t             itemIndex;
 };
 
 struct tBankBrowserItemInternal {
@@ -57,41 +59,45 @@ struct tBankBrowserItemInternal {
 };
 
 struct tBankBrowserState {
-    bool                 active         = false;
-    std::string          title;
-    std::string          confirmLabel;
-    tBankBrowserCallback callback       = nullptr;
+    bool                                  active         = false;
+    std::string                           title;
+    std::string                           confirmLabel;
+    tBankBrowserCallback                  callback       = nullptr;
 
     std::vector<tBankBrowserItemInternal> items;
     std::vector<std::string>              categoryNames;
     std::vector<std::string>              messageLines;
 
-    int32_t               sortMode      = 0;    // 0 = Bank/Loc, 1 = Category, 2 = A-Z
-    std::vector<tBankBrowserRow> rows;
-    int32_t               selectedRow   = -1;
-    double                scrollOffset  = 0.0;
+    int32_t                               sortMode       = 0; // 0 = Bank/Loc, 1 = Category, 2 = A-Z
+    std::vector<tBankBrowserRow>          rows;
+    int32_t                               selectedRow    = -1;
+    double                                scrollOffset   = 0.0;
 
-    tRectangle             panelRect     = {0};
-    bool                  closePressed  = false;
-    bool                  cancelPressed = false;
-    bool                  confirmPressed = false;
-    int32_t               hoveredRow    = -1;
-    double                lastClickTime = 0.0; // glfwGetTime() of the last row click - double-click detection
+    tRectangle                            panelRect      = {0};
+    bool                                  closePressed   = false;
+    bool                                  cancelPressed  = false;
+    bool                                  confirmPressed = false;
+    int32_t                               hoveredRow     = -1;
+    double                                lastClickTime  = 0.0; // glfwGetTime() of the last row click - double-click detection
 };
 
 tBankBrowserState sState;
 
-const double kRowHeight      = STANDARD_TEXT_HEIGHT + 8.0;
-const int    kVisibleRows    = 10;
-const double kPanelWidth     = 480.0;
-const double kTitleH         = 26.0;
-const double kMessageLineH   = STANDARD_TEXT_HEIGHT + 4.0;
+const double      kRowHeight       = STANDARD_TEXT_HEIGHT + 8.0;
+const int         kVisibleRows     = 10;
+const double      kPanelWidth      = 480.0;
+const double      kTitleH          = 26.0;
+const double      kMessageLineH    = STANDARD_TEXT_HEIGHT + 4.0;
 
 // draw_button() sizes its label text directly off the height of the rectangle passed in (see
 // utilsGraphics.cpp), so every button/segment here uses STANDARD_TEXT_HEIGHT for its height,
 // matching the text size every other button in the app renders at.
-const double kButtonH        = STANDARD_TEXT_HEIGHT;
-const double kSortControlH   = STANDARD_TEXT_HEIGHT + 6.0;
+const double      kButtonH         = STANDARD_TEXT_HEIGHT;
+const double      kSortControlH    = STANDARD_TEXT_HEIGHT + 6.0;
+
+// Persisted (across sessions, via prefs.h) last-used sort mode: 0 = Bank/Loc, 1 = Category, 2 = A-Z.
+// Shared by every app that uses the bank browser; each app already calls prefs_init() at startup.
+const char *const kSortModePrefKey = "bankBrowserSortMode";
 
 double content_x(void) {
     return sState.panelRect.coord.x + 10.0;
@@ -100,11 +106,10 @@ double content_x(void) {
 // render_text() doesn't clip to its rectangle — shortens from the end with an ellipsis until it
 // fits maxWidth (same technique as fileBrowser.cpp's truncate_to_width(), duplicated here since
 // the two .cpp files don't share a private helper header).
-std::string truncate_to_width(const std::string & text, double maxWidth) {
+std::string truncate_to_width(const std::string &text, double maxWidth) {
     if (get_text_width(text.c_str(), STANDARD_TEXT_HEIGHT, eNoCache) <= maxWidth) {
         return text;
     }
-
     std::string truncated = text;
 
     while (!truncated.empty()) {
@@ -121,15 +126,15 @@ std::string truncate_to_width(const std::string & text, double maxWidth) {
 // Greedy word-wrap: breaks text into lines no wider than maxWidth, measured the same way
 // render_text() will draw them. There's no wrapping render call anywhere else in the app to
 // reuse — every other panel's text is either fixed-length or pre-truncated by hand.
-std::vector<std::string> wrap_text(const std::string & text, double maxWidth) {
+std::vector<std::string> wrap_text(const std::string &text, double maxWidth) {
     std::vector<std::string> lines;
-    std::string               current;
-    size_t                    pos = 0;
+    std::string              current;
+    size_t                   pos = 0;
 
     while (pos <= text.size()) {
-        size_t      spacePos = text.find(' ', pos);
-        size_t      wordEnd  = (spacePos == std::string::npos) ? text.size() : spacePos;
-        std::string word     = text.substr(pos, wordEnd - pos);
+        size_t      spacePos  = text.find(' ', pos);
+        size_t      wordEnd   = (spacePos == std::string::npos) ? text.size() : spacePos;
+        std::string word      = text.substr(pos, wordEnd - pos);
         std::string candidate = current.empty() ? word : (current + " " + word);
 
         if (current.empty() || (get_text_width(candidate.c_str(), STANDARD_TEXT_HEIGHT, eNoCache) <= maxWidth)) {
@@ -151,7 +156,7 @@ std::vector<std::string> wrap_text(const std::string & text, double maxWidth) {
     return lines;
 }
 
-const std::string & category_name_for(uint8_t category) {
+const std::string &category_name_for(uint8_t category) {
     static const std::string unknown = "Unknown";
 
     if ((size_t)category < sState.categoryNames.size()) {
@@ -174,8 +179,8 @@ void rebuild_rows(void) {
 
     if ((sState.sortMode == 1) && !sState.categoryNames.empty()) {
         std::sort(order.begin(), order.end(), [](int32_t a, int32_t b) {
-            const std::string & ca = category_name_for(sState.items[(size_t)a].category);
-            const std::string & cb = category_name_for(sState.items[(size_t)b].category);
+            const std::string &ca = category_name_for(sState.items[(size_t)a].category);
+            const std::string &cb = category_name_for(sState.items[(size_t)b].category);
 
             if (ca != cb) {
                 return ca < cb;
@@ -189,16 +194,16 @@ void rebuild_rows(void) {
     }
     // sortMode 0: raw order, nothing to sort.
 
-    bool        groupByCategory = (sState.sortMode == 1) && !sState.categoryNames.empty();
+    bool        groupByCategory  = (sState.sortMode == 1) && !sState.categoryNames.empty();
     std::string lastGroupKey;
     bool        haveLastGroupKey = false;
 
     sState.rows.clear();
 
     for (int32_t idx : order) {
-        const tBankBrowserItemInternal & item = sState.items[(size_t)idx];
-        std::string groupKey  = groupByCategory ? category_name_for(item.category) : std::to_string(item.bank1Indexed);
-        bool        newGroup  = !haveLastGroupKey || (groupKey != lastGroupKey);
+        const tBankBrowserItemInternal &item    = sState.items[(size_t)idx];
+        std::string                    groupKey = groupByCategory ? category_name_for(item.category) : std::to_string(item.bank1Indexed);
+        bool                           newGroup = !haveLastGroupKey || (groupKey != lastGroupKey);
 
         if ((sState.sortMode == 0) || groupByCategory) {
             if (newGroup) {
@@ -211,9 +216,8 @@ void rebuild_rows(void) {
                 haveLastGroupKey = true;
             }
         }
-
-        std::string label = "Bank " + std::to_string(item.bank1Indexed) + ", Loc " +
-                            std::to_string(item.location1Indexed) + ": " + item.name;
+        std::string                    label    = "Bank " + std::to_string(item.bank1Indexed) + ", Loc " +
+                                                  std::to_string(item.location1Indexed) + ": " + item.name;
 
         // Category mode already conveys it via the group header above — anywhere else (Bank/Loc,
         // A-Z) it'd otherwise be invisible, so append it here. Skipped entirely for a device with
@@ -234,9 +238,7 @@ tRectangle close_button_rect(void) {
     return (tRectangle){
         {
             sState.panelRect.coord.x + sState.panelRect.size.w - w - 8.0 - BORDER_LINE_WIDTH, sState.panelRect.coord.y + 4.0
-        }, {
-            w, kButtonH
-        }
+        }, {w, kButtonH}
     };
 }
 
@@ -254,22 +256,18 @@ tRectangle sort_button_rect(int index) {
     return (tRectangle){
         {
             x, y
-        }, {
-            w, kSortControlH
-        }
+        }, {w, kSortControlH}
     };
 }
 
 tRectangle list_area_rect(void) {
     tRectangle sortRect = sort_button_rect(0);
-    double     y         = sortRect.coord.y + kSortControlH + 8.0;
+    double     y        = sortRect.coord.y + kSortControlH + 8.0;
 
     return (tRectangle){
         {
             content_x(), y
-        }, {
-            sState.panelRect.size.w - 20.0, kRowHeight * kVisibleRows
-        }
+        }, {sState.panelRect.size.w - 20.0, kRowHeight * kVisibleRows}
     };
 }
 
@@ -288,9 +286,7 @@ tRectangle button_rect(int fromRight, double y) {
     return (tRectangle){
         {
             rightEdge - w, y
-        }, {
-            w, kButtonH
-        }
+        }, {w, kButtonH}
     };
 }
 
@@ -314,12 +310,12 @@ void confirm_current(void) {
     if ((sState.selectedRow < 0) || (sState.selectedRow >= (int32_t)sState.rows.size())) {
         return;
     }
-    const tBankBrowserRow & row = sState.rows[(size_t)sState.selectedRow];
+    const tBankBrowserRow          &row  = sState.rows[(size_t)sState.selectedRow];
 
     if ((row.kind != rowNormal) || (row.itemIndex < 0)) {
         return;
     }
-    const tBankBrowserItemInternal & item = sState.items[(size_t)row.itemIndex];
+    const tBankBrowserItemInternal &item = sState.items[(size_t)row.itemIndex];
 
     finish_browse(true, item.bank1Indexed, item.location1Indexed);
 }
@@ -327,10 +323,9 @@ void confirm_current(void) {
 } // namespace
 
 extern "C" {
-
 void open_bank_browser(const char * title, const char * message, const char * confirmButtonTitle,
                        const tBankBrowserItem * items, uint32_t itemCount,
-                       const char * const * categoryNames, uint32_t categoryNameCount,
+                       const char *const * categoryNames, uint32_t categoryNameCount,
                        tBankBrowserCallback callback) {
     sState.active       = true;
     sState.title        = (title != nullptr) ? title : "";
@@ -341,10 +336,8 @@ void open_bank_browser(const char * title, const char * message, const char * co
     sState.items.reserve(itemCount);
 
     for (uint32_t i = 0; i < itemCount; i++) {
-        sState.items.push_back({
-            (items[i].name != nullptr) ? items[i].name : "", items[i].category,
-            items[i].bank1Indexed, items[i].location1Indexed
-        });
+        sState.items.push_back({(items[i].name != nullptr) ? items[i].name : "", items[i].category,
+                                items[i].bank1Indexed, items[i].location1Indexed});
     }
 
     sState.categoryNames.clear();
@@ -354,7 +347,19 @@ void open_bank_browser(const char * title, const char * message, const char * co
         sState.categoryNames.push_back((categoryNames[i] != nullptr) ? categoryNames[i] : "");
     }
 
-    sState.sortMode = 0;
+    // Restore the last-used sort mode (persisted across sessions). Clamp to a valid range, and fall
+    // back to Bank/Loc if the saved mode is Category but this domain supplied no category names (the
+    // Category segment is disabled/greyed in that case).
+    long   savedSort   = prefs_get_int(kSortModePrefKey, 0);
+
+    if ((savedSort < 0) || (savedSort > 2)) {
+        savedSort = 0;
+    }
+
+    if ((savedSort == 1) && sState.categoryNames.empty()) {
+        savedSort = 0;
+    }
+    sState.sortMode     = (int32_t)savedSort;
     rebuild_rows();
 
     sState.messageLines = wrap_text((message != nullptr) ? message : "", kPanelWidth - 20.0);
@@ -363,15 +368,13 @@ void open_bank_browser(const char * title, const char * message, const char * co
     double panelHeight = kTitleH + 10.0 + messageH + 8.0 + kSortControlH + 8.0 +
                          (kRowHeight * kVisibleRows) + 10.0 + kButtonH + 10.0;
 
-    double renderW = get_render_width() / gGlobalGuiScale;
-    double renderH = get_render_height() / gGlobalGuiScale;
+    double renderW     = get_render_width() / gGlobalGuiScale;
+    double renderH     = get_render_height() / gGlobalGuiScale;
 
-    sState.panelRect = (tRectangle){
+    sState.panelRect    = (tRectangle){
         {
             (renderW - kPanelWidth) / 2.0, (renderH - panelHeight) / 2.0
-        }, {
-            kPanelWidth, panelHeight
-        }
+        }, {kPanelWidth, panelHeight}
     };
 
     synthlib_request_redraw();
@@ -433,6 +436,7 @@ bool handle_bank_browser_click(tCoord coord) {
 
             if (!disabled && (sState.sortMode != i)) {
                 sState.sortMode = i;
+                prefs_set_int(kSortModePrefKey, i); // remember across sessions
                 rebuild_rows();
                 synthlib_request_redraw();
             }
@@ -440,13 +444,13 @@ bool handle_bank_browser_click(tCoord coord) {
         }
     }
 
-    tRectangle listRect       = list_area_rect();
-    bool       hasScrollbar   = sState.rows.size() > (size_t)kVisibleRows;
+    tRectangle listRect        = list_area_rect();
+    bool       hasScrollbar    = sState.rows.size() > (size_t)kVisibleRows;
     double     scrollbarStripX = listRect.coord.x + listRect.size.w - LIST_SCROLLBAR_WIDTH;
 
     if (within_rectangle(coord, listRect) && !(hasScrollbar && (coord.x >= scrollbarStripX))) {
         int32_t rowInView = (int32_t)((coord.y - listRect.coord.y) / kRowHeight);
-        int32_t index      = rowInView + (int32_t)sState.scrollOffset;
+        int32_t index     = rowInView + (int32_t)sState.scrollOffset;
 
         if ((index >= 0) && (index < (int32_t)sState.rows.size()) && (sState.rows[(size_t)index].kind == rowNormal)) {
             double now           = glfwGetTime();
@@ -462,9 +466,8 @@ bool handle_bank_browser_click(tCoord coord) {
         }
         return true;
     }
-
-    bool wantsConfirm = within_rectangle(coord, button_rect(0, button_row_y()));
-    bool wantsCancel  = within_rectangle(coord, button_rect(1, button_row_y()));
+    bool       wantsConfirm    = within_rectangle(coord, button_rect(0, button_row_y()));
+    bool       wantsCancel     = within_rectangle(coord, button_rect(1, button_row_y()));
 
     if (wantsCancel) {
         finish_browse(false, 0, 0);
@@ -475,7 +478,6 @@ bool handle_bank_browser_click(tCoord coord) {
         confirm_current();
         return true;
     }
-
     return true;
 }
 
@@ -517,7 +519,7 @@ void update_bank_browser_hover(void) {
     if (!sState.active) {
         return;
     }
-    tCoord mouseCoord = {0};
+    tCoord     mouseCoord      = {0};
 
     synthlib_host_mouse_coord(&mouseCoord);
 
@@ -528,7 +530,7 @@ void update_bank_browser_hover(void) {
 
     if (within_rectangle(mouseCoord, listRect) && !(hasScrollbar && (mouseCoord.x >= scrollbarStripX))) {
         int32_t rowInView = (int32_t)((mouseCoord.y - listRect.coord.y) / kRowHeight);
-        int32_t index      = rowInView + (int32_t)sState.scrollOffset;
+        int32_t index     = rowInView + (int32_t)sState.scrollOffset;
 
         if ((index >= 0) && (index < (int32_t)sState.rows.size()) && (sState.rows[(size_t)index].kind == rowNormal)) {
             hovered = index;
@@ -545,13 +547,12 @@ void render_bank_browser(void) {
     if (!sState.active) {
         return;
     }
-
     // Dim background overlay — solid, not translucent, matching every other modal panel in the
     // app (see fileBrowser.cpp's identical comment).
     set_rgb_colour((tRgb)RGB_GREY_2);
     render_rectangle(mainArea, (tRectangle){
-        {0.0, 0.0}, {get_render_width() / gGlobalGuiScale, get_render_height() / gGlobalGuiScale}
-    });
+            {0.0, 0.0}, {get_render_width() / gGlobalGuiScale, get_render_height() / gGlobalGuiScale}
+        });
 
     // Panel chrome — replicates graphics.cpp's draw_panel_chrome()/draw_panel_close_button()
     // pixel-for-pixel (this file can't call those G2-Edit-local helpers directly).
@@ -559,22 +560,23 @@ void render_bank_browser(void) {
     render_rectangle_with_border(mainArea, sState.panelRect);
     set_rgb_colour((tRgb)RGB_GREY_3);
     render_rectangle(mainArea, (tRectangle){
-        {sState.panelRect.coord.x + BORDER_LINE_WIDTH, sState.panelRect.coord.y + BORDER_LINE_WIDTH},
-        {sState.panelRect.size.w - (2.0 * BORDER_LINE_WIDTH), kTitleH - BORDER_LINE_WIDTH}
-    });
+            {sState.panelRect.coord.x + BORDER_LINE_WIDTH, sState.panelRect.coord.y + BORDER_LINE_WIDTH},
+            {sState.panelRect.size.w - (2.0 * BORDER_LINE_WIDTH), kTitleH - BORDER_LINE_WIDTH}
+        });
     set_rgb_colour((tRgb)RGB_WHITE);
     render_text(mainArea, (tRectangle){
-        {sState.panelRect.coord.x + 10.0, sState.panelRect.coord.y + 6.0}, {BLANK_SIZE, STANDARD_TEXT_HEIGHT}
-    }, sState.title.c_str());
+            {sState.panelRect.coord.x + 10.0, sState.panelRect.coord.y + 6.0}, {BLANK_SIZE, STANDARD_TEXT_HEIGHT}
+        }, sState.title.c_str());
 
     draw_button(mainArea, close_button_rect(), "Close", sState.closePressed ? (tRgb)RGB_GREY_7 : (tRgb)RGB_BACKGROUND_GREY);
 
     // Message
     set_rgb_colour((tRgb)RGB_BLACK);
+
     for (size_t i = 0; i < sState.messageLines.size(); i++) {
         render_text(mainArea, (tRectangle){
-            {content_x(), message_y() + ((double)i * kMessageLineH)}, {BLANK_SIZE, STANDARD_TEXT_HEIGHT}
-        }, sState.messageLines[i].c_str());
+                {content_x(), message_y() + ((double)i * kMessageLineH)}, {BLANK_SIZE, STANDARD_TEXT_HEIGHT}
+            }, sState.messageLines[i].c_str());
     }
 
     // Sort segmented control — active segment highlighted green, same "exclusive highlight"
@@ -591,8 +593,8 @@ void render_bank_browser(void) {
     }
 
     // List
-    tRectangle listRect     = list_area_rect();
-    bool       hasScrollbar = sState.rows.size() > (size_t)kVisibleRows;
+    tRectangle               listRect       = list_area_rect();
+    bool                     hasScrollbar   = sState.rows.size() > (size_t)kVisibleRows;
 
     set_rgb_colour((tRgb)RGB_WHITE);
     render_rectangle(mainArea, listRect);
@@ -600,50 +602,39 @@ void render_bank_browser(void) {
     render_rectangle_with_border(mainArea, listRect);
 
     for (int row = 0; row < kVisibleRows; row++) {
-        int32_t index = row + (int32_t)sState.scrollOffset;
+        int32_t               index         = row + (int32_t)sState.scrollOffset;
 
         if ((index < 0) || (index >= (int32_t)sState.rows.size())) {
             continue;
         }
-        const tBankBrowserRow & r       = sState.rows[(size_t)index];
-        tRectangle               rowRect = {
-            {
-                listRect.coord.x, listRect.coord.y + ((double)row * kRowHeight)
-            }, {
-                listRect.size.w - (hasScrollbar ? LIST_SCROLLBAR_WIDTH : 0.0), kRowHeight
-            }
-        };
+        const tBankBrowserRow &r            = sState.rows[(size_t)index];
+        tRectangle            rowRect       = {
+            {listRect.coord.x, listRect.coord.y + ((double)row * kRowHeight)}, {listRect.size.w - (hasScrollbar ? LIST_SCROLLBAR_WIDTH : 0.0), kRowHeight}};
 
         // Highlight fills are inset from the list box's own left/right border by BORDER_LINE_WIDTH
         // — rowRect itself runs edge-to-edge with listRect (matching render_rectangle_with_border()'s
         // border, which is drawn as a ring just inside listRect's bounds), so painting a highlight at
         // the full rowRect width would overwrite that border on every highlighted row.
-        tRectangle highlightRect = {
-            {
-                rowRect.coord.x + BORDER_LINE_WIDTH, rowRect.coord.y
-            }, {
-                rowRect.size.w - (2.0 * BORDER_LINE_WIDTH), rowRect.size.h
-            }
-        };
+        tRectangle            highlightRect = {
+            {rowRect.coord.x + BORDER_LINE_WIDTH, rowRect.coord.y}, {rowRect.size.w - (2.0 * BORDER_LINE_WIDTH), rowRect.size.h}};
 
         if (r.kind == rowSeparator) {
             set_rgb_colour((tRgb)RGB_GREY_5);
             render_rectangle(mainArea, (tRectangle){
-                {rowRect.coord.x + 4.0, rowRect.coord.y + (kRowHeight / 2.0) - 1.0}, {rowRect.size.w - 8.0, 1.0}
-            });
+                    {rowRect.coord.x + 4.0, rowRect.coord.y + (kRowHeight / 2.0) - 1.0}, {rowRect.size.w - 8.0, 1.0}
+                });
             continue;
         }
 
         if (r.kind == rowHeader) {
             set_rgb_colour((tRgb)RGB_GREY_3);
             render_text(mainArea, (tRectangle){
-                {rowRect.coord.x + 6.0, rowRect.coord.y + 4.0}, {BLANK_SIZE, STANDARD_TEXT_HEIGHT}
-            }, truncate_to_width(r.label, rowRect.size.w - 12.0).c_str());
+                    {rowRect.coord.x + 6.0, rowRect.coord.y + 4.0}, {BLANK_SIZE, STANDARD_TEXT_HEIGHT}
+                }, truncate_to_width(r.label, rowRect.size.w - 12.0).c_str());
             continue;
         }
-
-        bool selected = (index == sState.selectedRow);
-        bool hovered   = (index == sState.hoveredRow);
+        bool                  selected      = (index == sState.selectedRow);
+        bool                  hovered       = (index == sState.hoveredRow);
 
         if (selected) {
             set_rgb_colour((tRgb)RGB_ORANGE_2);
@@ -652,24 +643,22 @@ void render_bank_browser(void) {
             set_rgb_colour((tRgb)RGB_GREY_7);
             render_rectangle(mainArea, highlightRect);
         }
-
         set_rgb_colour((tRgb)RGB_BLACK);
         render_text(mainArea, (tRectangle){
-            {rowRect.coord.x + 6.0, rowRect.coord.y + 4.0}, {BLANK_SIZE, STANDARD_TEXT_HEIGHT}
-        }, truncate_to_width(r.label, rowRect.size.w - 12.0).c_str());
+                {rowRect.coord.x + 6.0, rowRect.coord.y + 4.0}, {BLANK_SIZE, STANDARD_TEXT_HEIGHT}
+            }, truncate_to_width(r.label, rowRect.size.w - 12.0).c_str());
     }
 
     render_list_scrollbar(listRect, (int32_t)sState.rows.size(), kVisibleRows, sState.scrollOffset);
 
     // Confirm / Cancel buttons — Confirm rightmost (primary action), Cancel to its left.
     double buttonY        = button_row_y();
-    bool   confirmEnabled = (sState.selectedRow >= 0) && (sState.selectedRow < (int32_t)sState.rows.size()) &&
-                            (sState.rows[(size_t)sState.selectedRow].kind == rowNormal);
+    bool   confirmEnabled = (sState.selectedRow >= 0) && (sState.selectedRow < (int32_t)sState.rows.size())
+                            && (sState.rows[(size_t)sState.selectedRow].kind == rowNormal);
     tRgb   confirmColour  = sState.confirmPressed ? (tRgb)RGB_GREY_7 : (confirmEnabled ? (tRgb)RGB_GREEN_ON : (tRgb)RGB_GREY_5);
     tRgb   cancelColour   = sState.cancelPressed ? (tRgb)RGB_GREY_7 : (tRgb)RGB_BACKGROUND_GREY;
 
     draw_button(mainArea, button_rect(0, buttonY), sState.confirmLabel.c_str(), confirmColour);
     draw_button(mainArea, button_rect(1, buttonY), "Cancel", cancelColour);
 }
-
 } // extern "C"
