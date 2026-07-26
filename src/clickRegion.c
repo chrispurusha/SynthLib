@@ -35,7 +35,20 @@ typedef struct {
 } tClickRegion;
 
 static tClickRegion sRegions[MAX_CLICK_REGIONS];
-static uint32_t     sRegionCount = 0;
+static uint32_t     sRegionCount   = 0;
+
+// In-flight press capture — see eClickPhase's comment in clickRegion.h. Deliberately a COPY of the
+// region rather than an index into sRegions: regions are rebuilt from scratch every frame
+// (clear_click_regions), so an index would dangle or silently point at a different widget by the
+// time the release arrives. The copy also keeps the capture valid if the widget stops registering
+// mid-gesture (scrolled away, page switched), which is exactly when the release still has to be
+// delivered so the handler can unwind whatever the press started.
+static tClickRegion sCapture       = {0};
+static bool         sCaptureActive = false;
+
+void cancel_click_region_capture(void) {
+    sCaptureActive = false;
+}
 
 void clear_click_regions(void) {
     sRegionCount = 0;
@@ -54,9 +67,27 @@ void register_click_region(tRectangle rect, eClickLayer layer, tClickHandler han
 }
 
 bool dispatch_click_region(tCoord coord, eClickPhase phase) {
+    // A captured press owns its release outright — no coordinate lookup, so dragging off the widget
+    // (or onto a different one) still delivers to whoever started the gesture.
+    if ((phase == eClickRelease) && sCaptureActive) {
+        bool          inside   = within_rectangle(coord, sCapture.rect);
+        tClickHandler handler  = sCapture.handler;
+        void *        userData = sCapture.userData;
+
+        // Cleared BEFORE the call: a handler is free to open a modal, trigger a rescan, or otherwise
+        // re-enter dispatch, and must not find a stale capture still armed when it does.
+        sCaptureActive = false;
+        handler(coord, inside ? eClickRelease : eClickReleaseOutside, userData);
+        return true;
+    }
+
     for (eClickLayer layer = eClickLayerModal; ; layer--) {
         for (int32_t i = (int32_t)sRegionCount - 1; i >= 0; i--) {
             if ((sRegions[i].layer == layer) && within_rectangle(coord, sRegions[i].rect)) {
+                if (phase == eClickPress) {
+                    sCapture       = sRegions[i];
+                    sCaptureActive = true;
+                }
                 sRegions[i].handler(coord, phase, sRegions[i].userData);
                 return true;
             }
@@ -67,6 +98,10 @@ bool dispatch_click_region(tCoord coord, eClickPhase phase) {
         }
     }
 
+    // A press that hit nothing leaves no capture, so the matching release falls through to the
+    // coordinate lookup above exactly as it always did — apps that route releases here for widgets
+    // whose press was consumed elsewhere (before dispatch_click_region was ever reached) keep their
+    // existing behaviour.
     return false;
 }
 

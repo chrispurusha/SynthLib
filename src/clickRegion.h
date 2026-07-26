@@ -58,13 +58,31 @@ typedef enum {
     eClickLayerCount
 } eClickLayer;
 
+// eClickPress CAPTURES: the region that handles a press owns the matching release, wherever the
+// cursor has moved to by then (standard mouse-capture behaviour — the registry used to look the
+// release up by coordinate like any other event, so a press-and-drag-off delivered the release to
+// whatever happened to be under the cursor, or to nothing at all). The captured handler is called
+// with eClickRelease if the release landed back inside its rect, or eClickReleaseOutside if not.
+//
+// A handler that only tests `phase == eClickRelease` therefore gets press-and-drag-off-cancels for
+// free, which is what a click is normally expected to do. Handlers that must act on the release
+// either way — anything that latched state or sent something on the press that has to be undone,
+// e.g. a device key-down needing its key-up — should treat both the same, typically by testing
+// `phase == eClickPress` for the down case and handling everything else as the up case.
 typedef enum {
     eClickPress = 0,
-    eClickRelease,
+    eClickRelease,        // release inside the capturing region — the "clicked" case
+    eClickReleaseOutside, // release after dragging off the capturing region — the "cancelled" case
     eClickDrag
 } eClickPhase;
 
 typedef void (*tClickHandler)(tCoord coord, eClickPhase phase, void * userData);
+
+// Drops any in-flight press capture. Only needed when something outside the registry takes over
+// input mid-gesture (a modal opening on top, a device disconnect abandoning the interaction) and the
+// captured handler must NOT be told about the eventual release. Normal press/release pairs clear the
+// capture themselves.
+void cancel_click_region_capture(void);
 
 void clear_click_regions(void);
 void register_click_region(tRectangle rect, eClickLayer layer, tClickHandler handler, void * userData);
