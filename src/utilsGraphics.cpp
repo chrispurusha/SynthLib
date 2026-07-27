@@ -747,10 +747,24 @@ tRectangle draw_power_button(tArea area, tRectangle rectangle, bool active) {
     return retRectangle;
 }
 
+// draw_button() draws a box DRAW_BUTTON_MARGIN pixels larger than the rect it is
+// handed (padding around the text), anchored at the same top-left — so the button
+// visually extends DRAW_BUTTON_MARGIN*2 further right and down than the input rect.
+// draw_button() RETURNS that true drawn rect, and callers must hit-test against it,
+// not the pre-expansion rect, or the bottom/right padding strip is visible-but-dead.
+// draw_button_bounds() reports the same rect without drawing, for the many hit-test
+// sites that recompute a button's rect separately from where it is drawn (the popup
+// dialogs, panel buttons) rather than storing draw_button()'s return value.
+tRectangle draw_button_bounds(tRectangle rectangle) {
+    rectangle.size.w += (2 * DRAW_BUTTON_MARGIN);
+    rectangle.size.h += (2 * DRAW_BUTTON_MARGIN);
+    return rectangle;
+}
+
 tRectangle draw_button(tArea area, tRectangle rectangle, const char * text, tRgb backgroundColour) {
     tRectangle retRectangle    = {0};
     double     borderLineWidth = 1.0;
-    double     margin          = 2.0;
+    double     margin          = DRAW_BUTTON_MARGIN;
     tRectangle textRectangle   = rectangle;
 
     rectangle.size.w       = rectangle.size.w + (2 * margin);

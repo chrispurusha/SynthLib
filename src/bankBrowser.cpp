@@ -392,9 +392,9 @@ void handle_bank_browser_mouse_down(tCoord coord) {
     if (!sState.active) {
         return;
     }
-    sState.closePressed   = within_rectangle(coord, close_button_rect());
-    sState.cancelPressed  = within_rectangle(coord, button_rect(1, button_row_y()));
-    sState.confirmPressed = within_rectangle(coord, button_rect(0, button_row_y()));
+    sState.closePressed   = within_rectangle(coord, draw_button_bounds(close_button_rect()));
+    sState.cancelPressed  = within_rectangle(coord, draw_button_bounds(button_rect(1, button_row_y())));
+    sState.confirmPressed = within_rectangle(coord, draw_button_bounds(button_rect(0, button_row_y())));
     list_scrollbar_mouse_down(list_area_rect(), (int32_t)sState.rows.size(), kVisibleRows, sState.scrollOffset, coord);
     synthlib_request_redraw();
 }
@@ -425,13 +425,13 @@ bool handle_bank_browser_click(tCoord coord) {
         return true; // Modal — swallow clicks outside without closing (matches other G2-Edit popups)
     }
 
-    if (within_rectangle(coord, close_button_rect())) {
+    if (within_rectangle(coord, draw_button_bounds(close_button_rect()))) {
         finish_browse(false, 0, 0);
         return true;
     }
 
     for (int i = 0; i < 3; i++) {
-        if (within_rectangle(coord, sort_button_rect(i))) {
+        if (within_rectangle(coord, draw_button_bounds(sort_button_rect(i)))) {
             bool disabled = (i == 1) && sState.categoryNames.empty();
 
             if (!disabled && (sState.sortMode != i)) {
@@ -466,8 +466,8 @@ bool handle_bank_browser_click(tCoord coord) {
         }
         return true;
     }
-    bool       wantsConfirm    = within_rectangle(coord, button_rect(0, button_row_y()));
-    bool       wantsCancel     = within_rectangle(coord, button_rect(1, button_row_y()));
+    bool       wantsConfirm    = within_rectangle(coord, draw_button_bounds(button_rect(0, button_row_y())));
+    bool       wantsCancel     = within_rectangle(coord, draw_button_bounds(button_rect(1, button_row_y())));
 
     if (wantsCancel) {
         finish_browse(false, 0, 0);

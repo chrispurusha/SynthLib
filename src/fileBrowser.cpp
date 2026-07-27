@@ -494,9 +494,9 @@ void handle_file_browser_mouse_down(tCoord coord) {
     if (!sState.active) {
         return;
     }
-    sState.closePressed   = within_rectangle(coord, close_button_rect());
-    sState.cancelPressed  = within_rectangle(coord, button_rect(1, button_row_y()));
-    sState.confirmPressed = within_rectangle(coord, button_rect(0, button_row_y()));
+    sState.closePressed   = within_rectangle(coord, draw_button_bounds(close_button_rect()));
+    sState.cancelPressed  = within_rectangle(coord, draw_button_bounds(button_rect(1, button_row_y())));
+    sState.confirmPressed = within_rectangle(coord, draw_button_bounds(button_rect(0, button_row_y())));
     list_scrollbar_mouse_down(list_area_rect(), (int32_t)sState.entries.size(), kVisibleRows, sState.scrollOffset, coord);
     synthlib_request_redraw();
 }
@@ -531,12 +531,12 @@ bool handle_file_browser_click(tCoord coord) {
     // from it — re-armed to true only if the click actually landed there.
     sState.filenameFocused = false;
 
-    if (within_rectangle(coord, close_button_rect())) {
+    if (within_rectangle(coord, draw_button_bounds(close_button_rect()))) {
         finish_browse(nullptr);
         return true;
     }
 
-    if (within_rectangle(coord, up_button_rect())) {
+    if (within_rectangle(coord, draw_button_bounds(up_button_rect()))) {
         fs::path parent = fs::path(sState.currentDir).parent_path();
 
         if (!parent.empty()) {
@@ -609,8 +609,8 @@ bool handle_file_browser_click(tCoord coord) {
         return true;
     }
 
-    bool wantsConfirm = within_rectangle(coord, button_rect(0, button_row_y()));
-    bool wantsCancel  = within_rectangle(coord, button_rect(1, button_row_y()));
+    bool wantsConfirm = within_rectangle(coord, draw_button_bounds(button_rect(0, button_row_y())));
+    bool wantsCancel  = within_rectangle(coord, draw_button_bounds(button_rect(1, button_row_y())));
 
     if (wantsCancel) {
         finish_browse(nullptr);

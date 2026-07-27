@@ -289,14 +289,14 @@ void handle_alert_dialog_mouse_down(tCoord coord) {
     if (!sState.active) {
         return;
     }
-    sState.closePressed  = within_rectangle(coord, close_button_rect());
-    sState.pickerPressed = (sState.kind == alertKindBankConfirm) && within_rectangle(coord, picker_button_rect());
+    sState.closePressed  = within_rectangle(coord, draw_button_bounds(close_button_rect()));
+    sState.pickerPressed = (sState.kind == alertKindBankConfirm) && within_rectangle(coord, draw_button_bounds(picker_button_rect()));
 
     if (sState.kind == alertKindInfo) {
-        sState.confirmPressed = within_rectangle(coord, button_rect(0, button_row_y()));
+        sState.confirmPressed = within_rectangle(coord, draw_button_bounds(button_rect(0, button_row_y())));
     } else {
-        sState.cancelPressed  = within_rectangle(coord, button_rect(1, button_row_y()));
-        sState.confirmPressed = within_rectangle(coord, button_rect(0, button_row_y()));
+        sState.cancelPressed  = within_rectangle(coord, draw_button_bounds(button_rect(1, button_row_y())));
+        sState.confirmPressed = within_rectangle(coord, draw_button_bounds(button_rect(0, button_row_y())));
     }
     synthlib_request_redraw();
 }
@@ -314,26 +314,26 @@ bool handle_alert_dialog_click(tCoord coord) {
         return true; // Modal — swallow clicks outside without closing (matches other G2-Edit popups)
     }
 
-    if (within_rectangle(coord, close_button_rect())) {
+    if (within_rectangle(coord, draw_button_bounds(close_button_rect()))) {
         finish_dialog(false);
         return true;
     }
 
-    if ((sState.kind == alertKindBankConfirm) && within_rectangle(coord, picker_button_rect())) {
+    if ((sState.kind == alertKindBankConfirm) && within_rectangle(coord, draw_button_bounds(picker_button_rect()))) {
         open_context_menu(below_rect(picker_button_rect()), sState.bankMenuItems.data(),
                           (uint32_t)std::min<uint32_t>(8, sState.maxBank1Indexed), 0.0);
         return true;
     }
 
     if (sState.kind == alertKindInfo) {
-        if (within_rectangle(coord, button_rect(0, button_row_y()))) {
+        if (within_rectangle(coord, draw_button_bounds(button_rect(0, button_row_y())))) {
             finish_dialog(true);
         }
         return true;
     }
 
-    bool wantsConfirm = within_rectangle(coord, button_rect(0, button_row_y()));
-    bool wantsCancel  = within_rectangle(coord, button_rect(1, button_row_y()));
+    bool wantsConfirm = within_rectangle(coord, draw_button_bounds(button_rect(0, button_row_y())));
+    bool wantsCancel  = within_rectangle(coord, draw_button_bounds(button_rect(1, button_row_y())));
 
     if (wantsCancel) {
         finish_dialog(false);

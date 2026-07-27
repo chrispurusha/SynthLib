@@ -146,6 +146,7 @@ void usb_log_text(const char * fmt, ...);
 #define MODULE_Y_GAP             (5.0)
 #define MODULE_Y_SPAN            (MODULE_HEIGHT + MODULE_Y_GAP)
 #define BORDER_LINE_WIDTH        (2.0)
+#define DRAW_BUTTON_MARGIN       (2.0)   // padding draw_button() adds around a button's text (see draw_button_bounds)
 #define STANDARD_TEXT_HEIGHT     (12.0)
 #define BLANK_SIZE               (0.0)
 #define SCROLLBAR_WIDTH          (15.0)

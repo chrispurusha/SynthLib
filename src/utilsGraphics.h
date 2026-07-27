@@ -68,6 +68,7 @@ tRectangle render_circle_part_angle(tArea area, tCoord coord, double radius, dou
 tRectangle render_radial_line(tArea area, tCoord coord, double radius, double angleDegrees, double thickness);
 tRectangle draw_power_button(tArea area, tRectangle rectangle, bool active);
 tRectangle draw_button(tArea area, tRectangle rectangle, const char * text, tRgb backgroundColour);
+tRectangle draw_button_bounds(tRectangle rectangle);   // the true clickable rect draw_button() draws for a given input
 tRectangle draw_slider(tArea area, tRectangle rectangle, uint32_t value, uint32_t range, uint32_t morphRange, tRgb colour);
 tRectangle render_bezier_curve(tArea area, tCoord start, tCoord control, tCoord end, double thickness, int segments);
 tRectangle render_text(tArea area, tRectangle rectangle, const char * text);
