@@ -40,39 +40,44 @@ extern "C" {
 #include "geometry.h"
 #include "utilsGraphics.h"
 
-// Glyph atlas sizing.
+// Glyph atlases.
 //
-// The atlas is rasterized at the size text is ACTUALLY drawn at on screen, and re-rasterized
-// when that size changes (window resize, display scale change, zoom). A fixed rasterization
-// size is wrong in both directions: once on-screen text grows past it the glyphs are magnified
-// (blurry), and once it drops well below, they are heavily minified through a bilinear filter
-// which undersamples and looks blocky — that was the small-window / non-Retina complaint.
+// Text is rendered from a glyph bitmap rasterized at the integer pixel height it is actually
+// drawn at, and blitted 1:1 to integer framebuffer pixels. Anything else resamples the glyph:
+// a fixed rasterization size has to be scaled to fit, and that final bilinear resample at an
+// arbitrary sub-pixel phase smears away exactly the stem alignment FreeType's hinter just
+// produced. On a 2x display there are enough pixels to hide it; at 1x, where the UI can scale
+// text down to ~6px, it turns small text to mush.
 //
-// The trigger is the drawn text height itself rather than gGlobalGuiScale, because module text
-// is additionally scaled by gZoomFactor: only the final drawn height sees both.
-#define GLYPH_ATLAS_PADDING          (2)          // transparent gap between glyphs, in atlas pixels
-#define GLYPH_ATLAS_MIN_PX           (16.0)
-#define GLYPH_ATLAS_MAX_PX           (256.0)
-#define GLYPH_ATLAS_STEP_PX          (8.0)        // rasterization sizes are quantised to this, so a
-                                                  // live resize drag causes a few rebuilds, not one per frame
-#define GLYPH_ATLAS_GROW_HEADROOM    (1.1)        // rebuild slightly larger than needed, to stop a
-                                                  // frame with a range of text sizes growing repeatedly
-#define GLYPH_ATLAS_SUPERSAMPLE      (2.0)        // rasterize this much larger than the biggest text
-                                                  // drawn. One atlas serves every text size, so sizes
-                                                  // below the biggest are still minified — rasterizing
-                                                  // at exactly the biggest washes hairline features
-                                                  // (the dot of a decimal point) out of the smaller text.
-#define GLYPH_ATLAS_SHRINK_RATIO    (0.6)         // only rebuild smaller below this fraction (hysteresis)
-#define GLYPH_ATLAS_CHECK_DRAWS     (512)         // text draws between shrink checks (a few frames)
+// So atlases are keyed by integer drawn height and cached (in practice a running app needs only
+// two or three: G2-Edit at a 700px window on a 1x display draws text at just 6.6px and 4.6px).
+// The height is the drawn height rather than anything derived from gGlobalGuiScale, because
+// module text is additionally scaled by gZoomFactor and only the drawn height sees both.
+//
+// Layout is deliberately NOT driven by these atlases. get_text_width() and everything built on
+// it stay on one canonical set of metrics (gCanonInfo, taken once at a reference size), so text
+// widths remain continuous and proportional and boxes fit exactly as before. Only the glyph
+// images and their final pixel positions come from the sized atlas.
+#define GLYPH_ATLAS_PADDING       (2)    // transparent gap between glyphs, in atlas pixels
+#define GLYPH_ATLAS_MIN_PX        (4)    // below this there is no glyph left to draw
+#define GLYPH_ATLAS_MAX_PX        (256)
+#define GLYPH_ATLAS_CACHE_SIZE    (6)    // distinct drawn text heights kept resident
+#define GLYPH_REFERENCE_PX        (72.0) // size the canonical layout metrics are taken at
 
-static GlyphInfo      glyphInfo[MAX_GLYPH_CHAR]              = {0};  // Array to store glyph metadata TODO: Not being freed!?
-static GLuint         textureAtlas                           = 0;    // OpenGL texture handle
-static int            atlasWidth                             = 0;    // Atlas width, sized to the rasterized glyphs
-static int            atlasHeight                            = 0;    // Atlas height, sized to the rasterized glyphs
-static char *         gFontPath                              = NULL; // Retained so the atlas can be rebuilt
-static double         gAtlasFontSize                         = 0.0;  // FreeType pixel size the atlas holds
-static double         gObservedMaxTextPx                     = 0.0;  // Largest drawn text height seen this check window
-static int            gTextDrawCount                         = 0;
+typedef struct {
+    int       pixelHeight;                   // key: drawn text height this atlas serves, 0 when unused
+    GLuint    texture;
+    int       width;
+    int       height;
+    uint64_t  lastUsed;
+    GlyphInfo info[MAX_GLYPH_CHAR];
+} tSizedAtlas;
+
+static tSizedAtlas    gAtlasCache[GLYPH_ATLAS_CACHE_SIZE]    = {};
+static uint64_t       gAtlasUseCounter                       = 0;
+static GlyphInfo      gCanonInfo[MAX_GLYPH_CHAR]             = {0};  // canonical layout metrics, never drawn from
+static char *         gFontPath                              = NULL; // retained so atlases can be built on demand
+static double         gCanonEmPx                             = 0.0;  // gMaxAscent + gMaxDescent at GLYPH_REFERENCE_PX
 
 // Text widths are derived from the glyph metrics, so the cache has to be dropped whenever the
 // atlas is re-rasterized (hinting means widths are not exactly proportional across sizes).
@@ -88,7 +93,7 @@ static void clear_text_width_cache(void) {
     gTextWidthCacheCount = 0;
 }
 
-static void track_text_size(double requestedTextPx);                // defined with the glyph atlas code below
+static tSizedAtlas * atlas_for_height(int pixelHeight);             // defined with the glyph atlas code below
 static double         gMaxAscent                             = 0.0; // Used for dealing with preloaded text character height
 static double         gMaxDescent                            = 0.0;
 static double         gMetricsHeight                         = 0.0;
@@ -334,33 +339,49 @@ static void internal_render_circle_line_part_angle(tCoord coord, double radius, 
 }
 
 static void internal_render_text(tRectangle rectangle, const char * text) {
-    double       scaleFactor = 0.0;
-    const char * ch          = NULL;
+    double        scaleFactor = 0.0;
+    const char *  ch          = NULL;
 
     if (text == NULL) {
         //LOG_ERROR("render_text text=NULL\n");
         return;
     }
-    // rectangle is already in framebuffer pixels here, so this is the true on-screen text
-    // height — the size the atlas wants to be rasterized at. May rebuild the atlas, so it
-    // has to happen before the texture is bound below.
-    track_text_size(rectangle.size.h);
 
+    if (*text == '\0') {
+        return;
+    }
+    // rectangle is already in framebuffer pixels, so this is the true on-screen text height.
+    // Round it to whole pixels and draw from a glyph atlas rasterized at exactly that size.
+    int           pixelHeight = (int)lround(rectangle.size.h);
+    tSizedAtlas * atlas       = atlas_for_height(pixelHeight);
+
+    if (atlas == NULL) {
+        return;
+    }
     glEnable(GL_TEXTURE_2D);
-    glBindTexture(GL_TEXTURE_2D, textureAtlas);
+    glBindTexture(GL_TEXTURE_2D, atlas->texture);
 
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 
-    glPushMatrix();
-
-    // Calculate scale factor based on target height
+    // No glScalef: glyphs are blitted at their rasterized size, one texel per pixel. Positions are
+    // snapped to whole pixels so that stays true for every glyph in the string.
     scaleFactor = rectangle.size.h / (gMaxAscent + gMaxDescent);
-    glTranslatef(rectangle.coord.x, rectangle.coord.y, 0);
-    glScalef(scaleFactor, scaleFactor, 1.0);
 
+    // The baseline comes from the CANONICAL ascent, exactly where it sat before glyphs were
+    // rasterized per size, and is rounded once. Deriving it from the atlas's own ascent instead
+    // would round a second time against a rasterization whose em height only approximates the
+    // requested one — which drops the text up to a pixel, and by differing amounts for different
+    // text sizes, so some labels sit low and others don't.
+    double originX     = round(rectangle.coord.x);
+    double baselineY   = round(rectangle.coord.y + (gMaxAscent * scaleFactor));
+
+    // The pen advances by the CANONICAL advance, scaled to this size, so a string occupies
+    // exactly the width get_text_width() predicted for it. Only the position each glyph is
+    // finally drawn at is rounded, which costs sub-pixel letter spacing and buys pixel
+    // alignment — the right trade at these sizes.
     double xCharOffset = 0.0;
 
     ch          = text;
@@ -372,7 +393,7 @@ static void internal_render_text(tRectangle rectangle, const char * text) {
         if (character >= MAX_GLYPH_CHAR) {
             character = '?';
         }
-        GlyphInfo *   glyph     = &glyphInfo[character];
+        GlyphInfo *   glyph     = &atlas->info[character];
 
         // Texture coordinates for the glyph
         double        u1        = glyph->u1;
@@ -380,32 +401,28 @@ static void internal_render_text(tRectangle rectangle, const char * text) {
         double        u2        = glyph->u2;
         double        v2        = glyph->v2;
 
-        // Character position and size
-        double        xPos      = glyph->offset_x + xCharOffset;
-        double        yPos      = (gMaxAscent - glyph->offset_y);
+        // Whole-pixel placement, using this atlas's own hinted bearings
+        double        xPos      = round(originX + xCharOffset) + glyph->offset_x;
+        double        yPos      = baselineY - glyph->offset_y;
         double        w         = glyph->width;
         double        h         = glyph->height;
 
-        // Render the character quad
-        glBegin(GL_QUADS);
-        glTexCoord2f(u1, v1);
-        glVertex2f(xPos, yPos);                                     // Bottom-left
-        glTexCoord2f(u2, v1);
-        glVertex2f(xPos + w, yPos);                                 // Bottom-right
-        glTexCoord2f(u2, v2);
-        glVertex2f(xPos + w, yPos + h);                             // Top-right
-        glTexCoord2f(u1, v2);
-        glVertex2f(xPos, yPos + h);                                 // Top-left
-        glEnd();
-
-        // Adjust the position for the next character (add some space between them)
-        //glTranslatef(glyph->advance_x /*+ 1.0f*/, 0, 0);
-        xCharOffset += glyph->advance_x;
+        if ((w > 0.0) && (h > 0.0)) {
+            glBegin(GL_QUADS);
+            glTexCoord2f(u1, v1);
+            glVertex2f(xPos, yPos);                                 // Bottom-left
+            glTexCoord2f(u2, v1);
+            glVertex2f(xPos + w, yPos);                             // Bottom-right
+            glTexCoord2f(u2, v2);
+            glVertex2f(xPos + w, yPos + h);                         // Top-right
+            glTexCoord2f(u1, v2);
+            glVertex2f(xPos, yPos + h);                             // Top-left
+            glEnd();
+        }
+        xCharOffset += gCanonInfo[character].advance_x * scaleFactor;
 
         ch++;
     }
-    glPopMatrix();
-
     glDisable(GL_TEXTURE_2D);
     glDisable(GL_BLEND);
 }
@@ -1068,9 +1085,11 @@ static bool layout_glyph_atlas(tGlyphRaster * raster, int * outWidth, int * outH
     return true;
 }
 
-// Rasterizes the font at fontSize pixels and replaces the atlas texture. The existing atlas is
-// only torn down once the new one has been built, so a failure here leaves text still rendering.
-static bool build_glyph_atlas(const char * fontPath, double fontSize) {
+// Rasterizes the font at fontSize pixels into a self-contained atlas. Nothing global is touched
+// until it has fully succeeded, so a failure here leaves existing text rendering untouched.
+// When outAtlas is NULL only the metrics are produced (used for the canonical layout metrics,
+// which never need a texture).
+static bool build_glyph_atlas(const char * fontPath, double fontSize, tSizedAtlas * outAtlas, GlyphInfo * outMetrics, double * outAscent, double * outDescent) {
     FT_Library   ftLibrary              = {0};
     FT_Face      face                   = {0};
     tGlyphRaster raster[MAX_GLYPH_CHAR] = {};
@@ -1107,7 +1126,7 @@ static bool build_glyph_atlas(const char * fontPath, double fontSize) {
             continue;
         }
 
-        if (FT_Load_Glyph(face, glyphIndex, FT_LOAD_DEFAULT)) {
+        if (FT_Load_Glyph(face, glyphIndex, FT_LOAD_TARGET_LIGHT)) {
             LOG_DEBUG("Failed to load glyph for character %c\n", charCode);
             continue;
         }
@@ -1143,8 +1162,8 @@ static bool build_glyph_atlas(const char * fontPath, double fontSize) {
         raster[charCode].offsetX  = face->glyph->bitmap_left;
         raster[charCode].offsetY  = face->glyph->bitmap_top;
         // The extra spacing is expressed in atlas pixels, so it has to scale with the
-        // rasterization size — otherwise letter spacing would shift on every rebuild.
-        raster[charCode].advanceX = ((double)face->glyph->advance.x / 64.0) + (fontSize / 72.0);
+        // rasterization size — otherwise letter spacing would shift between sizes.
+        raster[charCode].advanceX = ((double)face->glyph->advance.x / 64.0) + (fontSize / GLYPH_REFERENCE_PX);
 
         if ((bitmap->width > 0) && (bitmap->rows > 0)) {
             raster[charCode].alpha = (unsigned char *)malloc((size_t)bitmap->width * (size_t)bitmap->rows);
@@ -1170,6 +1189,31 @@ static bool build_glyph_atlas(const char * fontPath, double fontSize) {
         LOG_ERROR("Font %s produced no usable glyphs\n", fontPath);
         free_glyph_rasters(raster);
         return false;
+    }
+
+    if (outAscent != NULL) {
+        *outAscent = maxAscent;
+    }
+
+    if (outDescent != NULL) {
+        *outDescent = maxDescent;
+    }
+
+    if (outAtlas == NULL) {
+        // Metrics-only build: fill the caller's metrics table straight from the rasters.
+        for (int charCode = 0; charCode < MAX_GLYPH_CHAR; charCode++) {
+            if (!raster[charCode].valid) {
+                continue;
+            }
+            outMetrics[charCode].advance_x = raster[charCode].advanceX;
+            outMetrics[charCode].width     = raster[charCode].width;
+            outMetrics[charCode].height    = raster[charCode].height;
+            outMetrics[charCode].offset_x  = raster[charCode].offsetX;
+            outMetrics[charCode].offset_y  = raster[charCode].offsetY;
+        }
+
+        free_glyph_rasters(raster);
+        return true;
     }
     int             newWidth    = 0;
     int             newHeight   = 0;
@@ -1207,118 +1251,134 @@ static bool build_glyph_atlas(const char * fontPath, double fontSize) {
             }
         }
 
-        glyphInfo[charCode].u1        = (double)raster[charCode].atlasX / (double)newWidth;
-        glyphInfo[charCode].v1        = (double)raster[charCode].atlasY / (double)newHeight;
-        glyphInfo[charCode].u2        = (double)(raster[charCode].atlasX + raster[charCode].width) / (double)newWidth;
-        glyphInfo[charCode].v2        = (double)(raster[charCode].atlasY + raster[charCode].height) / (double)newHeight;
-        glyphInfo[charCode].advance_x = raster[charCode].advanceX;
-        glyphInfo[charCode].width     = raster[charCode].width;
-        glyphInfo[charCode].height    = raster[charCode].height;
-        glyphInfo[charCode].offset_x  = raster[charCode].offsetX;
-        glyphInfo[charCode].offset_y  = raster[charCode].offsetY;
+        outAtlas->info[charCode].u1        = (double)raster[charCode].atlasX / (double)newWidth;
+        outAtlas->info[charCode].v1        = (double)raster[charCode].atlasY / (double)newHeight;
+        outAtlas->info[charCode].u2        = (double)(raster[charCode].atlasX + raster[charCode].width) / (double)newWidth;
+        outAtlas->info[charCode].v2        = (double)(raster[charCode].atlasY + raster[charCode].height) / (double)newHeight;
+        outAtlas->info[charCode].advance_x = raster[charCode].advanceX;
+        outAtlas->info[charCode].width     = raster[charCode].width;
+        outAtlas->info[charCode].height    = raster[charCode].height;
+        outAtlas->info[charCode].offset_x  = raster[charCode].offsetX;
+        outAtlas->info[charCode].offset_y  = raster[charCode].offsetY;
     }
 
     free_glyph_rasters(raster);
 
-    if (textureAtlas != 0) {
-        glDeleteTextures(1, &textureAtlas);
-        textureAtlas = 0;
+    if (outAtlas->texture != 0) {
+        glDeleteTextures(1, &outAtlas->texture);
+        outAtlas->texture = 0;
     }
-    glGenTextures(1, &textureAtlas);
-    glBindTexture(GL_TEXTURE_2D, textureAtlas);
+    glGenTextures(1, &outAtlas->texture);
+    glBindTexture(GL_TEXTURE_2D, outAtlas->texture);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, newWidth, newHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, atlasBuffer);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    // GL_NEAREST: glyphs are blitted one texel per pixel, so any filtering here could only blur
+    // a sample that already lands dead centre on its texel.
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
     free(atlasBuffer);
 
-    atlasWidth     = newWidth;
-    atlasHeight    = newHeight;
-    gAtlasFontSize = fontSize;
-    gMaxAscent     = maxAscent;
-    gMaxDescent    = maxDescent;
-    gMetricsHeight = maxAscent + maxDescent;
-    clear_text_width_cache();   // cached widths came from the previous rasterization
+    outAtlas->width  = newWidth;
+    outAtlas->height = newHeight;
 
-    LOG_DEBUG("Glyph atlas rebuilt at %.0fpx (%dx%d)\n", fontSize, newWidth, newHeight);
+    LOG_DEBUG("Glyph atlas built at %.0fpx (%dx%d)\n", fontSize, newWidth, newHeight);
     return true;
 }
 
-static double quantise_font_size(double fontSize) {
-    fontSize = round(fontSize / GLYPH_ATLAS_STEP_PX) * GLYPH_ATLAS_STEP_PX;
-
-    if (fontSize < GLYPH_ATLAS_MIN_PX) {
-        fontSize = GLYPH_ATLAS_MIN_PX;
+// Returns the atlas rasterized for text of this drawn pixel height, building it on first use and
+// evicting the least recently used entry when the cache is full. In practice an app settles on
+// two or three sizes, so this builds a handful of times at startup and then never again until the
+// window is resized or zoomed.
+static tSizedAtlas * atlas_for_height(int pixelHeight) {
+    if ((gFontPath == NULL) || (gCanonEmPx <= 0.0)) {
+        return NULL;
     }
 
-    if (fontSize > GLYPH_ATLAS_MAX_PX) {
-        fontSize = GLYPH_ATLAS_MAX_PX;
+    if (pixelHeight < GLYPH_ATLAS_MIN_PX) {
+        pixelHeight = GLYPH_ATLAS_MIN_PX;
     }
-    return fontSize;
+
+    if (pixelHeight > GLYPH_ATLAS_MAX_PX) {
+        pixelHeight = GLYPH_ATLAS_MAX_PX;
+    }
+    tSizedAtlas * victim   = &gAtlasCache[0];
+
+    for (int i = 0; i < GLYPH_ATLAS_CACHE_SIZE; i++) {
+        if (gAtlasCache[i].pixelHeight == pixelHeight) {
+            gAtlasCache[i].lastUsed = ++gAtlasUseCounter;
+            return &gAtlasCache[i];
+        }
+
+        if ((gAtlasCache[i].pixelHeight == 0) || (gAtlasCache[i].lastUsed < victim->lastUsed)) {
+            victim = &gAtlasCache[i];
+        }
+    }
+
+    // FreeType is asked for a pixel size, not an em height, so convert through the ratio the
+    // reference rasterization actually produced rather than assuming a relationship between them.
+    double        fontSize = ((double)pixelHeight * GLYPH_REFERENCE_PX) / gCanonEmPx;
+
+    if (fontSize < 1.0) {
+        fontSize = 1.0;
+    }
+    tSizedAtlas   built    = {};
+
+    built.texture     = victim->texture; // reuse the evicted texture name; build_glyph_atlas frees it
+
+    if (!build_glyph_atlas(gFontPath, fontSize, &built, NULL, NULL, NULL)) {
+        return NULL;
+    }
+    built.pixelHeight = pixelHeight;
+    built.lastUsed    = ++gAtlasUseCounter;
+    *victim           = built;
+    return victim;
 }
 
-// Called for every text draw with the height that text is about to occupy in framebuffer
-// pixels. Grows the atlas straight away when text no longer fits it (magnified text is
-// visibly blurry), but shrinks only once a whole check window has stayed small, so that a
-// transient large label doesn't cause the atlas to oscillate.
-static void track_text_size(double requestedTextPx) {
-    double em            = gMaxAscent + gMaxDescent;
-
-    if ((gFontPath == NULL) || (em <= 0.0) || (requestedTextPx <= 0.0)) {
-        return;
-    }
-
-    if (requestedTextPx > gObservedMaxTextPx) {
-        gObservedMaxTextPx = requestedTextPx;
-    }
-    // The atlas is sized so the largest text sits at GLYPH_ATLAS_SUPERSAMPLE times its drawn size.
-    bool   grow          = (requestedTextPx * GLYPH_ATLAS_SUPERSAMPLE) > (em * GLYPH_ATLAS_GROW_HEADROOM);
-    bool   windowElapsed = (++gTextDrawCount >= GLYPH_ATLAS_CHECK_DRAWS);
-    bool   shrink        = windowElapsed && ((gObservedMaxTextPx * GLYPH_ATLAS_SUPERSAMPLE) < (em * GLYPH_ATLAS_SHRINK_RATIO));
-    double target        = (grow ? requestedTextPx : gObservedMaxTextPx) * GLYPH_ATLAS_SUPERSAMPLE;
-
-    if (windowElapsed) {
-        gTextDrawCount     = 0;
-        gObservedMaxTextPx = 0.0;
-    }
-
-    if (!grow && !shrink) {
-        return;
-    }
-    // em/fontSize is font specific but stable, so scale the current rasterization size by the
-    // ratio of wanted to actual em height rather than assuming a relationship between them.
-    double newFontSize   = quantise_font_size(gAtlasFontSize * (target / em));
-
-    if (fabs(newFontSize - gAtlasFontSize) < 0.5) {
-        return;     // already as close as the quantisation allows (or clamped at a limit)
-    }
-    build_glyph_atlas(gFontPath, newFontSize);
-}
-
+// Establishes the canonical layout metrics. fontSize is only the size those metrics are measured
+// at — it no longer fixes how text is rasterized, since widths are normalised by the em height
+// and the drawn glyphs come from an atlas built per drawn size. Validating the font here keeps
+// the existing "try each path until one loads" behaviour in the embedding apps working.
 bool preload_glyph_textures(const char * fontPath, double fontSize) {
+    GlyphInfo canonInfo[MAX_GLYPH_CHAR] = {0};
+    double    maxAscent                 = 0.0;
+    double    maxDescent                = 0.0;
+
+    (void)fontSize;
+
     if (fontPath == NULL) {
         return false;
     }
 
-    if (!build_glyph_atlas(fontPath, quantise_font_size(fontSize))) {
+    if (!build_glyph_atlas(fontPath, GLYPH_REFERENCE_PX, NULL, canonInfo, &maxAscent, &maxDescent)) {
         return false;
     }
-    free(gFontPath);
-    gFontPath          = strdup(fontPath);      // retained so the atlas can be re-rasterized on resize
-    gObservedMaxTextPx = 0.0;
-    gTextDrawCount     = 0;
+    free_textures();    // drop any atlases built for a previously loaded font
+
+    memcpy(gCanonInfo, canonInfo, sizeof(gCanonInfo));
+    gMaxAscent     = maxAscent;
+    gMaxDescent    = maxDescent;
+    gMetricsHeight = maxAscent + maxDescent;
+    gCanonEmPx     = maxAscent + maxDescent;
+    gFontPath      = strdup(fontPath);   // retained so atlases can be built per drawn size
+    clear_text_width_cache();
     return true;
 }
 
 double get_char_width(char ch, double targetHeight) {
-    double      width    = 0.0;
-    GlyphInfo * glyph    = &glyphInfo[ch];
+    // char is signed here, so anything above 127 would index the glyph table negatively
+    unsigned char character = (unsigned char)ch;
 
-    width = glyph->advance_x;
+    if (character >= MAX_GLYPH_CHAR) {
+        character = '?';
+    }
+    double        width     = gCanonInfo[character].advance_x;
 
-    double      scaleVal = targetHeight / (gMaxAscent + gMaxDescent);
+    if ((gMaxAscent + gMaxDescent) <= 0.0) {
+        return 0.0;
+    }
+    double        scaleVal  = targetHeight / (gMaxAscent + gMaxDescent);
     return width * scaleVal;
 }
 
@@ -1369,15 +1429,15 @@ double largest_text_width(int numItems, const char ** text, double targetHeight,
 }
 
 void free_textures(void) {
-    glDeleteTextures(1, &textureAtlas);
-    textureAtlas   = 0;
-    atlasWidth     = 0;
-    atlasHeight    = 0;
-    gAtlasFontSize = 0.0;
-    gMaxAscent     = 0.0;
-    gMaxDescent    = 0.0;
+    for (int i = 0; i < GLYPH_ATLAS_CACHE_SIZE; i++) {
+        if (gAtlasCache[i].texture != 0) {
+            glDeleteTextures(1, &gAtlasCache[i].texture);
+        }
+        gAtlasCache[i] = (tSizedAtlas){};
+    }
+
     free(gFontPath);
-    gFontPath      = NULL;
+    gFontPath = NULL;
     clear_text_width_cache();
 }
 
