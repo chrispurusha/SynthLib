@@ -32,7 +32,7 @@ extern "C" {
 // 2.0 (Retina-only) matches every embedding app's own previous hardcoded default — overwritten by
 // a real value the first time synthlib_scale_query_initial()/synthlib_scale_set_content_scale()
 // runs, same as before this was pushed down from each app's graphics.cpp.
-static float gContentScale        = 2.0f;
+static float gContentScale         = 2.0f;
 static int   gTargetFrameBuffWidth = 1;
 
 void synthlib_scale_init(int targetFrameBuffWidth) {

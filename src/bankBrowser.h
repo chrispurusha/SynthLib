@@ -68,10 +68,7 @@ typedef void (*tBankBrowserCallback)(bool confirmed, uint32_t bank1Indexed, uint
 // Presents items (itemCount entries) as a scrollable, sortable list. categoryNames must have at
 // least categoryNameCount entries; pass categoryNameCount 0 to disable Category sort mode entirely
 // (e.g. a domain with no meaningful per-item category). message is word-wrapped to the panel width.
-void open_bank_browser(const char * title, const char * message, const char * confirmButtonTitle,
-                       const tBankBrowserItem * items, uint32_t itemCount,
-                       const char * const * categoryNames, uint32_t categoryNameCount,
-                       tBankBrowserCallback callback);
+void open_bank_browser(const char * title, const char * message, const char * confirmButtonTitle, const tBankBrowserItem * items, uint32_t itemCount, const char *const * categoryNames, uint32_t categoryNameCount, tBankBrowserCallback callback);
 
 bool bank_browser_active(void);
 void handle_bank_browser_mouse_down(tCoord coord);

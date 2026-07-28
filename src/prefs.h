@@ -51,8 +51,8 @@ bool prefs_has_key(const char * key);
 // string returned by prefs_get_string() is only valid until the next prefs_get_string()/
 // prefs_set_string() call — copy it if the caller needs to keep it past that.
 const char * prefs_get_string(const char * key, const char * defaultValue);
-double       prefs_get_double(const char * key, double defaultValue);
-long         prefs_get_int(const char * key, long defaultValue);
+double prefs_get_double(const char * key, double defaultValue);
+long prefs_get_int(const char * key, long defaultValue);
 
 #ifdef __cplusplus
 }

@@ -52,11 +52,11 @@ bool synthlib_consume_redraw(void);
 // ── GLFW window ──────────────────────────────────────────────────────────────
 // void* keeps this header GLFW-free — cast to GLFWwindow* at the call site, same convention every
 // app's own (now-retired) gWindow used.
-void   synthlib_set_window(void * glfwWindow);
+void synthlib_set_window(void * glfwWindow);
 void * synthlib_window(void);
 
 // ── Dial mode ────────────────────────────────────────────────────────────────
-void      synthlib_set_dial_mode(tDialMode mode);
+void synthlib_set_dial_mode(tDialMode mode);
 tDialMode synthlib_dial_mode(void);
 
 #ifdef __cplusplus

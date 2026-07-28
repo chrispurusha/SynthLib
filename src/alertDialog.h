@@ -48,8 +48,7 @@ typedef void (*tAlertBankConfirmCallback)(bool confirmed, uint32_t bank1Indexed)
 
 void show_alert(const char * title, const char * message);
 void show_confirm(const char * title, const char * message, const char * confirmLabel, tAlertConfirmCallback callback);
-void show_bank_confirm(const char * title, const char * message, const char * confirmLabel, const char * fieldLabel,
-                       uint32_t defaultBank1Indexed, uint32_t maxBank1Indexed, tAlertBankConfirmCallback callback);
+void show_bank_confirm(const char * title, const char * message, const char * confirmLabel, const char * fieldLabel, uint32_t defaultBank1Indexed, uint32_t maxBank1Indexed, tAlertBankConfirmCallback callback);
 
 bool alert_dialog_active(void);
 void handle_alert_dialog_mouse_down(tCoord coord);

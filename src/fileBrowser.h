@@ -52,8 +52,8 @@ extern "C" {
 // and returns false unless a drag is actually in progress.
 
 typedef enum {
-    fileBrowserModeOpenFile = 0,   // Pick an existing file
-    fileBrowserModeSaveFile = 1,   // Choose a folder + type a filename (may not yet exist)
+    fileBrowserModeOpenFile     = 0, // Pick an existing file
+    fileBrowserModeSaveFile     = 1, // Choose a folder + type a filename (may not yet exist)
     fileBrowserModeChooseFolder = 2, // Pick an existing folder — Confirm always targets the open directory
 } tFileBrowserMode;
 

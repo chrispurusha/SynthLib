@@ -28,8 +28,8 @@ extern "C" {
 
 #include "synthlibTypes.h"
 
-extern double          gGlobalGuiScale;
-extern tScrollState    gScrollState;
+extern double       gGlobalGuiScale;
+extern tScrollState gScrollState;
 
 double value_to_angle(uint32_t value, uint32_t range);
 uint32_t angle_to_value(double angle, uint32_t range);

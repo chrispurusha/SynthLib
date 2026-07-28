@@ -84,7 +84,6 @@ void render_menu_bar(const tMenuBarItem * items, tRectangle bar) {
     if ((sOpenIndex >= 0) && !gContextMenu.active) {
         sOpenIndex = -1;
     }
-
     set_rgb_colour((tRgb)RGB_GREY_3);
     render_rectangle(mainArea, bar);
 
@@ -95,7 +94,6 @@ void render_menu_bar(const tMenuBarItem * items, tRectangle bar) {
             set_rgb_colour((tRgb)RGB_GREY_5);
             render_rectangle(mainArea, itemRect);
         }
-
         set_rgb_colour((tRgb)RGB_WHITE);
         render_text(mainArea, (tRectangle){
             {
@@ -111,7 +109,6 @@ bool handle_menu_bar_click(const tMenuBarItem * items, tRectangle bar, tCoord co
     if (!within_rectangle(coord, bar)) {
         return false;
     }
-
     int32_t index = menu_bar_hit_test(items, bar, coord);
 
     if (index < 0) {
@@ -124,7 +121,6 @@ bool handle_menu_bar_click(const tMenuBarItem * items, tRectangle bar, tCoord co
         synthlib_request_redraw();
         return true;
     }
-
     open_menu_bar_item(items, bar, index);
 
     return true;
@@ -139,12 +135,11 @@ void update_menu_bar_hover(const tMenuBarItem * items, tRectangle bar) {
         sOpenIndex = -1;
         return;
     }
-
-    tCoord mouseCoord = {0};
+    tCoord  mouseCoord = {0};
 
     synthlib_host_mouse_coord(&mouseCoord);
 
-    int32_t index = menu_bar_hit_test(items, bar, mouseCoord);
+    int32_t index      = menu_bar_hit_test(items, bar, mouseCoord);
 
     if ((index >= 0) && (index != sOpenIndex)) {
         open_menu_bar_item(items, bar, index);

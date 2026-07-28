@@ -27,29 +27,30 @@
 
 namespace fs = std::filesystem;
 
-namespace {
+namespace
+{
 
-std::string                         sAppName;
-fs::path                            sFilePath;
-std::map<std::string, std::string>  sValues;
-bool                                sLoaded = false;
-std::string                         sGetStringScratch; // Backing storage for prefs_get_string()'s returned pointer.
+std::string                        sAppName;
+fs::path                           sFilePath;
+std::map<std::string, std::string> sValues;
+bool                               sLoaded = false;
+std::string                        sGetStringScratch;  // Backing storage for prefs_get_string()'s returned pointer.
 
 // Per-OS standard location for small app-preference files, one subfolder per app name so
 // G2-Edit/Z1-Edit/EmuUtility (all built on this same SynthLib code) don't collide with each
 // other's settings.
-fs::path config_dir(const std::string & appName) {
-#if defined(_WIN32)
+fs::path config_dir(const std::string &appName) {
+#if defined (_WIN32)
     // TODO(Windows): %APPDATA% (C:\Users\<user>\AppData\Roaming) is the documented convention for
     // per-user roaming settings — this branch follows it, but is unverified: no SynthLib-based
     // app has a Windows build yet. Revisit (and actually build/run this) once one exists.
-    const char * appData = std::getenv("APPDATA");
-    fs::path     base    = (appData != nullptr) ? fs::path(appData) : fs::path(".");
+    const char * appData   = std::getenv("APPDATA");
+    fs::path     base      = (appData != nullptr) ? fs::path(appData) : fs::path(".");
 
     return base / appName;
-#elif defined(__APPLE__)
-    const char * home = std::getenv("HOME");
-    fs::path     base = (home != nullptr) ? (fs::path(home) / "Library" / "Application Support") : fs::path(".");
+#elif defined (__APPLE__)
+    const char * home      = std::getenv("HOME");
+    fs::path     base      = (home != nullptr) ? (fs::path(home) / "Library" / "Application Support") : fs::path(".");
 
     return base / appName;
 #else
@@ -80,7 +81,7 @@ void load_if_needed(void) {
     if (!file.is_open()) {
         return; // First run — no file yet, sValues stays empty.
     }
-    std::string line;
+    std::string   line;
 
     while (std::getline(file, line)) {
         if (!line.empty() && (line.back() == '\r')) {
@@ -100,13 +101,13 @@ void save(void) {
 
     fs::create_directories(sFilePath.parent_path(), ec);
 
-    std::ofstream file(sFilePath, std::ios::trunc);
+    std::ofstream   file(sFilePath, std::ios::trunc);
 
     if (!file.is_open()) {
         return;
     }
 
-    for (const auto & entry : sValues) {
+    for (const auto &entry : sValues) {
         file << entry.first << "=" << entry.second << "\n";
     }
 }
@@ -114,7 +115,6 @@ void save(void) {
 } // namespace
 
 extern "C" {
-
 void prefs_init(const char * appName) {
     sAppName  = (appName != nullptr) ? appName : "";
     sFilePath = config_dir(sAppName) / "prefs.txt";
@@ -175,7 +175,7 @@ double prefs_get_double(const char * key, double defaultValue) {
     }
     load_if_needed();
 
-    auto it = sValues.find(key);
+    auto   it     = sValues.find(key);
 
     if (it == sValues.end()) {
         return defaultValue;
@@ -192,7 +192,7 @@ long prefs_get_int(const char * key, long defaultValue) {
     }
     load_if_needed();
 
-    auto it = sValues.find(key);
+    auto   it     = sValues.find(key);
 
     if (it == sValues.end()) {
         return defaultValue;
@@ -202,5 +202,4 @@ long prefs_get_int(const char * key, long defaultValue) {
 
     return (endPtr == it->second.c_str()) ? defaultValue : result;
 }
-
 } // extern "C"

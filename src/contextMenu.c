@@ -34,7 +34,7 @@ extern "C" {
 #include "synthlibGlobals.h"
 #include "contextMenu.h"
 
-tContextMenu        gContextMenu = {0};
+tContextMenu gContextMenu = {0};
 
 // ── Core mechanism ───────────────────────────────────────────────────────────
 //

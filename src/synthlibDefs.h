@@ -69,8 +69,8 @@ void usb_log_text(const char * fmt, ...);
 // Mac-style nested context menu (see contextMenu.h) — top-level menu plus
 // however many submenu flyouts can be open beneath it, and how long the mouse
 // must dwell on a submenu-bearing item before it auto-opens.
-#define MAX_MENU_DEPTH               (4)
-#define MENU_HOVER_DELAY_SECS        (0.3)
+#define MAX_MENU_DEPTH           (4)
+#define MENU_HOVER_DELAY_SECS    (0.3)
 
 // Clickable-rectangle registry (see clickRegion.h) — upper bound on how many
 // regions a single frame can register across every render function combined.
@@ -162,12 +162,12 @@ void usb_log_text(const char * fmt, ...);
 // track+thumb, distinct from the main canvas's fixed-length pan scrollbar (SCROLLBAR_WIDTH above,
 // which represents infinite-pan percent rather than a finite row count). Same width in both
 // project variants, so it lives outside the G2_EDIT split above.
-#define LIST_SCROLLBAR_WIDTH     (8.0)
+#define LIST_SCROLLBAR_WIDTH    (8.0)
 
 // Double-click-to-confirm on list rows (bankBrowser.cpp, fileBrowser.cpp) — second click on the
 // same row within this window counts as a double-click, same glfwGetTime()-based timing
 // convention as MENU_HOVER_DELAY_SECS above (contextMenu.c).
-#define DOUBLE_CLICK_DELAY_SECS  (0.4)
+#define DOUBLE_CLICK_DELAY_SECS    (0.4)
 
 #ifdef __cplusplus
 }

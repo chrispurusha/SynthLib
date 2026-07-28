@@ -36,7 +36,8 @@
 
 namespace fs = std::filesystem;
 
-namespace {
+namespace
+{
 
 struct tFileBrowserEntry {
     std::string name;
@@ -54,36 +55,36 @@ struct tSidebarItem {
 };
 
 struct tFileBrowserState {
-    bool                 active         = false;
-    tFileBrowserMode     mode           = fileBrowserModeOpenFile;
-    tFileBrowserCallback callback       = nullptr;
-    std::string          title;
-    std::string          currentDir;
+    bool                           active              = false;
+    tFileBrowserMode               mode                = fileBrowserModeOpenFile;
+    tFileBrowserCallback           callback            = nullptr;
+    std::string                    title;
+    std::string                    currentDir;
     std::vector<tFileBrowserEntry> entries;
     std::vector<tSidebarItem>      sidebar;
-    int32_t              selectedIndex  = -1;
-    double                scrollOffset  = 0.0;
-    char                 filenameBuffer[512] = {0};
-    uint32_t             filenameCursor = 0;
-    bool                 filenameFocused = false; // Only accepts keyboard input / shows a cursor once clicked
-    bool                 overwriteArmed = false; // Save mode: first click on an existing name arms a second confirm
-    tRectangle            panelRect      = {0};
-    bool                 closePressed   = false;
-    bool                 cancelPressed  = false;
-    bool                 confirmPressed = false;
-    int32_t              lastClickedRow = -1;  // Double-click detection - tracked across all row
-    double               lastClickTime  = 0.0; // kinds/modes, since selectedIndex only applies in Open mode
+    int32_t                        selectedIndex       = -1;
+    double                         scrollOffset        = 0.0;
+    char                           filenameBuffer[512] = {0};
+    uint32_t                       filenameCursor      = 0;
+    bool                           filenameFocused     = false; // Only accepts keyboard input / shows a cursor once clicked
+    bool                           overwriteArmed      = false; // Save mode: first click on an existing name arms a second confirm
+    tRectangle                     panelRect           = {0};
+    bool                           closePressed        = false;
+    bool                           cancelPressed       = false;
+    bool                           confirmPressed      = false;
+    int32_t                        lastClickedRow      = -1;  // Double-click detection - tracked across all row
+    double                         lastClickTime       = 0.0; // kinds/modes, since selectedIndex only applies in Open mode
 };
 
-tFileBrowserState sState;
-std::string        sLastDirectory;
+tFileBrowserState                    sState;
+std::string                          sLastDirectory;
 tFileBrowserDirectoryChangedCallback sDirectoryChangedCallback = nullptr;
 
-const double kRowHeight     = STANDARD_TEXT_HEIGHT + 8.0;
-const int    kVisibleRows   = 12;
-const double kSidebarWidth  = 150.0;
-const double kPanelWidth    = 730.0;
-const double kPanelHeight   = 60.0 + (kRowHeight * kVisibleRows) + 70.0;
+const double                         kRowHeight                = STANDARD_TEXT_HEIGHT + 8.0;
+const int                            kVisibleRows              = 12;
+const double                         kSidebarWidth             = 150.0;
+const double                         kPanelWidth               = 730.0;
+const double                         kPanelHeight              = 60.0 + (kRowHeight * kVisibleRows) + 70.0;
 
 // X origin every content-area element (path label, listing, filename field) hangs off — the
 // sidebar occupies the strip to its left.
@@ -94,11 +95,10 @@ double content_x(void) {
 // render_text() doesn't clip to its rectangle — a name wider than the row it's drawn in just
 // overruns whatever's to its right (this is how the sidebar's longer volume/app names were
 // bleeding into the file list). Shortens from the end with an ellipsis until it fits maxWidth.
-std::string truncate_to_width(const std::string & text, double maxWidth) {
+std::string truncate_to_width(const std::string &text, double maxWidth) {
     if (get_text_width(text.c_str(), STANDARD_TEXT_HEIGHT, eNoCache) <= maxWidth) {
         return text;
     }
-
     std::string truncated = text;
 
     while (!truncated.empty()) {
@@ -113,16 +113,17 @@ std::string truncate_to_width(const std::string & text, double maxWidth) {
 }
 
 std::string default_start_directory(void) {
-    const char * home = getenv("HOME");
+    const char *    home = getenv("HOME");
 
     if (home == nullptr) {
         home = getenv("USERPROFILE"); // Windows
     }
+
     if (home != nullptr) {
         return std::string(home);
     }
     std::error_code ec;
-    fs::path        cwd = fs::current_path(ec);
+    fs::path        cwd  = fs::current_path(ec);
 
     return ec ? std::string(".") : cwd.string();
 }
@@ -130,12 +131,12 @@ std::string default_start_directory(void) {
 void refresh_sidebar(void) {
     sState.sidebar.clear();
 
-    std::string home = default_start_directory();
+    std::string               home                  = default_start_directory();
 
     sState.sidebar.push_back({"Favorites", "", true});
     sState.sidebar.push_back({"Home", home, false});
 
-    static const char * kFavoriteSubfolders[] = {"Desktop", "Documents", "Downloads"};
+    static const char *       kFavoriteSubfolders[] = {"Desktop", "Documents", "Downloads"};
 
     for (const char * sub : kFavoriteSubfolders) {
         std::error_code ec;
@@ -146,13 +147,12 @@ void refresh_sidebar(void) {
         }
     }
 
-    std::error_code icloudEc;
-    std::string     icloudPath = home + "/Library/Mobile Documents/com~apple~CloudDocs";
+    std::error_code           icloudEc;
+    std::string               icloudPath            = home + "/Library/Mobile Documents/com~apple~CloudDocs";
 
     if (fs::exists(icloudPath, icloudEc) && !icloudEc) {
         sState.sidebar.push_back({"iCloud Drive", icloudPath, false});
     }
-
     sState.sidebar.push_back({"Locations", "", true});
     sState.sidebar.push_back({"Macintosh HD", "/", false});
 
@@ -161,13 +161,13 @@ void refresh_sidebar(void) {
     std::vector<tSidebarItem> volumes;
 
     if (!volEc) {
-        for (const auto & entry : volIt) {
+        for (const auto &entry : volIt) {
             std::error_code eqEc;
 
             if (fs::equivalent(entry.path(), "/", eqEc) && !eqEc) {
                 continue; // Already listed as "Macintosh HD" above
             }
-            std::string name = entry.path().filename().string();
+            std::string     name = entry.path().filename().string();
 
             if (name.empty() || (name[0] == '.')) {
                 continue;
@@ -175,25 +175,25 @@ void refresh_sidebar(void) {
             volumes.push_back({name, entry.path().string(), false});
         }
     }
-    std::sort(volumes.begin(), volumes.end(), [](const tSidebarItem & a, const tSidebarItem & b) {
+    std::sort(volumes.begin(), volumes.end(), [](const tSidebarItem &a, const tSidebarItem &b) {
         return a.label < b.label;
     });
 
-    for (const tSidebarItem & v : volumes) {
+    for (const tSidebarItem &v : volumes) {
         sState.sidebar.push_back(v);
     }
 }
 
 void refresh_directory_listing(void) {
     sState.entries.clear();
-    std::error_code ec;
+    std::error_code        ec;
     fs::directory_iterator it(sState.currentDir, ec);
 
     if (!ec) {
-        for (const auto & entry : it) {
-            std::error_code   isDirEc;
-            bool               isDir = entry.is_directory(isDirEc);
-            std::string        name  = entry.path().filename().string();
+        for (const auto &entry : it) {
+            std::error_code isDirEc;
+            bool            isDir = entry.is_directory(isDirEc);
+            std::string     name  = entry.path().filename().string();
 
             if (isDirEc || name.empty() || name[0] == '.') {
                 continue;
@@ -201,8 +201,7 @@ void refresh_directory_listing(void) {
             sState.entries.push_back({name, isDir});
         }
     }
-
-    std::sort(sState.entries.begin(), sState.entries.end(), [](const tFileBrowserEntry & a, const tFileBrowserEntry & b) {
+    std::sort(sState.entries.begin(), sState.entries.end(), [](const tFileBrowserEntry &a, const tFileBrowserEntry &b) {
         if (a.isDir != b.isDir) {
             return a.isDir;
         }
@@ -214,22 +213,22 @@ void refresh_directory_listing(void) {
     sState.overwriteArmed = false;
 }
 
-void navigate_to(const std::string & dir) {
+void navigate_to(const std::string &dir) {
     sState.currentDir = dir;
     refresh_directory_listing();
     synthlib_request_redraw();
 }
 
 void begin_browse(tFileBrowserMode mode, tFileBrowserCallback callback, const char * title, const char * defaultName) {
-    sState.active   = true;
-    sState.mode     = mode;
-    sState.callback = callback;
-    sState.title    = (title != nullptr) ? title : "";
+    sState.active          = true;
+    sState.mode            = mode;
+    sState.callback        = callback;
+    sState.title           = (title != nullptr) ? title : "";
 
     if (sLastDirectory.empty()) {
         sLastDirectory = default_start_directory();
     }
-    sState.currentDir = sLastDirectory;
+    sState.currentDir      = sLastDirectory;
 
     std::memset(sState.filenameBuffer, 0, sizeof(sState.filenameBuffer));
     sState.filenameFocused = false;
@@ -240,19 +239,16 @@ void begin_browse(tFileBrowserMode mode, tFileBrowserCallback callback, const ch
     } else {
         sState.filenameCursor = 0;
     }
-
     refresh_directory_listing();
     refresh_sidebar();
 
     double renderW = get_render_width() / gGlobalGuiScale;
     double renderH = get_render_height() / gGlobalGuiScale;
 
-    sState.panelRect = (tRectangle){
+    sState.panelRect       = (tRectangle){
         {
             (renderW - kPanelWidth) / 2.0, (renderH - kPanelHeight) / 2.0
-        }, {
-            kPanelWidth, kPanelHeight
-        }
+        }, {kPanelWidth, kPanelHeight}
     };
 
     synthlib_request_redraw();
@@ -281,9 +277,7 @@ tRectangle list_area_rect(void) {
     return (tRectangle){
         {
             content_x(), sState.panelRect.coord.y + 60.0
-        }, {
-            kPanelWidth - kSidebarWidth - 20.0, kRowHeight * kVisibleRows
-        }
+        }, {kPanelWidth - kSidebarWidth - 20.0, kRowHeight * kVisibleRows}
     };
 }
 
@@ -291,9 +285,7 @@ tRectangle sidebar_rect(void) {
     return (tRectangle){
         {
             sState.panelRect.coord.x + 10.0, sState.panelRect.coord.y + 60.0
-        }, {
-            kSidebarWidth - 10.0, kRowHeight * kVisibleRows
-        }
+        }, {kSidebarWidth - 10.0, kRowHeight * kVisibleRows}
     };
 }
 
@@ -303,9 +295,7 @@ tRectangle sidebar_row_rect(int index) {
     return (tRectangle){
         {
             rect.coord.x, rect.coord.y + ((double)index * kRowHeight)
-        }, {
-            rect.size.w, kRowHeight
-        }
+        }, {rect.size.w, kRowHeight}
     };
 }
 
@@ -337,9 +327,7 @@ tRectangle button_rect(int fromRight, double y) {
     return (tRectangle){
         {
             rightEdge - w, y
-        }, {
-            w, kButtonH
-        }
+        }, {w, kButtonH}
     };
 }
 
@@ -347,9 +335,7 @@ tRectangle up_button_rect(void) {
     return (tRectangle){
         {
             content_x(), sState.panelRect.coord.y + 30.0
-        }, {
-            36.0, kButtonH
-        }
+        }, {36.0, kButtonH}
     };
 }
 
@@ -361,9 +347,7 @@ tRectangle close_button_rect(void) {
     return (tRectangle){
         {
             sState.panelRect.coord.x + kPanelWidth - w - 8.0 - BORDER_LINE_WIDTH, sState.panelRect.coord.y + 4.0
-        }, {
-            w, kButtonH
-        }
+        }, {w, kButtonH}
     };
 }
 
@@ -376,9 +360,7 @@ tRectangle filename_field_rect(void) {
     return (tRectangle){
         {
             content_x(), y
-        }, {
-            kPanelWidth - kSidebarWidth - 20.0, kButtonH + 12.0
-        }
+        }, {kPanelWidth - kSidebarWidth - 20.0, kButtonH + 12.0}
     };
 }
 
@@ -390,6 +372,7 @@ uint32_t filename_cursor_from_click_x(double relativeX) {
     if (relativeX <= 0.0) {
         return 0;
     }
+
     for (size_t i = 0; i <= len; i++) {
         std::string prefix(sState.filenameBuffer, i);
 
@@ -397,6 +380,7 @@ uint32_t filename_cursor_from_click_x(double relativeX) {
             return (uint32_t)i;
         }
     }
+
     return (uint32_t)len;
 }
 
@@ -419,7 +403,7 @@ void insert_char_in_filename(char c) {
                  len - sState.filenameCursor + 1);
     sState.filenameBuffer[sState.filenameCursor] = c;
     sState.filenameCursor++;
-    sState.overwriteArmed = false;
+    sState.overwriteArmed                        = false;
 }
 
 void confirm_current(void) {
@@ -447,19 +431,18 @@ void confirm_current(void) {
     if ((sState.selectedIndex < 0) || (sState.selectedIndex >= (int32_t)sState.entries.size())) {
         return;
     }
-    const tFileBrowserEntry & entry = sState.entries[(size_t)sState.selectedIndex];
+    const tFileBrowserEntry &entry = sState.entries[(size_t)sState.selectedIndex];
 
     if (entry.isDir) {
         return;
     }
-    fs::path target = fs::path(sState.currentDir) / entry.name;
+    fs::path                target = fs::path(sState.currentDir) / entry.name;
     finish_browse(target.string().c_str());
 }
 
 } // namespace
 
 extern "C" {
-
 void open_file_browser_read(tFileBrowserCallback callback) {
     begin_browse(fileBrowserModeOpenFile, callback, "Open File", nullptr);
 }
@@ -514,9 +497,9 @@ bool handle_file_browser_click(tCoord coord) {
     if (!sState.active) {
         return false;
     }
-    sState.closePressed   = false;
-    sState.cancelPressed  = false;
-    sState.confirmPressed = false;
+    sState.closePressed    = false;
+    sState.cancelPressed   = false;
+    sState.confirmPressed  = false;
 
     if (list_scrollbar_dragging()) {
         list_scrollbar_mouse_up();
@@ -526,7 +509,6 @@ bool handle_file_browser_click(tCoord coord) {
     if (!within_rectangle(coord, sState.panelRect)) {
         return true; // Modal — swallow clicks outside without closing (matches other G2-Edit popups)
     }
-
     // Clicking anywhere other than the filename field itself (handled below) takes focus away
     // from it — re-armed to true only if the click actually landed there.
     sState.filenameFocused = false;
@@ -547,19 +529,20 @@ bool handle_file_browser_click(tCoord coord) {
 
     if (within_rectangle(coord, sidebar_rect())) {
         for (size_t i = 0; i < sState.sidebar.size(); i++) {
-            const tSidebarItem & item = sState.sidebar[i];
+            const tSidebarItem &item = sState.sidebar[i];
 
             if (item.isHeader) {
                 continue;
             }
+
             if (within_rectangle(coord, sidebar_row_rect((int)i))) {
                 navigate_to(item.path);
                 break;
             }
         }
+
         return true;
     }
-
     tRectangle listRect        = list_area_rect();
     bool       hasScrollbar    = sState.entries.size() > (size_t)kVisibleRows;
     double     scrollbarStripX = listRect.coord.x + listRect.size.w - LIST_SCROLLBAR_WIDTH;
@@ -569,9 +552,9 @@ bool handle_file_browser_click(tCoord coord) {
         int32_t index     = rowInView + (int32_t)sState.scrollOffset;
 
         if ((index >= 0) && (index < (int32_t)sState.entries.size())) {
-            const tFileBrowserEntry & entry = sState.entries[(size_t)index];
-            double                    now           = glfwGetTime();
-            bool                      isDoubleClick = (index == sState.lastClickedRow) && ((now - sState.lastClickTime) <= DOUBLE_CLICK_DELAY_SECS);
+            const tFileBrowserEntry &entry        = sState.entries[(size_t)index];
+            double                  now           = glfwGetTime();
+            bool                    isDoubleClick = (index == sState.lastClickedRow) && ((now - sState.lastClickTime) <= DOUBLE_CLICK_DELAY_SECS);
 
             sState.lastClickedRow = index;
             sState.lastClickTime  = now;
@@ -608,7 +591,6 @@ bool handle_file_browser_click(tCoord coord) {
         synthlib_request_redraw();
         return true;
     }
-
     bool wantsConfirm = within_rectangle(coord, draw_button_bounds(button_rect(0, button_row_y())));
     bool wantsCancel  = within_rectangle(coord, draw_button_bounds(button_rect(1, button_row_y())));
 
@@ -621,7 +603,6 @@ bool handle_file_browser_click(tCoord coord) {
         confirm_current();
         return true;
     }
-
     return true;
 }
 
@@ -703,8 +684,7 @@ void render_file_browser(void) {
     if (!sState.active) {
         return;
     }
-
-    tCoord mouseCoord = {0};
+    tCoord     mouseCoord     = {0};
 
     synthlib_host_mouse_coord(&mouseCoord);
 
@@ -713,39 +693,39 @@ void render_file_browser(void) {
     // this file can't call that G2-Edit-local helper directly, so it duplicates just the color).
     set_rgb_colour((tRgb)RGB_GREY_2);
     render_rectangle(mainArea, (tRectangle){
-        {0.0, 0.0}, {get_render_width() / gGlobalGuiScale, get_render_height() / gGlobalGuiScale}
-    });
+            {0.0, 0.0}, {get_render_width() / gGlobalGuiScale, get_render_height() / gGlobalGuiScale}
+        });
 
     // Panel chrome — replicates graphics.cpp's draw_panel_chrome()/draw_panel_close_button()
     // pixel-for-pixel (this file can't call those G2-Edit-local helpers directly): fill+border
     // the whole box first, then an inset title strip so the border stays visible all the way
     // round instead of being painted over by a full-bleed title bar.
-    double titleH = 26.0;
+    double     titleH         = 26.0;
 
     set_rgb_colour((tRgb)RGB_GREY_5);
     render_rectangle_with_border(mainArea, sState.panelRect);
     set_rgb_colour((tRgb)RGB_GREY_3);
     render_rectangle(mainArea, (tRectangle){
-        {sState.panelRect.coord.x + BORDER_LINE_WIDTH, sState.panelRect.coord.y + BORDER_LINE_WIDTH},
-        {sState.panelRect.size.w - (2.0 * BORDER_LINE_WIDTH), titleH - BORDER_LINE_WIDTH}
-    });
+            {sState.panelRect.coord.x + BORDER_LINE_WIDTH, sState.panelRect.coord.y + BORDER_LINE_WIDTH},
+            {sState.panelRect.size.w - (2.0 * BORDER_LINE_WIDTH), titleH - BORDER_LINE_WIDTH}
+        });
     set_rgb_colour((tRgb)RGB_WHITE);
     render_text(mainArea, (tRectangle){
-        {sState.panelRect.coord.x + 10.0, sState.panelRect.coord.y + 6.0}, {BLANK_SIZE, STANDARD_TEXT_HEIGHT}
-    }, sState.title.c_str());
+            {sState.panelRect.coord.x + 10.0, sState.panelRect.coord.y + 6.0}, {BLANK_SIZE, STANDARD_TEXT_HEIGHT}
+        }, sState.title.c_str());
 
     draw_button(mainArea, close_button_rect(), "Close", sState.closePressed ? (tRgb)RGB_GREY_7 : (tRgb)RGB_BACKGROUND_GREY);
 
     // Up button + current path
     draw_button(mainArea, up_button_rect(), "Up", (tRgb)RGB_GREY_7);
     set_rgb_colour((tRgb)RGB_BLACK);
-    double pathLabelWidth = kPanelWidth - kSidebarWidth - 78.0;
+    double     pathLabelWidth = kPanelWidth - kSidebarWidth - 78.0;
     render_text(mainArea, (tRectangle){
-        {up_button_rect().coord.x + 44.0, up_button_rect().coord.y + 4.0}, {pathLabelWidth, STANDARD_TEXT_HEIGHT}
-    }, truncate_to_width(sState.currentDir, pathLabelWidth).c_str());
+            {up_button_rect().coord.x + 44.0, up_button_rect().coord.y + 4.0}, {pathLabelWidth, STANDARD_TEXT_HEIGHT}
+        }, truncate_to_width(sState.currentDir, pathLabelWidth).c_str());
 
     // Sidebar — Favorites/Locations quick-access, mirroring the native panel's sidebar.
-    tRectangle sidebarRect = sidebar_rect();
+    tRectangle sidebarRect    = sidebar_rect();
 
     set_rgb_colour((tRgb)RGB_GREY_5);
     render_rectangle(mainArea, sidebarRect);
@@ -753,8 +733,8 @@ void render_file_browser(void) {
     render_rectangle_with_border(mainArea, sidebarRect);
 
     for (size_t i = 0; i < sState.sidebar.size(); i++) {
-        const tSidebarItem & item    = sState.sidebar[i];
-        tRectangle            rowRect = sidebar_row_rect((int)i);
+        const tSidebarItem &item     = sState.sidebar[i];
+        tRectangle         rowRect   = sidebar_row_rect((int)i);
 
         if (rowRect.coord.y + rowRect.size.h > sidebarRect.coord.y + sidebarRect.size.h) {
             break; // Overflowed the box — no sidebar scrolling in this first pass.
@@ -763,13 +743,12 @@ void render_file_browser(void) {
         if (item.isHeader) {
             set_rgb_colour((tRgb)RGB_GREY_3);
             render_text(mainArea, (tRectangle){
-                {rowRect.coord.x + 4.0, rowRect.coord.y + 4.0}, {BLANK_SIZE, STANDARD_TEXT_HEIGHT}
-            }, truncate_to_width(item.label, rowRect.size.w - 8.0).c_str());
+                    {rowRect.coord.x + 4.0, rowRect.coord.y + 4.0}, {BLANK_SIZE, STANDARD_TEXT_HEIGHT}
+                }, truncate_to_width(item.label, rowRect.size.w - 8.0).c_str());
             continue;
         }
-
-        bool isCurrent = (item.path == sState.currentDir);
-        bool isHovered = within_rectangle(mouseCoord, rowRect);
+        bool               isCurrent = (item.path == sState.currentDir);
+        bool               isHovered = within_rectangle(mouseCoord, rowRect);
 
         // Inset from the sidebar box's own left/right border by BORDER_LINE_WIDTH — rowRect runs
         // edge-to-edge with sidebarRect, so a full-width highlight fill would otherwise paint over
@@ -777,13 +756,13 @@ void render_file_browser(void) {
         if (isCurrent || isHovered) {
             set_rgb_colour(isCurrent ? (tRgb)RGB_ORANGE_2 : (tRgb)RGB_GREY_7);
             render_rectangle(mainArea, (tRectangle){
-                {rowRect.coord.x + BORDER_LINE_WIDTH, rowRect.coord.y}, {rowRect.size.w - (2.0 * BORDER_LINE_WIDTH), rowRect.size.h}
-            });
+                    {rowRect.coord.x + BORDER_LINE_WIDTH, rowRect.coord.y}, {rowRect.size.w - (2.0 * BORDER_LINE_WIDTH), rowRect.size.h}
+                });
         }
         set_rgb_colour((tRgb)RGB_BLACK);
         render_text(mainArea, (tRectangle){
-            {rowRect.coord.x + 10.0, rowRect.coord.y + 4.0}, {BLANK_SIZE, STANDARD_TEXT_HEIGHT}
-        }, truncate_to_width(item.label, rowRect.size.w - 14.0).c_str());
+                {rowRect.coord.x + 10.0, rowRect.coord.y + 4.0}, {BLANK_SIZE, STANDARD_TEXT_HEIGHT}
+            }, truncate_to_width(item.label, rowRect.size.w - 14.0).c_str());
     }
 
     // Directory listing
@@ -796,38 +775,32 @@ void render_file_browser(void) {
     render_rectangle_with_border(mainArea, listRect);
 
     for (int row = 0; row < kVisibleRows; row++) {
-        int32_t index = row + (int32_t)sState.scrollOffset;
+        int32_t                 index    = row + (int32_t)sState.scrollOffset;
 
         if ((index < 0) || (index >= (int32_t)sState.entries.size())) {
             continue;
         }
-        const tFileBrowserEntry & entry = sState.entries[(size_t)index];
+        const tFileBrowserEntry &entry   = sState.entries[(size_t)index];
 
-        tRectangle rowRect = {
-            {
-                listRect.coord.x, listRect.coord.y + (row * kRowHeight)
-            }, {
-                listRect.size.w - (hasScrollbar ? LIST_SCROLLBAR_WIDTH : 0.0), kRowHeight
-            }
-        };
-        bool       selected = (sState.mode == fileBrowserModeOpenFile) && (index == sState.selectedIndex);
-        bool       hovered   = within_rectangle(mouseCoord, rowRect);
+        tRectangle              rowRect  = {
+            {listRect.coord.x, listRect.coord.y + (row * kRowHeight)}, {listRect.size.w - (hasScrollbar ? LIST_SCROLLBAR_WIDTH : 0.0), kRowHeight}};
+        bool                    selected = (sState.mode == fileBrowserModeOpenFile) && (index == sState.selectedIndex);
+        bool                    hovered  = within_rectangle(mouseCoord, rowRect);
 
         // Inset from the list box's own left/right border by BORDER_LINE_WIDTH — see the matching
         // comment on the sidebar's highlight above.
         if (selected || hovered) {
             set_rgb_colour(selected ? (tRgb)RGB_ORANGE_2 : (tRgb)RGB_GREY_7);
             render_rectangle(mainArea, (tRectangle){
-                {rowRect.coord.x + BORDER_LINE_WIDTH, rowRect.coord.y}, {rowRect.size.w - (2.0 * BORDER_LINE_WIDTH), rowRect.size.h}
-            });
+                    {rowRect.coord.x + BORDER_LINE_WIDTH, rowRect.coord.y}, {rowRect.size.w - (2.0 * BORDER_LINE_WIDTH), rowRect.size.h}
+                });
         }
-
         set_rgb_colour((tRgb)RGB_BLACK);
 
-        std::string label = entry.name + (entry.isDir ? "/" : "");
+        std::string             label    = entry.name + (entry.isDir ? "/" : "");
         render_text(mainArea, (tRectangle){
-            {rowRect.coord.x + 6.0, rowRect.coord.y + 4.0}, {BLANK_SIZE, STANDARD_TEXT_HEIGHT}
-        }, truncate_to_width(label, rowRect.size.w - 12.0).c_str());
+                {rowRect.coord.x + 6.0, rowRect.coord.y + 4.0}, {BLANK_SIZE, STANDARD_TEXT_HEIGHT}
+            }, truncate_to_width(label, rowRect.size.w - 12.0).c_str());
     }
 
     render_list_scrollbar(listRect, (int32_t)sState.entries.size(), kVisibleRows, sState.scrollOffset);
@@ -836,7 +809,7 @@ void render_file_browser(void) {
     // "you're editing this"; unfocused is a darker flat grey with no cursor, so it's clear a click
     // is needed before typing does anything.
     if (sState.mode == fileBrowserModeSaveFile) {
-        tRectangle fieldRect = filename_field_rect();
+        tRectangle  fieldRect = filename_field_rect();
 
         // render_rectangle_with_border() fills the whole rectangle with whatever colour is
         // current when it's called (see utilsGraphics.cpp) — a separate render_rectangle() fill
@@ -855,26 +828,24 @@ void render_file_browser(void) {
             display.insert((size_t)sState.filenameCursor, "|");
         }
         render_text(mainArea, (tRectangle){
-            {fieldRect.coord.x + 6.0, fieldRect.coord.y + 6.0}, {BLANK_SIZE, STANDARD_TEXT_HEIGHT}
-        }, display.c_str());
+                {fieldRect.coord.x + 6.0, fieldRect.coord.y + 6.0}, {BLANK_SIZE, STANDARD_TEXT_HEIGHT}
+            }, display.c_str());
     }
-
     // Confirm / Cancel buttons — Confirm rightmost (primary action), Cancel to its left.
-    double buttonY = button_row_y();
+    double       buttonY        = button_row_y();
 
-    bool        confirmEnabled = current_dir_confirmable() || filename_confirmable() || (sState.selectedIndex >= 0);
-    const char * confirmLabel  = "Open";
+    bool         confirmEnabled = current_dir_confirmable() || filename_confirmable() || (sState.selectedIndex >= 0);
+    const char * confirmLabel   = "Open";
 
     if (sState.mode == fileBrowserModeSaveFile) {
         confirmLabel = sState.overwriteArmed ? "Replace" : "Save";
     } else if (sState.mode == fileBrowserModeChooseFolder) {
         confirmLabel = "Choose";
     }
-    tRgb confirmColour = sState.confirmPressed ? (tRgb)RGB_GREY_7 : (confirmEnabled ? (tRgb)RGB_GREEN_ON : (tRgb)RGB_GREY_5);
-    tRgb cancelColour  = sState.cancelPressed ? (tRgb)RGB_GREY_7 : (tRgb)RGB_BACKGROUND_GREY;
+    tRgb         confirmColour  = sState.confirmPressed ? (tRgb)RGB_GREY_7 : (confirmEnabled ? (tRgb)RGB_GREEN_ON : (tRgb)RGB_GREY_5);
+    tRgb         cancelColour   = sState.cancelPressed ? (tRgb)RGB_GREY_7 : (tRgb)RGB_BACKGROUND_GREY;
 
     draw_button(mainArea, button_rect(0, buttonY), confirmLabel, confirmColour);
     draw_button(mainArea, button_rect(1, buttonY), "Cancel", cancelColour);
 }
-
 } // extern "C"

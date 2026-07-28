@@ -20,15 +20,15 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-    
+
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 
 #include "geometry.h"
 
-double          gGlobalGuiScale = 1.0;
-tScrollState    gScrollState    = {0};
+double       gGlobalGuiScale = 1.0;
+tScrollState gScrollState    = {0};
 
 double value_to_angle(uint32_t value, uint32_t range) {
     if (range < 2) {

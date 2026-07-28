@@ -219,10 +219,10 @@ bool rectangle_visible_in_module_area(tRectangle rectangle) {
     tRectangle screenRect = scale_scroll_adjust_rectangle(rectangle);
     tRectangle viewport   = module_area();
 
-    return !((screenRect.coord.x + screenRect.size.w) < viewport.coord.x
-           || screenRect.coord.x > (viewport.coord.x + viewport.size.w)
-           || (screenRect.coord.y + screenRect.size.h) < viewport.coord.y
-           || screenRect.coord.y > (viewport.coord.y + viewport.size.h));
+    return !(  (screenRect.coord.x + screenRect.size.w) < viewport.coord.x
+            || screenRect.coord.x > (viewport.coord.x + viewport.size.w)
+            || (screenRect.coord.y + screenRect.size.h) < viewport.coord.y
+            || screenRect.coord.y > (viewport.coord.y + viewport.size.h));
 }
 
 static void internal_render_line(tCoord start, tCoord end, double thickness) {
@@ -1491,21 +1491,23 @@ void set_y_scroll_percent(double percent) {
 
 static bool       sListScrollbarDragging    = false;
 static double     sListScrollbarGrabOffset  = 0.0; // distance from the thumb's own top edge to the
-                                                    // initial click Y, so the thumb doesn't jump to
-                                                    // re-centre under the cursor on grab
+                                                   // initial click Y, so the thumb doesn't jump to
+                                                   // re-centre under the cursor on grab
 static tRectangle sListScrollbarListRect    = {0};
 static int32_t    sListScrollbarTotalRows   = 0;
 static int32_t    sListScrollbarVisibleRows = 0;
 
 tRectangle list_scrollbar_thumb_rect(tRectangle listRect, int32_t totalRows, int32_t visibleRows, double scrollOffset) {
-    double trackX   = listRect.coord.x + listRect.size.w - LIST_SCROLLBAR_WIDTH;
-    double trackH   = listRect.size.h;
-    double thumbH   = fmin(trackH, fmax((trackH * (double)visibleRows) / (double)totalRows, LIST_SCROLLBAR_WIDTH));
+    double trackX    = listRect.coord.x + listRect.size.w - LIST_SCROLLBAR_WIDTH;
+    double trackH    = listRect.size.h;
+    double thumbH    = fmin(trackH, fmax((trackH * (double)visibleRows) / (double)totalRows, LIST_SCROLLBAR_WIDTH));
     double maxScroll = (double)(totalRows - visibleRows);
-    double travel   = trackH - thumbH;
-    double thumbY   = listRect.coord.y + ((maxScroll > 0.0) ? (travel * (scrollOffset / maxScroll)) : 0.0);
+    double travel    = trackH - thumbH;
+    double thumbY    = listRect.coord.y + ((maxScroll > 0.0) ? (travel * (scrollOffset / maxScroll)) : 0.0);
 
-    return (tRectangle){{trackX, thumbY}, {LIST_SCROLLBAR_WIDTH, thumbH}};
+    return (tRectangle){{
+                            trackX, thumbY
+                        }, {LIST_SCROLLBAR_WIDTH, thumbH}};
 }
 
 void render_list_scrollbar(tRectangle listRect, int32_t totalRows, int32_t visibleRows, double scrollOffset) {
@@ -1552,8 +1554,8 @@ double list_scrollbar_mouse_drag(tCoord coord) {
     if (travel <= 0.0) {
         return 0.0;
     }
-    double thumbY  = (coord.y - sListScrollbarGrabOffset) - sListScrollbarListRect.coord.y;
-    double percent = fmax(0.0, fmin(1.0, thumbY / travel));
+    double thumbY    = (coord.y - sListScrollbarGrabOffset) - sListScrollbarListRect.coord.y;
+    double percent   = fmax(0.0, fmin(1.0, thumbY / travel));
 
     return percent * maxScroll;
 }

@@ -35,10 +35,13 @@ void synthlib_host_mouse_coord(tCoord * coord) {
     if (coord == NULL) {
         return;
     }
+
     if (sHost.mouseCoord != NULL) {
         sHost.mouseCoord(coord);
     } else {
-        *coord = (tCoord){0};
+        *coord = (tCoord){
+            0
+        };
     }
 }
 
