@@ -31,10 +31,20 @@ namespace
 {
 
 std::string                        sAppName;
-fs::path                           sFilePath;
-std::map<std::string, std::string> sValues;
-bool                               sLoaded = false;
 std::string                        sGetStringScratch;  // Backing storage for prefs_get_string()'s returned pointer.
+
+// Two stores, same format, separate files. Settings (prefs.txt) are small and change when the user
+// changes something; the patch-name cache (cache.txt) is bulky and is rewritten far more often —
+// potentially on every reply during a name sweep. Keeping them apart means cache churn can never
+// cost the user their settings, and lets the cache be deleted wholesale without touching prefs.
+struct tStore {
+    fs::path                           path;
+    std::map<std::string, std::string> values;
+    bool                               loaded = false;
+};
+
+tStore                             sPrefs;
+tStore                             sCache;
 
 // Per-OS standard location for small app-preference files, one subfolder per app name so
 // G2-Edit/Z1-Edit/EmuUtility (all built on this same SynthLib code) don't collide with each
@@ -70,16 +80,16 @@ fs::path config_dir(const std::string &appName) {
 #endif
 }
 
-void load_if_needed(void) {
-    if (sLoaded) {
+void load_if_needed(tStore &store) {
+    if (store.loaded) {
         return;
     }
-    sLoaded = true;
+    store.loaded = true;
 
-    std::ifstream file(sFilePath);
+    std::ifstream file(store.path);
 
     if (!file.is_open()) {
-        return; // First run — no file yet, sValues stays empty.
+        return; // First run — no file yet, store.values stays empty.
     }
     std::string   line;
 
@@ -92,23 +102,44 @@ void load_if_needed(void) {
         if (eq == std::string::npos) {
             continue;
         }
-        sValues[line.substr(0, eq)] = line.substr(eq + 1);
+        store.values[line.substr(0, eq)] = line.substr(eq + 1);
     }
 }
 
-void save(void) {
+// Written to a sibling temp file and renamed into place, rather than truncating the real file and
+// rewriting it. rename() is atomic within a directory, so a crash or a kill mid-save leaves the
+// previous file fully intact instead of a half-written one. This used to open the live file with
+// std::ios::trunc, which put every saved setting at risk on every single write.
+void save(tStore &store) {
     std::error_code ec;
 
-    fs::create_directories(sFilePath.parent_path(), ec);
+    fs::create_directories(store.path.parent_path(), ec);
 
-    std::ofstream   file(sFilePath, std::ios::trunc);
+    fs::path        tempPath = store.path;
 
-    if (!file.is_open()) {
-        return;
-    }
+    tempPath += ".tmp";
+    {
+        std::ofstream file(tempPath, std::ios::trunc);
 
-    for (const auto &entry : sValues) {
-        file << entry.first << "=" << entry.second << "\n";
+        if (!file.is_open()) {
+            return;
+        }
+
+        for (const auto &entry : store.values) {
+            file << entry.first << "=" << entry.second << "\n";
+        }
+
+        if (!file.good()) {
+            file.close();
+            fs::remove(tempPath, ec); // Partial write - discard it rather than renaming it over good data.
+            return;
+        }
+    } // Closed (and flushed) before the rename - renaming an open stream's target is not safe.
+
+    fs::rename(tempPath, store.path, ec);
+
+    if (ec) {
+        fs::remove(tempPath, ec);
     }
 }
 
@@ -116,20 +147,28 @@ void save(void) {
 
 extern "C" {
 void prefs_init(const char * appName) {
-    sAppName  = (appName != nullptr) ? appName : "";
-    sFilePath = config_dir(sAppName) / "prefs.txt";
-    sLoaded   = false;
-    sValues.clear();
-    load_if_needed();
+    sAppName      = (appName != nullptr) ? appName : "";
+
+    sPrefs.path   = config_dir(sAppName) / "prefs.txt";
+    sPrefs.loaded = false;
+    sPrefs.values.clear();
+    load_if_needed(sPrefs);
+
+    // Alongside prefs.txt, same directory, same format - see tStore's own comment for why it is a
+    // separate file rather than more keys in prefs.txt.
+    sCache.path   = config_dir(sAppName) / "cache.txt";
+    sCache.loaded = false;
+    sCache.values.clear();
+    load_if_needed(sCache);
 }
 
 void prefs_set_string(const char * key, const char * value) {
     if ((key == nullptr) || (value == nullptr)) {
         return;
     }
-    load_if_needed();
-    sValues[key] = value;
-    save();
+    load_if_needed(sPrefs);
+    sPrefs.values[key] = value;
+    save(sPrefs);
 }
 
 void prefs_set_double(const char * key, double value) {
@@ -150,19 +189,19 @@ bool prefs_has_key(const char * key) {
     if (key == nullptr) {
         return false;
     }
-    load_if_needed();
-    return sValues.find(key) != sValues.end();
+    load_if_needed(sPrefs);
+    return sPrefs.values.find(key) != sPrefs.values.end();
 }
 
 const char * prefs_get_string(const char * key, const char * defaultValue) {
     if (key == nullptr) {
         return defaultValue;
     }
-    load_if_needed();
+    load_if_needed(sPrefs);
 
-    auto it = sValues.find(key);
+    auto it = sPrefs.values.find(key);
 
-    if (it == sValues.end()) {
+    if (it == sPrefs.values.end()) {
         return defaultValue;
     }
     sGetStringScratch = it->second;
@@ -173,11 +212,11 @@ double prefs_get_double(const char * key, double defaultValue) {
     if (key == nullptr) {
         return defaultValue;
     }
-    load_if_needed();
+    load_if_needed(sPrefs);
 
-    auto   it     = sValues.find(key);
+    auto   it     = sPrefs.values.find(key);
 
-    if (it == sValues.end()) {
+    if (it == sPrefs.values.end()) {
         return defaultValue;
     }
     char * endPtr = nullptr;
@@ -190,11 +229,11 @@ long prefs_get_int(const char * key, long defaultValue) {
     if (key == nullptr) {
         return defaultValue;
     }
-    load_if_needed();
+    load_if_needed(sPrefs);
 
-    auto   it     = sValues.find(key);
+    auto   it     = sPrefs.values.find(key);
 
-    if (it == sValues.end()) {
+    if (it == sPrefs.values.end()) {
         return defaultValue;
     }
     char * endPtr = nullptr;
@@ -202,4 +241,36 @@ long prefs_get_int(const char * key, long defaultValue) {
 
     return (endPtr == it->second.c_str()) ? defaultValue : result;
 }
+
+// ── Patch-name cache ────────────────────────────────────────────────────────
+// Same on-disk format as prefs, different file (cache.txt). Only strings are needed - the cache
+// holds one packed blob per device - so there are deliberately no _int/_double twins.
+
+void cache_set_string(const char * key, const char * value) {
+    if ((key == nullptr) || (value == nullptr)) {
+        return;
+    }
+    load_if_needed(sCache);
+    sCache.values[key] = value;
+    save(sCache);
+}
+
+// Falls back to prefs for a key the cache does not have, so caches written before the split are
+// still found on first run after upgrading. The next cache_set_string() lands in cache.txt, after
+// which the stale prefs.txt copy is simply ignored.
+const char * cache_get_string(const char * key, const char * defaultValue) {
+    if (key == nullptr) {
+        return defaultValue;
+    }
+    load_if_needed(sCache);
+
+    auto it = sCache.values.find(key);
+
+    if (it == sCache.values.end()) {
+        return prefs_get_string(key, defaultValue);
+    }
+    sGetStringScratch = it->second;
+    return sGetStringScratch.c_str();
+}
+
 } // extern "C"

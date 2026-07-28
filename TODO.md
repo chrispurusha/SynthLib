@@ -47,3 +47,26 @@ adaptation G2-Edit already went through:
 All of the above only becomes buildable once SynthEdit's `SynthLib` submodule
 pin is advanced past this commit — do that first (`git submodule update
 --remote SynthLib` in the SynthEdit repo, then commit the pin bump there).
+
+## Integrity-check prefs.txt / cache.txt (idea, 2026-07-28)
+
+Both stores are plain `key=value` text with no integrity check, so a truncated
+or garbled line is silently accepted — `load_if_needed()` just skips any line
+without an `=`, and a corrupted *value* is read back as if it were real.
+
+Partly mitigated already: `save()` now writes to a `.tmp` sibling and
+`rename()`s it into place (atomic within a directory), so an interrupted save
+can no longer leave a half-written file. That covers the crash case, not
+on-disk rot, a partial disk, or anything editing the file by hand.
+
+Proposal: a trailing `#crc=<hex>` line over the preceding bytes, written by
+`save()` and verified in `load_if_needed()`. On mismatch, treat the file as
+absent rather than refusing to start — settings fall back to defaults, and the
+name cache re-sweeps, which is exactly the recovery path both already have for
+a first run. An absent `#crc=` line means a file written before this existed,
+so accept it (same reasoning as `name_cache_is_complete()`'s absent-key
+default in SynthEdit's `synthBackup.c`).
+
+Worth doing per-store rather than only for the cache: the cache can always be
+rebuilt from the synth, whereas `prefs.txt` is the one that actually hurts to
+lose. Small, self-contained, and shared by all three apps.

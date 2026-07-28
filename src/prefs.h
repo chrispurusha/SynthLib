@@ -51,6 +51,12 @@ bool prefs_has_key(const char * key);
 // string returned by prefs_get_string() is only valid until the next prefs_get_string()/
 // prefs_set_string() call — copy it if the caller needs to keep it past that.
 const char * prefs_get_string(const char * key, const char * defaultValue);
+
+// Patch-name cache — same store mechanism, but a separate file (cache.txt) alongside prefs.txt.
+// Kept apart because the cache is bulky and rewritten far more often than settings are, so its
+// churn must never put prefs.txt at risk. Initialised by prefs_init(), no separate init call.
+void cache_set_string(const char * key, const char * value);
+const char * cache_get_string(const char * key, const char * defaultValue);
 double prefs_get_double(const char * key, double defaultValue);
 long prefs_get_int(const char * key, long defaultValue);
 
