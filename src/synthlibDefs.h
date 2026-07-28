@@ -164,6 +164,12 @@ void usb_log_text(const char * fmt, ...);
 // project variants, so it lives outside the G2_EDIT split above.
 #define LIST_SCROLLBAR_WIDTH    (8.0)
 
+// Floor on the thumb's height so it stays grabbable no matter how long the list is. Without it the
+// proportional height collapses — a full device-wide patch sweep is ~1000 rows against 10 visible,
+// which works out under 2pt on a 200pt track, leaving an 8x8 square to hit. The shortest track this
+// is used on is 200pt (bankBrowser: 10 rows), so 24pt costs ~12% of the drag travel at worst.
+#define LIST_SCROLLBAR_MIN_THUMB    (24.0)
+
 // Double-click-to-confirm on list rows (bankBrowser.cpp, fileBrowser.cpp) — second click on the
 // same row within this window counts as a double-click, same glfwGetTime()-based timing
 // convention as MENU_HOVER_DELAY_SECS above (contextMenu.c).

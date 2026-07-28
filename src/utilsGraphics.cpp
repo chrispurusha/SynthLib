@@ -1497,10 +1497,19 @@ static tRectangle sListScrollbarListRect    = {0};
 static int32_t    sListScrollbarTotalRows   = 0;
 static int32_t    sListScrollbarVisibleRows = 0;
 
+// Thumb height, shared by the rect builder and the drag handler. These MUST agree: the drag maps the
+// cursor onto (trackH - thumbH) of travel, so if the two ever computed different heights the thumb
+// would drift away from the cursor as it was dragged. Hence one helper rather than two expressions.
+static double list_scrollbar_thumb_height(double trackH, int32_t totalRows, int32_t visibleRows) {
+    double proportional = (trackH * (double)visibleRows) / (double)totalRows;
+
+    return fmin(trackH, fmax(proportional, LIST_SCROLLBAR_MIN_THUMB));
+}
+
 tRectangle list_scrollbar_thumb_rect(tRectangle listRect, int32_t totalRows, int32_t visibleRows, double scrollOffset) {
     double trackX    = listRect.coord.x + listRect.size.w - LIST_SCROLLBAR_WIDTH;
     double trackH    = listRect.size.h;
-    double thumbH    = fmin(trackH, fmax((trackH * (double)visibleRows) / (double)totalRows, LIST_SCROLLBAR_WIDTH));
+    double thumbH    = list_scrollbar_thumb_height(trackH, totalRows, visibleRows);
     double maxScroll = (double)(totalRows - visibleRows);
     double travel    = trackH - thumbH;
     double thumbY    = listRect.coord.y + ((maxScroll > 0.0) ? (travel * (scrollOffset / maxScroll)) : 0.0);
@@ -1547,7 +1556,7 @@ bool list_scrollbar_dragging(void) {
 
 double list_scrollbar_mouse_drag(tCoord coord) {
     double trackH    = sListScrollbarListRect.size.h;
-    double thumbH    = fmin(trackH, fmax((trackH * (double)sListScrollbarVisibleRows) / (double)sListScrollbarTotalRows, LIST_SCROLLBAR_WIDTH));
+    double thumbH    = list_scrollbar_thumb_height(trackH, sListScrollbarTotalRows, sListScrollbarVisibleRows);
     double travel    = trackH - thumbH;
     double maxScroll = (double)(sListScrollbarTotalRows - sListScrollbarVisibleRows);
 
