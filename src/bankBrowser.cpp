@@ -45,8 +45,15 @@ enum tBankBrowserRowKind {
 // NSTableView data source this panel replaced (rowLabels/rowKinds/rowBanks/rowLocs arrays),
 // collapsed into one struct.
 // itemIndex is -1 for separator/header rows (nothing to select).
+// Normal rows are stored as separate column fields rather than one concatenated string, so each
+// column can be drawn at a fixed x and line up vertically down the list. label is used only by
+// header rows (which span the full width and have no columns).
 struct tBankBrowserRow {
     std::string         label;
+    std::string         bankText;
+    std::string         locText;
+    std::string         nameText;
+    std::string         categoryText;
     tBankBrowserRowKind kind;
     int32_t             itemIndex;
 };
@@ -84,6 +91,16 @@ struct tBankBrowserState {
 tBankBrowserState sState;
 
 const double      kRowHeight       = STANDARD_TEXT_HEIGHT + 8.0;
+
+// Column x offsets within a row, measured from the row's left edge, so Bank/Loc/Name/Category line
+// up vertically down the list. Sized for the widest real content: "Bank 8" and "Loc 128" at
+// STANDARD_TEXT_HEIGHT. Category is right-anchored (kColCategoryW back from the row's right edge)
+// so it stays put regardless of how wide the list is, and Name takes whatever is left between them.
+const double      kColBankX        = 6.0;
+const double      kColLocX         = 56.0;
+const double      kColNameX        = 116.0;
+const double      kColCategoryW    = 104.0;
+const double      kColGap          = 8.0;
 const int         kVisibleRows     = 10;
 const double      kPanelWidth      = 480.0;
 const double      kTitleH          = 26.0;
@@ -208,27 +225,38 @@ void rebuild_rows(void) {
         if ((sState.sortMode == 0) || groupByCategory) {
             if (newGroup) {
                 if (groupByCategory) {
-                    sState.rows.push_back({groupKey, rowHeader, -1});
+                    tBankBrowserRow header;
+
+                    header.label     = groupKey;
+                    header.kind      = rowHeader;
+                    header.itemIndex = -1;
+                    sState.rows.push_back(header);
                 } else if (haveLastGroupKey) {
-                    sState.rows.push_back({"", rowSeparator, -1});
+                    tBankBrowserRow separator;
+
+                    separator.kind      = rowSeparator;
+                    separator.itemIndex = -1;
+                    sState.rows.push_back(separator);
                 }
                 lastGroupKey     = groupKey;
                 haveLastGroupKey = true;
             }
         }
-        std::string                    label    = "Bank " + std::to_string(item.bank1Indexed) + ", Loc " +
-                                                  std::to_string(item.location1Indexed) + ": " + item.name;
+        tBankBrowserRow                r;
+
+        r.kind      = rowNormal;
+        r.itemIndex = idx;
+        r.bankText  = "Bank " + std::to_string(item.bank1Indexed);
+        r.locText   = "Loc " + std::to_string(item.location1Indexed);
+        r.nameText  = item.name;
 
         // Category mode already conveys it via the group header above — anywhere else (Bank/Loc,
-        // A-Z) it'd otherwise be invisible, so append it here. Skipped entirely for a device with
-        // no categories at all (categoryNames empty), rather than showing "— Unknown" on every row.
+        // A-Z) it'd otherwise be invisible, so give it its own column. Left empty for a device with
+        // no categories at all (categoryNames empty), rather than showing "Unknown" on every row.
         if (!groupByCategory && !sState.categoryNames.empty()) {
-            // ASCII hyphen, not an em dash: render_text() walks bytes with no UTF-8 decoding and
-            // substitutes '?' for anything >= MAX_GLYPH_CHAR (127), so a multi-byte separator came
-            // out as one '?' per byte ("???").
-            label += " - " + category_name_for(item.category);
+            r.categoryText = category_name_for(item.category);
         }
-        sState.rows.push_back({label, rowNormal, idx});
+        sState.rows.push_back(r);
     }
 
     sState.selectedRow  = -1;
@@ -646,10 +674,32 @@ void render_bank_browser(void) {
             set_rgb_colour((tRgb)RGB_GREY_7);
             render_rectangle(mainArea, highlightRect);
         }
+        // Drawn as four separate calls rather than one concatenated string, so the columns align
+        // down the list. Name gets whatever space is left between the Loc and Category columns;
+        // Category is dropped from the layout entirely when the device has no categories, letting
+        // Name run the full remaining width instead of leaving a permanent empty gutter.
+        double                textY         = rowRect.coord.y + 4.0;
+        bool                  haveCategory  = !r.categoryText.empty();
+        double                categoryX     = rowRect.coord.x + rowRect.size.w - kColCategoryW;
+        double                nameLimit     = (haveCategory ? categoryX : (rowRect.coord.x + rowRect.size.w - kColGap))
+                                              - (rowRect.coord.x + kColNameX) - kColGap;
+
         set_rgb_colour((tRgb)RGB_BLACK);
         render_text(mainArea, (tRectangle){
-                {rowRect.coord.x + 6.0, rowRect.coord.y + 4.0}, {BLANK_SIZE, STANDARD_TEXT_HEIGHT}
-            }, truncate_to_width(r.label, rowRect.size.w - 12.0).c_str());
+                {rowRect.coord.x + kColBankX, textY}, {BLANK_SIZE, STANDARD_TEXT_HEIGHT}
+            }, r.bankText.c_str());
+        render_text(mainArea, (tRectangle){
+                {rowRect.coord.x + kColLocX, textY}, {BLANK_SIZE, STANDARD_TEXT_HEIGHT}
+            }, r.locText.c_str());
+        render_text(mainArea, (tRectangle){
+                {rowRect.coord.x + kColNameX, textY}, {BLANK_SIZE, STANDARD_TEXT_HEIGHT}
+            }, truncate_to_width(r.nameText, nameLimit).c_str());
+
+        if (haveCategory) {
+            render_text(mainArea, (tRectangle){
+                    {categoryX, textY}, {BLANK_SIZE, STANDARD_TEXT_HEIGHT}
+                }, truncate_to_width(r.categoryText, kColCategoryW - kColGap).c_str());
+        }
     }
 
     render_list_scrollbar(listRect, (int32_t)sState.rows.size(), kVisibleRows, sState.scrollOffset);
