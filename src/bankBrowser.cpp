@@ -223,7 +223,10 @@ void rebuild_rows(void) {
         // A-Z) it'd otherwise be invisible, so append it here. Skipped entirely for a device with
         // no categories at all (categoryNames empty), rather than showing "— Unknown" on every row.
         if (!groupByCategory && !sState.categoryNames.empty()) {
-            label += " — " + category_name_for(item.category);
+            // ASCII hyphen, not an em dash: render_text() walks bytes with no UTF-8 decoding and
+            // substitutes '?' for anything >= MAX_GLYPH_CHAR (127), so a multi-byte separator came
+            // out as one '?' per byte ("???").
+            label += " - " + category_name_for(item.category);
         }
         sState.rows.push_back({label, rowNormal, idx});
     }
