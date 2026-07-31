@@ -30,8 +30,8 @@ namespace fs = std::filesystem;
 namespace
 {
 
-std::string                        sAppName;
-std::string                        sGetStringScratch;  // Backing storage for prefs_get_string()'s returned pointer.
+std::string sAppName;
+std::string sGetStringScratch;                         // Backing storage for prefs_get_string()'s returned pointer.
 
 // Two stores, same format, separate files. Settings (prefs.txt) are small and change when the user
 // changes something; the patch-name cache (cache.txt) is bulky and is rewritten far more often —
@@ -43,8 +43,8 @@ struct tStore {
     bool                               loaded = false;
 };
 
-tStore                             sPrefs;
-tStore                             sCache;
+tStore      sPrefs;
+tStore      sCache;
 
 // Per-OS standard location for small app-preference files, one subfolder per app name so
 // G2-Edit/Z1-Edit/EmuUtility (all built on this same SynthLib code) don't collide with each
@@ -272,5 +272,4 @@ const char * cache_get_string(const char * key, const char * defaultValue) {
     sGetStringScratch = it->second;
     return sGetStringScratch.c_str();
 }
-
 } // extern "C"

@@ -242,7 +242,7 @@ void rebuild_rows(void) {
                 haveLastGroupKey = true;
             }
         }
-        tBankBrowserRow                r;
+        tBankBrowserRow r;
 
         r.kind      = rowNormal;
         r.itemIndex = idx;
