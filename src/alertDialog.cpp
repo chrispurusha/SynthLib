@@ -39,6 +39,7 @@ enum tAlertKind {
     alertKindInfo,
     alertKindConfirm,
     alertKindBankConfirm,
+    alertKindChoice,
 };
 
 struct tAlertState {
@@ -52,6 +53,12 @@ struct tAlertState {
     uint32_t                  maxBank1Indexed      = 1;
     tAlertConfirmCallback     confirmCallback      = nullptr;
     tAlertBankConfirmCallback bankCallback         = nullptr;
+
+    // alertKindChoice only: labels right-to-left (choiceLabel[0] is rightmost), unused ones empty.
+    std::string               choiceLabel[3];
+    uint32_t                  choiceCount          = 0;
+    int                       choicePressed        = -1;
+    tAlertChoiceCallback      choiceCallback       = nullptr;
 
     tRectangle                panelRect            = {0};
     bool                      closePressed         = false;
@@ -88,7 +95,11 @@ double message_y(void) {
 
 // Greedy word-wrap: breaks text into lines no wider than maxWidth, measured the same way
 // render_text() will draw them (same technique bankBrowser.cpp uses for its own message text).
-std::vector<std::string> wrap_text(const std::string &text, double maxWidth) {
+// A '\n' in the caller's message is a HARD break (and an empty line between two of them is a
+// blank line, i.e. a paragraph gap). Without this the newline is swallowed into whichever word
+// it is touching and two sentences render as "disagree.Your edits" — nothing tells the reader
+// where the caller meant one thought to end and the next to begin.
+std::vector<std::string> wrap_paragraph(const std::string &text, double maxWidth) {
     std::vector<std::string> lines;
     std::string              current;
     size_t                   pos = 0;
@@ -114,6 +125,31 @@ std::vector<std::string> wrap_text(const std::string &text, double maxWidth) {
 
     if (!current.empty()) {
         lines.push_back(current);
+    }
+    return lines;
+}
+
+std::vector<std::string> wrap_text(const std::string &text, double maxWidth) {
+    std::vector<std::string> lines;
+    size_t                   pos = 0;
+
+    while (pos <= text.size()) {
+        size_t      breakPos  = text.find('\n', pos);
+        size_t      lineEnd   = (breakPos == std::string::npos) ? text.size() : breakPos;
+        std::string paragraph = text.substr(pos, lineEnd - pos);
+
+        if (paragraph.empty()) {
+            lines.push_back("");  // Deliberate blank line between paragraphs
+        } else {
+            std::vector<std::string> wrapped = wrap_paragraph(paragraph, maxWidth);
+
+            lines.insert(lines.end(), wrapped.begin(), wrapped.end());
+        }
+
+        if (breakPos == std::string::npos) {
+            break;
+        }
+        pos = breakPos + 1;
     }
     return lines;
 }
@@ -201,16 +237,25 @@ void build_bank_picker_items(void) {
     sState.bankMenuItems.push_back(terminator);
 }
 
-void finish_dialog(bool confirmed) {
+// choice is meaningful only for alertKindChoice; every other kind passes -1 and is driven by
+// `confirmed`. Dismissal (Close/Escape) reaches a choice dialog as confirmed == false.
+void finish_choice_dialog(bool confirmed, int choice) {
     tAlertKind                kind      = sState.kind;
     tAlertConfirmCallback     confirmCb = sState.confirmCallback;
     tAlertBankConfirmCallback bankCb    = sState.bankCallback;
+    tAlertChoiceCallback      choiceCb  = sState.choiceCallback;
     uint32_t                  bank      = sState.selectedBank1Indexed;
 
     sState.active          = false;
     sState.confirmCallback = nullptr;
     sState.bankCallback    = nullptr;
+    sState.choiceCallback  = nullptr;
     synthlib_request_redraw();
+
+    if ((kind == alertKindChoice) && (choiceCb != nullptr)) {
+        choiceCb(confirmed ? choice : -1);
+        return;
+    }
 
     if ((kind == alertKindConfirm) && (confirmCb != nullptr)) {
         confirmCb(confirmed);
@@ -219,12 +264,30 @@ void finish_dialog(bool confirmed) {
     }
 }
 
+// The pre-existing two-button entry point. On a choice dialog, Enter/affirmative means the
+// rightmost button, which is the one show_choice()'s caller passed first.
+void finish_dialog(bool confirmed) {
+    finish_choice_dialog(confirmed, 0);
+}
+
+double choice_row_width(void);  // Defined below; begin_dialog() sizes the panel around it
+
 void begin_dialog(tAlertKind kind, const char * title, const char * message, const char * confirmLabel) {
     sState.active         = true;
     sState.kind           = kind;
     sState.title          = (title != nullptr) ? title : "";
     sState.confirmLabel   = ((confirmLabel != nullptr) && (confirmLabel[0] != '\0')) ? confirmLabel : "OK";
-    sState.messageLines   = wrap_text((message != nullptr) ? message : "", kPanelWidth - 20.0);
+
+    // A choice dialog's buttons spell out whole actions, so the row can be wider than the standard
+    // panel. Widen to fit rather than let it overflow — callers set the labels before calling in.
+    double panelWidth  = kPanelWidth;
+
+    if (kind == alertKindChoice) {
+        double needed = choice_row_width() + 20.0;
+
+        panelWidth = (needed > panelWidth) ? needed : panelWidth;
+    }
+    sState.messageLines   = wrap_text((message != nullptr) ? message : "", panelWidth - 20.0);
 
     bool   hasPicker   = (kind == alertKindBankConfirm);
     double messageH    = (double)sState.messageLines.size() * kMessageLineH;
@@ -235,15 +298,63 @@ void begin_dialog(tAlertKind kind, const char * title, const char * message, con
 
     sState.panelRect      = (tRectangle){
         {
-            (renderW - kPanelWidth) / 2.0, (renderH - panelHeight) / 2.0
-        }, {kPanelWidth, panelHeight}
+            (renderW - panelWidth) / 2.0, (renderH - panelHeight) / 2.0
+        }, {panelWidth, panelHeight}
     };
 
     sState.closePressed   = false;
     sState.cancelPressed  = false;
     sState.confirmPressed = false;
     sState.pickerPressed  = false;
+    sState.choicePressed  = -1;
     synthlib_request_redraw();
+}
+
+// Choice buttons carry real labels ("Pull from Synth"), not the one-word Confirm/Cancel that the
+// fixed-width button_rect() was sized for, so each is sized to its own text and the row is packed
+// from the right edge inward. At a fixed 64px they overlap each other and spill past the panel.
+double choice_button_width(uint32_t index) {
+    double w = get_text_width(sState.choiceLabel[index].c_str(), kButtonH, eCache) + 12.0;
+
+    return (w < 64.0) ? 64.0 : w;
+}
+
+tRectangle choice_button_rect(uint32_t index, double y) {
+    const double gap       = 8.0;
+    double       rightEdge = sState.panelRect.coord.x + sState.panelRect.size.w - 10.0;
+
+    for (uint32_t i = 0; i < index; i++) {
+        rightEdge -= (choice_button_width(i) + gap);
+    }
+
+    double       w         = choice_button_width(index);
+
+    return (tRectangle){
+        {
+            rightEdge - w, y
+        }, {w, kButtonH}
+    };
+}
+
+// What the whole row needs, so begin_dialog() can widen the panel instead of letting it overflow.
+double choice_row_width(void) {
+    double total = 0.0;
+
+    for (uint32_t i = 0; i < sState.choiceCount; i++) {
+        total += choice_button_width(i) + ((i > 0) ? 8.0 : 0.0);
+    }
+
+    return total;
+}
+
+int choice_button_at(tCoord coord) {
+    for (uint32_t i = 0; i < sState.choiceCount; i++) {
+        if (within_rectangle(coord, draw_button_bounds(choice_button_rect(i, button_row_y())))) {
+            return (int)i;
+        }
+    }
+
+    return -1;
 }
 
 } // namespace
@@ -259,6 +370,30 @@ void show_confirm(const char * title, const char * message, const char * confirm
     begin_dialog(alertKindConfirm, title, message, confirmLabel);
     sState.confirmCallback = callback;
     sState.bankCallback    = nullptr;
+}
+
+void show_choice(const char * title, const char * message,
+                 const char * label0, const char * label1, const char * label2,
+                 tAlertChoiceCallback callback) {
+    const char * labels[3] = {label0, label1, label2};
+
+    // Labels first: begin_dialog() measures them to decide how wide the panel has to be.
+    sState.choiceCount     = 0;
+
+    for (uint32_t i = 0; i < 3; i++) {
+        sState.choiceLabel[i].clear();
+
+        if ((labels[i] != nullptr) && (labels[i][0] != '\0')) {
+            sState.choiceLabel[i] = labels[i];
+            sState.choiceCount    = i + 1;
+        }
+    }
+
+    begin_dialog(alertKindChoice, title, message, label0);
+
+    sState.confirmCallback = nullptr;
+    sState.bankCallback    = nullptr;
+    sState.choiceCallback  = callback;
 }
 
 void show_bank_confirm(const char * title, const char * message, const char * confirmLabel, const char * fieldLabel,
@@ -283,7 +418,9 @@ void handle_alert_dialog_mouse_down(tCoord coord) {
     sState.closePressed  = within_rectangle(coord, draw_button_bounds(close_button_rect()));
     sState.pickerPressed = (sState.kind == alertKindBankConfirm) && within_rectangle(coord, draw_button_bounds(picker_button_rect()));
 
-    if (sState.kind == alertKindInfo) {
+    if (sState.kind == alertKindChoice) {
+        sState.choicePressed = choice_button_at(coord);
+    } else if (sState.kind == alertKindInfo) {
         sState.confirmPressed = within_rectangle(coord, draw_button_bounds(button_rect(0, button_row_y())));
     } else {
         sState.cancelPressed  = within_rectangle(coord, draw_button_bounds(button_rect(1, button_row_y())));
@@ -300,6 +437,7 @@ bool handle_alert_dialog_click(tCoord coord) {
     sState.cancelPressed  = false;
     sState.confirmPressed = false;
     sState.pickerPressed  = false;
+    sState.choicePressed  = -1;
 
     if (!within_rectangle(coord, sState.panelRect)) {
         return true; // Modal — swallow clicks outside without closing (matches other G2-Edit popups)
@@ -313,6 +451,15 @@ bool handle_alert_dialog_click(tCoord coord) {
     if ((sState.kind == alertKindBankConfirm) && within_rectangle(coord, draw_button_bounds(picker_button_rect()))) {
         open_context_menu(below_rect(picker_button_rect()), sState.bankMenuItems.data(),
                           (uint32_t)std::min<uint32_t>(8, sState.maxBank1Indexed), 0.0);
+        return true;
+    }
+
+    if (sState.kind == alertKindChoice) {
+        int choice = choice_button_at(coord);
+
+        if (choice >= 0) {
+            finish_choice_dialog(true, choice);
+        }
         return true;
     }
 
@@ -413,6 +560,16 @@ void render_alert_dialog(void) {
         tRgb okColour = sState.confirmPressed ? (tRgb)RGB_GREY_7 : (tRgb)RGB_GREEN_ON;
 
         draw_button(mainArea, button_rect(0, buttonY), sState.confirmLabel.c_str(), okColour);
+    } else if (sState.kind == alertKindChoice) {
+        // Rightmost is the affirmative (green), the rest neutral — same visual grammar as the
+        // confirm dialog's Confirm/Cancel pair, extended along the row.
+        for (uint32_t i = 0; i < sState.choiceCount; i++) {
+            tRgb colour = (sState.choicePressed == (int)i)
+                          ? (tRgb)RGB_GREY_7
+                          : ((i == 0) ? (tRgb)RGB_GREEN_ON : (tRgb)RGB_BACKGROUND_GREY);
+
+            draw_button(mainArea, choice_button_rect(i, buttonY), sState.choiceLabel[i].c_str(), colour);
+        }
     } else {
         tRgb confirmColour = sState.confirmPressed ? (tRgb)RGB_GREY_7 : (tRgb)RGB_GREEN_ON;
         tRgb cancelColour  = sState.cancelPressed ? (tRgb)RGB_GREY_7 : (tRgb)RGB_BACKGROUND_GREY;

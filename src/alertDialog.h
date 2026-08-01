@@ -46,8 +46,17 @@ extern "C" {
 typedef void (*tAlertConfirmCallback)(bool confirmed);
 typedef void (*tAlertBankConfirmCallback)(bool confirmed, uint32_t bank1Indexed);
 
+// choice is the 0-based index of the button pressed, counting from the RIGHT (0 is the rightmost
+// and is drawn as the affirmative), or -1 if the dialog was dismissed with Close/Escape. A caller
+// offering three genuinely different resolutions must therefore have a safe answer for -1.
+typedef void (*tAlertChoiceCallback)(int choice);
+
 void show_alert(const char * title, const char * message);
 void show_confirm(const char * title, const char * message, const char * confirmLabel, tAlertConfirmCallback callback);
+
+// Up to three mutually-exclusive choices on one row. label1/label2 may be NULL for fewer buttons,
+// though at that point show_confirm() is the better fit.
+void show_choice(const char * title, const char * message, const char * label0, const char * label1, const char * label2, tAlertChoiceCallback callback);
 void show_bank_confirm(const char * title, const char * message, const char * confirmLabel, const char * fieldLabel, uint32_t defaultBank1Indexed, uint32_t maxBank1Indexed, tAlertBankConfirmCallback callback);
 
 bool alert_dialog_active(void);
