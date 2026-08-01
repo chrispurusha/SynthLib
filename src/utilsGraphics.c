@@ -142,37 +142,37 @@ double calc_scroll_y(void) {
 
 static tCoord scale_coord(tCoord coord) {
     return (tCoord){
-               scale(coord.x), scale(coord.y)
+        scale(coord.x), scale(coord.y)
     };
 }
 
 static tSize scale_size(tSize size) {
     return (tSize){
-               scale(size.w), scale(size.h)
+        scale(size.w), scale(size.h)
     };
 }
 
 static tRectangle scale_rectangle(tRectangle rectangle) {
     return (tRectangle){
-               scale_coord(rectangle.coord), scale_size(rectangle.size)
+        scale_coord(rectangle.coord), scale_size(rectangle.size)
     };
 }
 
 static tCoord global_scale_coord(tCoord coord) {
     return (tCoord){
-               global_scale(coord.x), global_scale(coord.y)
+        global_scale(coord.x), global_scale(coord.y)
     };
 }
 
 static tSize global_scale_size(tSize size) {
     return (tSize){
-               global_scale(size.w), global_scale(size.h)
+        global_scale(size.w), global_scale(size.h)
     };
 }
 
 static tRectangle global_scale_rectangle(tRectangle rectangle) {
     return (tRectangle){
-               global_scale_coord(rectangle.coord), global_scale_size(rectangle.size)
+        global_scale_coord(rectangle.coord), global_scale_size(rectangle.size)
     };
 }
 
@@ -186,7 +186,7 @@ static tCoord adjust_to_module_area_coord(tCoord coord) {
 
 static tRectangle adjust_to_module_area_rectangle(tRectangle rectangle) {
     return (tRectangle){
-               adjust_to_module_area_coord(rectangle.coord), rectangle.size
+        adjust_to_module_area_coord(rectangle.coord), rectangle.size
     };
 }
 
@@ -198,7 +198,7 @@ static tCoord adjust_scroll_coord(tCoord coord) {
 
 static tRectangle adjust_scroll_rectangle(tRectangle rectangle) {
     return (tRectangle){
-               adjust_scroll_coord(rectangle.coord), rectangle.size
+        adjust_scroll_coord(rectangle.coord), rectangle.size
     };
 }
 
@@ -223,10 +223,10 @@ tRectangle module_area(void) {
     double height = (gRenderHeight / gGlobalGuiScale) - gTheme.topBarHeight - SCROLLBAR_WIDTH - (MODULE_MARGIN * 2.0);
 
     return (tRectangle){{
-                left, top
-            }, {
-                width, height
-            }
+                            left, top
+                        }, {
+                            width, height
+                        }
     };
 }
 
@@ -456,7 +456,12 @@ tRectangle render_line(tArea area, tCoord start, tCoord end, double thickness) {
         end       = scale_scroll_adjust_coord(end);
         thickness = scale(thickness);
     }
-    retRectangle = (tRectangle){{0.0, 0.0}, {0.0, 0.0}};
+    retRectangle = (tRectangle){{
+                                    0.0, 0.0
+                                }, {
+                                    0.0, 0.0
+                                }
+    };
 
     start        = global_scale_coord(start);
     end          = global_scale_coord(end);
@@ -516,16 +521,36 @@ tRectangle render_rectangle_with_border(tArea area, tRectangle rectangle) {
     internal_render_rectangle(rectangle);
 
     set_rgb_colour((tRgb)RGB_BLACK);
-    line            = (tRectangle){{rectangle.coord.x, rectangle.coord.y + rectangle.size.h - borderLineWidth}, {rectangle.size.w, borderLineWidth}};
+    line            = (tRectangle){{
+                                       rectangle.coord.x, rectangle.coord.y + rectangle.size.h - borderLineWidth
+                                   }, {
+                                       rectangle.size.w, borderLineWidth
+                                   }
+    };
     internal_render_rectangle(line); //Bottom
     set_rgb_colour((tRgb)RGB_WHITE);
-    line            = (tRectangle){{rectangle.coord.x, rectangle.coord.y}, {borderLineWidth, rectangle.size.h}};
+    line            = (tRectangle){{
+                                       rectangle.coord.x, rectangle.coord.y
+                                   }, {
+                                       borderLineWidth, rectangle.size.h
+                                   }
+    };
     internal_render_rectangle(line); //Left
     set_rgb_colour((tRgb)RGB_WHITE);
-    line            = (tRectangle){{rectangle.coord.x, rectangle.coord.y}, {rectangle.size.w, borderLineWidth}};
+    line            = (tRectangle){{
+                                       rectangle.coord.x, rectangle.coord.y
+                                   }, {
+                                       rectangle.size.w, borderLineWidth
+                                   }
+    };
     internal_render_rectangle(line); // Top
     set_rgb_colour((tRgb)RGB_BLACK);
-    line            = (tRectangle){{rectangle.coord.x + rectangle.size.w - borderLineWidth, rectangle.coord.y}, {borderLineWidth, rectangle.size.h}};
+    line            = (tRectangle){{
+                                       rectangle.coord.x + rectangle.size.w - borderLineWidth, rectangle.coord.y
+                                   }, {
+                                       borderLineWidth, rectangle.size.h
+                                   }
+    };
     internal_render_rectangle(line); // Right
 
     return retRectangle;
@@ -539,7 +564,12 @@ tRectangle render_triangle(tArea area, tTriangle triangle) {
         triangle.coord2rel = scale_scroll_adjust_coord(triangle.coord2rel);
         triangle.coord3rel = scale_scroll_adjust_coord(triangle.coord3rel);
     }
-    retRectangle       = (tRectangle){{0.0, 0.0}, {0.0, 0.0}};
+    retRectangle       = (tRectangle){{
+                                          0.0, 0.0
+                                      }, {
+                                          0.0, 0.0
+                                      }
+    };
 
     triangle.coord1    = global_scale_coord(triangle.coord1);
     triangle.coord2rel = global_scale_coord(triangle.coord2rel);
@@ -562,7 +592,12 @@ tRectangle render_circle_line(tArea area, tCoord coord, double radius, int segme
         radius    = scale(radius);
         thickness = scale(thickness); // WAS OUTSIDE. Hmmmm
     }
-    retRectangle = (tRectangle){{coord.x - radius, coord.y - radius}, {radius *2.0, radius *2.0}};
+    retRectangle = (tRectangle){{
+                                    coord.x - radius, coord.y - radius
+                                }, {
+                                    radius *2.0, radius *2.0
+                                }
+    };
 
     coord        = global_scale_coord(coord);
     radius       = global_scale(radius);
@@ -599,7 +634,12 @@ tRectangle render_circle_part(tArea area, tCoord coord, double radius, int segme
         coord  = scale_scroll_adjust_coord(coord);
         radius = scale(radius);
     }
-    retRectangle = (tRectangle){{coord.x - radius, coord.y - radius}, {radius *2.0, radius *2.0}};
+    retRectangle = (tRectangle){{
+                                    coord.x - radius, coord.y - radius
+                                }, {
+                                    radius *2.0, radius *2.0
+                                }
+    };
 
     coord        = global_scale_coord(coord);
     radius       = global_scale(radius);
@@ -616,7 +656,12 @@ tRectangle render_circle_part_angle(tArea area, tCoord coord, double radius, dou
         coord  = scale_scroll_adjust_coord(coord);
         radius = scale(radius);
     }
-    retRectangle = (tRectangle){{coord.x - radius, coord.y - radius}, {radius *2.0, radius *2.0}};
+    retRectangle = (tRectangle){{
+                                    coord.x - radius, coord.y - radius
+                                }, {
+                                    radius *2.0, radius *2.0
+                                }
+    };
 
     coord        = global_scale_coord(coord);
     radius       = global_scale(radius);
@@ -663,7 +708,12 @@ tRectangle render_radial_line(tArea area, tCoord coord, double radius, double an
         radius    = scale(radius);
         thickness = scale(thickness);
     }
-    retRectangle = (tRectangle){{coord.x - radius, coord.y - radius}, {radius *2.0, radius *2.0}};
+    retRectangle = (tRectangle){{
+                                    coord.x - radius, coord.y - radius
+                                }, {
+                                    radius *2.0, radius *2.0
+                                }
+    };
 
     coord        = global_scale_coord(coord);
     radius       = global_scale(radius);
@@ -757,7 +807,12 @@ tRectangle render_bezier_curve(tArea area, tCoord start, tCoord control, tCoord 
         end       = scale_scroll_adjust_coord(end);
         thickness = scale(thickness);
     }
-    retRectangle = (tRectangle){{0.0, 0.0}, {0.0, 0.0}};
+    retRectangle = (tRectangle){{
+                                    0.0, 0.0
+                                }, {
+                                    0.0, 0.0
+                                }
+    };
 
     start        = global_scale_coord(start);
     control      = global_scale_coord(control);
@@ -1763,7 +1818,7 @@ tRectangle render_dial(tArea area, tRectangle rectangle, uint32_t value, uint32_
     } else {
         set_rgb_colour(gTheme.orange2);
     }
-    render_circle_part_angle(area, {x, y}, radius, 0.0, 360.0, 25);
+    render_circle_part_angle(area, (tCoord){x, y}, radius, 0.0, 360.0, 25);
 
     if (morphRange != 0) {
         signedValue = (int32_t)value;
@@ -1784,15 +1839,15 @@ tRectangle render_dial(tArea area, tRectangle rectangle, uint32_t value, uint32_
         set_rgb_colour(gTheme.orange1);
 
         if (morphAngle > angle) {
-            render_circle_part_angle(area, {x, y}, radius, angle, morphAngle, 25);
+            render_circle_part_angle(area, (tCoord){x, y}, radius, angle, morphAngle, 25);
         } else {
-            render_circle_part_angle(area, {x, y}, radius, morphAngle, angle, 25);
+            render_circle_part_angle(area, (tCoord){x, y}, radius, morphAngle, angle, 25);
         }
     }
     set_rgb_colour((tRgb)RGB_BLACK);
-    render_radial_line(area, {x, y}, radius, angle, 2.0);
+    render_radial_line(area, (tCoord){x, y}, radius, angle, 2.0);
     set_rgb_colour((tRgb)RGB_BLACK);
-    return render_circle_line(area, {x, y}, radius, 25, 1.0);
+    return render_circle_line(area, (tCoord){x, y}, radius, 25, 1.0);
 }
 
 tRectangle render_dial_with_text(tArea area, tRectangle rectangle, const char * label, const char * buff, double labelH, uint32_t value, uint32_t range, uint32_t morphRange, tRgb colour) {
@@ -1801,15 +1856,15 @@ tRectangle render_dial_with_text(tArea area, tRectangle rectangle, const char * 
     set_rgb_colour((tRgb)RGB_BLACK);
 
     if (label != NULL) {
-        render_text(area, {{rectangle.coord.x, rectangle.coord.y + dialOffsetY}, {BLANK_SIZE, labelH}}, label);
+        render_text(area, (tRectangle){{rectangle.coord.x, rectangle.coord.y + dialOffsetY}, {BLANK_SIZE, labelH}}, label);
         dialOffsetY += labelH;
     }
 
     if (buff != NULL) {
-        render_text(area, {{rectangle.coord.x, rectangle.coord.y + dialOffsetY}, {BLANK_SIZE, labelH}}, buff);
+        render_text(area, (tRectangle){{rectangle.coord.x, rectangle.coord.y + dialOffsetY}, {BLANK_SIZE, labelH}}, buff);
         dialOffsetY += labelH;
     }
-    return render_dial(area, {{rectangle.coord.x, rectangle.coord.y + dialOffsetY}, {rectangle.size.w, rectangle.size.w}}, value, range, morphRange, colour);
+    return render_dial(area, (tRectangle){{rectangle.coord.x, rectangle.coord.y + dialOffsetY}, {rectangle.size.w, rectangle.size.w}}, value, range, morphRange, colour);
 }
 
 #ifdef __cplusplus
