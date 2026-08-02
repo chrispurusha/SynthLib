@@ -55,7 +55,47 @@ void set_rgba_colour(tRgba rgba);
 // black or white text will read against it.
 tRgb contrasting_text_colour(tRgb bg);
 
+// ── Module panes ────────────────────────────────────────────────────────────────────────────────
+//
+// The module canvas is drawn as one or more PANES stacked vertically down the window. Today there
+// is exactly one, occupying the whole canvas band, so this is behaviourally identical to the single
+// canvas that came before it — the structure exists so the Patch Window Split Bar can show the
+// Voice Area and the FX Area at once (see G2-Edit's todo.txt) without every drawing call having to
+// learn which half it is drawing into.
+//
+// A pane owns its SCROLL POSITION and its slice of the canvas band. It does NOT own the zoom:
+// gZoomFactor stays global, so both panes always draw at the same scale. That is deliberate —
+// matched scale is what makes two areas comparable side by side, and it keeps scale() a plain
+// global multiply for the many callers that have no idea panes exist. Promoting zoom into the pane
+// later is a contained change if it turns out to be wanted.
+//
+// The rendering transform reads the CURRENT pane, in the same "mode rather than argument" style
+// that set_param_render_area() already uses for the parameter renderers: draw one pane's worth of
+// modules, switch, draw the next. Rendering is sequential, so a mode is sufficient and avoids
+// threading a pane argument through every render call in the app.
+#define MAX_MODULE_PANES    (2)
+
+// Selects the pane that module-space drawing and hit-testing resolve against. Out-of-range values
+// are ignored, so a caller can't leave the transform pointing at nothing.
+void set_module_pane(uint32_t pane);
+uint32_t module_pane(void);
+
+// How many panes are currently shown. 1 until the split bar sets up the second.
+uint32_t module_pane_count(void);
+void set_module_pane_count(uint32_t count);
+
+// Sets a pane's vertical slice of the canvas band, both as fractions of that band: 0.0/1.0 is the
+// whole thing, which is what pane 0 is set to at startup.
+void set_module_pane_extent(uint32_t pane, double topFraction, double heightFraction);
+
+// The current pane's rectangle, in window coordinates. Everything drawn into moduleArea is offset
+// into this.
 tRectangle module_area(void);
+
+// Any pane's rectangle, without disturbing the current selection — for hit-testing a click against
+// each pane in turn to decide which one it landed in.
+tRectangle module_area_for_pane(uint32_t pane);
+
 bool rectangle_visible_in_module_area(tRectangle rectangle);
 tRectangle render_line(tArea area, tCoord start, tCoord end, double thickness);
 tRectangle render_rectangle(tArea area, tRectangle rectangle);

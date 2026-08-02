@@ -97,8 +97,23 @@ static tSizedAtlas * atlas_for_height(int pixelHeight);             // defined w
 static double         gMaxAscent                             = 0.0; // Used for dealing with preloaded text character height
 static double         gMaxDescent                            = 0.0;
 static double         gMetricsHeight                         = 0.0;
-static double         gXScrollPercent                        = 0.0;
-static double         gYScrollPercent                        = 0.0;
+// One pane of the module canvas — see the module-pane block in utilsGraphics.h. Scroll is per
+// pane; zoom deliberately is not. top/height are fractions of the canvas band, so pane 0's
+// {0.0, 1.0} is the whole band and reproduces the single-canvas behaviour exactly.
+typedef struct {
+    double xScrollPercent;
+    double yScrollPercent;
+    double top;
+    double height;
+} tModulePane;
+
+static tModulePane    gModulePane[MAX_MODULE_PANES]          = {
+    {0.0, 0.0, 0.0, 1.0},
+    {0.0, 0.0, 0.0, 0.0},
+};
+static uint32_t       gModulePaneCount                       = 1;
+static uint32_t       gCurrentModulePane                     = 0;
+
 static double         gZoomFactor                            = NO_ZOOM;
 static int            gRenderWidth                           = 0;
 static int            gRenderHeight                          = 0;
@@ -116,11 +131,39 @@ static inline double global_scale(double value) {
     return value * gGlobalGuiScale;
 }
 
+void set_module_pane(uint32_t pane) {
+    if (pane < MAX_MODULE_PANES) {
+        gCurrentModulePane = pane;
+    }
+}
+
+uint32_t module_pane(void) {
+    return gCurrentModulePane;
+}
+
+uint32_t module_pane_count(void) {
+    return gModulePaneCount;
+}
+
+void set_module_pane_count(uint32_t count) {
+    if ((count >= 1) && (count <= MAX_MODULE_PANES)) {
+        gModulePaneCount = count;
+    }
+}
+
+void set_module_pane_extent(uint32_t pane, double topFraction, double heightFraction) {
+    if (pane >= MAX_MODULE_PANES) {
+        return;
+    }
+    gModulePane[pane].top    = topFraction;
+    gModulePane[pane].height = heightFraction;
+}
+
 double calc_scroll_x(void) {
     tRectangle area  = module_area();
     double     value = 0.0;
 
-    value = (gXScrollPercent * (scale((MAX_COLUMNS + 1) * MODULE_X_SPAN) - area.size.w)) / 100.0;
+    value = (gModulePane[gCurrentModulePane].xScrollPercent * (scale((MAX_COLUMNS + 1) * MODULE_X_SPAN) - area.size.w)) / 100.0;
 
     if (value < 0.0) {
         value = 0.0;
@@ -132,7 +175,7 @@ double calc_scroll_y(void) {
     tRectangle area  = module_area();
     double     value = 0.0;
 
-    value = (gYScrollPercent * (scale(((MAX_ROWS + 1) + (MAX_ROWS_MODULE - 1)) * MODULE_Y_SPAN) - area.size.h)) / 100.0;
+    value = (gModulePane[gCurrentModulePane].yScrollPercent * (scale(((MAX_ROWS + 1) + (MAX_ROWS_MODULE - 1)) * MODULE_Y_SPAN) - area.size.h)) / 100.0;
 
     if (value < 0.0) {
         value = 0.0;
@@ -216,18 +259,31 @@ static tRectangle scale_scroll_adjust_rectangle(tRectangle rectangle) {
     return rectangle;
 }
 
-tRectangle module_area(void) {
-    double left   = MODULE_MARGIN;
-    double top    = gTheme.topBarHeight + MODULE_MARGIN;
-    double width  = (gRenderWidth / gGlobalGuiScale) - SCROLLBAR_WIDTH - (MODULE_MARGIN * 2.0);
-    double height = (gRenderHeight / gGlobalGuiScale) - gTheme.topBarHeight - SCROLLBAR_WIDTH - (MODULE_MARGIN * 2.0);
+tRectangle module_area_for_pane(uint32_t pane) {
+    // The canvas BAND: everything between the top bar and the scrollbars. This is what the single
+    // canvas used to be, and it is what the panes divide up between them.
+    double left       = MODULE_MARGIN;
+    double bandTop    = gTheme.topBarHeight + MODULE_MARGIN;
+    double width      = (gRenderWidth / gGlobalGuiScale) - SCROLLBAR_WIDTH - (MODULE_MARGIN * 2.0);
+    double bandHeight = (gRenderHeight / gGlobalGuiScale) - gTheme.topBarHeight - SCROLLBAR_WIDTH - (MODULE_MARGIN * 2.0);
 
+    if (pane >= MAX_MODULE_PANES) {
+        pane = 0;
+    }
+    // Sliced by fraction rather than by pixels so a window resize redistributes the split
+    // proportionally instead of stranding one pane at a fixed height. With pane 0 at {0.0, 1.0}
+    // this is arithmetically the whole band, i.e. exactly the rectangle this function used to
+    // return before panes existed.
     return (tRectangle){{
-                            left, top
+                            left, bandTop + (bandHeight * gModulePane[pane].top)
                         }, {
-                            width, height
+                            width, bandHeight * gModulePane[pane].height
                         }
     };
+}
+
+tRectangle module_area(void) {
+    return module_area_for_pane(gCurrentModulePane);
 }
 
 // Returns true if any part of `rectangle` (moduleArea-local coordinates, i.e. the same
@@ -1582,12 +1638,14 @@ double set_scroll_bar_percent(double percent, double renderSize) {
     return low + (percent / 100.0) * (high - low);
 }
 
+// Both act on the CURRENT pane, so the scrollbar drag that calls them scrolls whichever pane is
+// selected — which, once the split bar exists, is the one the user is working in.
 void set_x_scroll_percent(double percent) {
-    gXScrollPercent = percent;
+    gModulePane[gCurrentModulePane].xScrollPercent = percent;
 }
 
 void set_y_scroll_percent(double percent) {
-    gYScrollPercent = percent;
+    gModulePane[gCurrentModulePane].yScrollPercent = percent;
 }
 
 // ── List scrollbar (bankBrowser.cpp, fileBrowser.cpp, and similar) ──────────────────────────────
@@ -1747,16 +1805,18 @@ void set_zoom_factor(double newZoom, tCoord mouseCoord) {
     if (maxScrollY > 0.0 && newScrollY > maxScrollY) {
         newScrollY = maxScrollY;
     }
-    // Convert back to percent
-    gXScrollPercent   = (maxScrollX > 0.0) ? (newScrollX / maxScrollX) * 100.0 : 0.0;
-    gYScrollPercent   = (maxScrollY > 0.0) ? (newScrollY / maxScrollY) * 100.0 : 0.0;
+    // Convert back to percent. The zoom itself is global — both panes always draw at one scale —
+    // but the scroll it lands on belongs to the pane being zoomed, since keeping the point under
+    // the cursor fixed is a per-pane calculation.
+    gModulePane[gCurrentModulePane].xScrollPercent = (maxScrollX > 0.0) ? (newScrollX / maxScrollX) * 100.0 : 0.0;
+    gModulePane[gCurrentModulePane].yScrollPercent = (maxScrollY > 0.0) ? (newScrollY / maxScrollY) * 100.0 : 0.0;
 
     // Sync scrollbar thumb positions to match new percent
     double renderWidth  = get_render_width() / gGlobalGuiScale;
     double renderHeight = get_render_height() / gGlobalGuiScale;
 
-    gScrollState.xBar = set_scroll_bar_percent(gXScrollPercent, renderWidth);
-    gScrollState.yBar = set_scroll_bar_percent(gYScrollPercent, renderHeight);
+    gScrollState.xBar                              = set_scroll_bar_percent(gModulePane[gCurrentModulePane].xScrollPercent, renderWidth);
+    gScrollState.yBar                              = set_scroll_bar_percent(gModulePane[gCurrentModulePane].yScrollPercent, renderHeight);
 }
 
 double get_zoom_factor(void) {
