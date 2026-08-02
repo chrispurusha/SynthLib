@@ -1850,21 +1850,27 @@ tRectangle render_dial(tArea area, tRectangle rectangle, uint32_t value, uint32_
     return render_circle_line(area, (tCoord){x, y}, radius, 25, 1.0);
 }
 
+// The rectangle IS THE DIAL: its coord is the top-left of the circle's bounding square and its
+// width the diameter. The value string is drawn one row directly above the dial and the label one
+// row above that, growing upwards, so the dial sits exactly where the caller put it whatever text
+// it does or doesn't carry.
+//
+// That anchoring is the point. This used to take the top-left of the whole label+value+dial block
+// and work downwards, which made the dial's position depend on how many of the two strings were
+// non-NULL - a dial with no label rode a row higher than its neighbours, and the only way to line
+// a row of them up was to pass "" instead of NULL so the row was reserved but blank. NULL and ""
+// now do the same thing, because neither can move the dial.
 tRectangle render_dial_with_text(tArea area, tRectangle rectangle, const char * label, const char * buff, double labelH, uint32_t value, uint32_t range, uint32_t morphRange, tRgb colour) {
-    double dialOffsetY = 0.0;
-
     set_rgb_colour((tRgb)RGB_BLACK);
 
-    if (label != NULL) {
-        render_text(area, (tRectangle){{rectangle.coord.x, rectangle.coord.y + dialOffsetY}, {BLANK_SIZE, labelH}}, label);
-        dialOffsetY += labelH;
+    if (buff != NULL) {
+        render_text(area, (tRectangle){{rectangle.coord.x, rectangle.coord.y - labelH}, {BLANK_SIZE, labelH}}, buff);
     }
 
-    if (buff != NULL) {
-        render_text(area, (tRectangle){{rectangle.coord.x, rectangle.coord.y + dialOffsetY}, {BLANK_SIZE, labelH}}, buff);
-        dialOffsetY += labelH;
+    if (label != NULL) {
+        render_text(area, (tRectangle){{rectangle.coord.x, rectangle.coord.y - (labelH * 2.0)}, {BLANK_SIZE, labelH}}, label);
     }
-    return render_dial(area, (tRectangle){{rectangle.coord.x, rectangle.coord.y + dialOffsetY}, {rectangle.size.w, rectangle.size.w}}, value, range, morphRange, colour);
+    return render_dial(area, (tRectangle){{rectangle.coord.x, rectangle.coord.y}, {rectangle.size.w, rectangle.size.w}}, value, range, morphRange, colour);
 }
 
 #ifdef __cplusplus
