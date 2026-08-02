@@ -70,6 +70,17 @@ tRectangle draw_power_button(tArea area, tRectangle rectangle, bool active);
 tRectangle draw_button(tArea area, tRectangle rectangle, const char * text, tRgb backgroundColour);
 tRectangle draw_button_bounds(tRectangle rectangle);   // the true clickable rect draw_button() draws for a given input
 tRectangle draw_slider(tArea area, tRectangle rectangle, uint32_t value, uint32_t range, uint32_t morphRange, tRgb colour);
+
+// Shared chrome for every modal panel and popup: the bordered box, its darker title bar, and a
+// close button in the TOP LEFT corner - macOS's corner for it, and where these all used to get it
+// wrong by putting a "Close" text button top right instead.
+//
+// draw_panel_chrome() returns the title bar rect (some panels use it as a drag handle) and indents
+// the title past the close button. panel_close_button_rect() is the geometry on its own, for
+// hit-testing outside the render pass; draw_panel_close_button() draws it and returns the same rect.
+tRectangle draw_panel_chrome(tArea area, tRectangle box, double titleH, const char * title);
+tRectangle panel_close_button_rect(tRectangle box);
+tRectangle draw_panel_close_button(tArea area, tRectangle box, bool closePressed);
 tRectangle render_bezier_curve(tArea area, tCoord start, tCoord control, tCoord end, double thickness, int segments);
 tRectangle render_text(tArea area, tRectangle rectangle, const char * text);
 bool preload_glyph_textures(const char * fontPath, double fontSize);

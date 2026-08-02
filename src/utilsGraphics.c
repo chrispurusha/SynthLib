@@ -1850,6 +1850,95 @@ tRectangle render_dial(tArea area, tRectangle rectangle, uint32_t value, uint32_
     return render_circle_line(area, (tCoord){x, y}, radius, 25, 1.0);
 }
 
+// ─── Shared panel chrome ─────────────────────────────────────────────────────
+
+#define PANEL_CLOSE_INSET     6.0    // from the panel's top-left corner to the button
+#define PANEL_CLOSE_SIZE      14.0   // the button is square
+#define PANEL_CLOSE_CROSS     4.0    // how far the cross is inset inside the button
+// BORDER_LINE_WIDTH is sized for a whole panel and reads as a slab around a button this small.
+// The cross is drawn slightly heavier than its frame: the frame's lines are axis-aligned and stay
+// crisp, while the diagonals get antialiased and would otherwise look the lighter of the two, so
+// matching the numbers makes the box dominate the mark it exists to present.
+#define PANEL_CLOSE_BOX_LINE      1.0
+#define PANEL_CLOSE_CROSS_LINE    1.5
+#define PANEL_TITLE_GAP       8.0    // between the close button and the title text
+
+tRectangle panel_close_button_rect(tRectangle box) {
+    return (tRectangle){
+               {
+                   box.coord.x + PANEL_CLOSE_INSET + BORDER_LINE_WIDTH,
+                   box.coord.y + PANEL_CLOSE_INSET
+               },
+               {PANEL_CLOSE_SIZE, PANEL_CLOSE_SIZE}
+    };
+}
+
+tRectangle draw_panel_close_button(tArea area, tRectangle box, bool closePressed) {
+    tRectangle rectangle = panel_close_button_rect(box);
+    double     inset     = PANEL_CLOSE_CROSS;
+    double     right     = rectangle.coord.x + rectangle.size.w;
+    double     bottom    = rectangle.coord.y + rectangle.size.h;
+
+    // Deliberately NOT RGB_BACKGROUND_GREY. This file compiles without G2_EDIT defined, so that
+    // macro resolves to the dark 0.30 of synthlibDefs.h's other branch - the very same value as
+    // the RGB_GREY_3 title bar drawn below, which made the button vanish into the banner and left
+    // a black cross on dark grey. RGB_GREY_3 and RGB_GREY_7 are 0.30 and 0.70 in BOTH branches, so
+    // deriving from those and letting contrasting_text_colour() choose the stroke is stable
+    // whichever app is compiling.
+    tRgb       banner    = (tRgb)RGB_GREY_3;    // must stay the colour draw_panel_chrome() fills
+    tRgb       fill      = closePressed ? (tRgb)RGB_GREY_7 : banner;
+    tRgb       stroke    = contrasting_text_colour(fill);
+
+    if (closePressed) {
+        set_rgb_colour(fill);
+        render_rectangle(area, rectangle);
+    }
+
+    // Outlined by hand rather than through render_rectangle_with_border(), which has no say over
+    // its line width.
+    set_rgb_colour(stroke);
+    render_line(area, (tCoord){rectangle.coord.x, rectangle.coord.y}, (tCoord){right, rectangle.coord.y}, PANEL_CLOSE_BOX_LINE);
+    render_line(area, (tCoord){rectangle.coord.x, bottom}, (tCoord){right, bottom}, PANEL_CLOSE_BOX_LINE);
+    render_line(area, (tCoord){rectangle.coord.x, rectangle.coord.y}, (tCoord){rectangle.coord.x, bottom}, PANEL_CLOSE_BOX_LINE);
+    render_line(area, (tCoord){right, rectangle.coord.y}, (tCoord){right, bottom}, PANEL_CLOSE_BOX_LINE);
+
+    // Two drawn diagonals rather than the character 'X'. A glyph would sit on the text baseline
+    // instead of centred in the box, and wouldn't scale with the button - it has to be lines.
+    render_line(area,
+                (tCoord){rectangle.coord.x + inset, rectangle.coord.y + inset},
+                (tCoord){right - inset, bottom - inset},
+                PANEL_CLOSE_CROSS_LINE);
+    render_line(area,
+                (tCoord){right - inset, rectangle.coord.y + inset},
+                (tCoord){rectangle.coord.x + inset, bottom - inset},
+                PANEL_CLOSE_CROSS_LINE);
+    return rectangle;
+}
+
+tRectangle draw_panel_chrome(tArea area, tRectangle box, double titleH, const char * title) {
+    tRectangle titleBar = {box.coord, {box.size.w, titleH}};
+
+    set_rgb_colour((tRgb)RGB_GREY_5);
+    render_rectangle_with_border(area, box);
+
+    set_rgb_colour((tRgb)RGB_GREY_3);
+    render_rectangle(area, (tRectangle){
+                         {box.coord.x + BORDER_LINE_WIDTH, box.coord.y + BORDER_LINE_WIDTH},
+                         {box.size.w - (2.0 * BORDER_LINE_WIDTH), titleH - BORDER_LINE_WIDTH}
+                     });
+
+    // Indented past the close button, which now occupies the corner the title used to start in.
+    tRectangle closeRect = panel_close_button_rect(box);
+
+    set_rgb_colour((tRgb)RGB_WHITE);
+    render_text(area, (tRectangle){
+                    {closeRect.coord.x + closeRect.size.w + PANEL_TITLE_GAP, box.coord.y + 6.0},
+                    {BLANK_SIZE, STANDARD_TEXT_HEIGHT}
+                }, title);
+
+    return titleBar;
+}
+
 // The rectangle IS THE DIAL: its coord is the top-left of the circle's bounding square and its
 // width the diameter. The value string is drawn one row directly above the dial and the label one
 // row above that, growing upwards, so the dial sits exactly where the caller put it whatever text

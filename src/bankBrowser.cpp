@@ -264,13 +264,7 @@ void rebuild_rows(void) {
 }
 
 tRectangle close_button_rect(void) {
-    double w = get_text_width("Close", kButtonH, eCache) + 4.0;
-
-    return (tRectangle){
-        {
-            sState.panelRect.coord.x + sState.panelRect.size.w - w - 8.0 - BORDER_LINE_WIDTH, sState.panelRect.coord.y + 4.0
-        }, {w, kButtonH}
-    };
+    return panel_close_button_rect(sState.panelRect);
 }
 
 double message_y(void) {
@@ -423,7 +417,7 @@ void handle_bank_browser_mouse_down(tCoord coord) {
     if (!sState.active) {
         return;
     }
-    sState.closePressed   = within_rectangle(coord, draw_button_bounds(close_button_rect()));
+    sState.closePressed   = within_rectangle(coord, close_button_rect());
     sState.cancelPressed  = within_rectangle(coord, draw_button_bounds(button_rect(1, button_row_y())));
     sState.confirmPressed = within_rectangle(coord, draw_button_bounds(button_rect(0, button_row_y())));
     list_scrollbar_mouse_down(list_area_rect(), (int32_t)sState.rows.size(), kVisibleRows, sState.scrollOffset, coord);
@@ -456,7 +450,7 @@ bool handle_bank_browser_click(tCoord coord) {
         return true; // Modal — swallow clicks outside without closing (matches other G2-Edit popups)
     }
 
-    if (within_rectangle(coord, draw_button_bounds(close_button_rect()))) {
+    if (within_rectangle(coord, close_button_rect())) {
         finish_browse(false, 0, 0);
         return true;
     }
@@ -585,21 +579,8 @@ void render_bank_browser(void) {
             {0.0, 0.0}, {get_render_width() / gGlobalGuiScale, get_render_height() / gGlobalGuiScale}
         });
 
-    // Panel chrome — replicates graphics.cpp's draw_panel_chrome()/draw_panel_close_button()
-    // pixel-for-pixel (this file can't call those G2-Edit-local helpers directly).
-    set_rgb_colour((tRgb)RGB_GREY_5);
-    render_rectangle_with_border(mainArea, sState.panelRect);
-    set_rgb_colour((tRgb)RGB_GREY_3);
-    render_rectangle(mainArea, (tRectangle){
-            {sState.panelRect.coord.x + BORDER_LINE_WIDTH, sState.panelRect.coord.y + BORDER_LINE_WIDTH},
-            {sState.panelRect.size.w - (2.0 * BORDER_LINE_WIDTH), kTitleH - BORDER_LINE_WIDTH}
-        });
-    set_rgb_colour((tRgb)RGB_WHITE);
-    render_text(mainArea, (tRectangle){
-            {sState.panelRect.coord.x + 10.0, sState.panelRect.coord.y + 6.0}, {BLANK_SIZE, STANDARD_TEXT_HEIGHT}
-        }, sState.title.c_str());
-
-    draw_button(mainArea, close_button_rect(), "Close", sState.closePressed ? (tRgb)RGB_GREY_7 : (tRgb)RGB_BACKGROUND_GREY);
+    draw_panel_chrome(mainArea, sState.panelRect, kTitleH, sState.title.c_str());
+    draw_panel_close_button(mainArea, sState.panelRect, sState.closePressed);
 
     // Message
     set_rgb_colour((tRgb)RGB_BLACK);
