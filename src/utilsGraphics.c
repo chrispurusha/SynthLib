@@ -286,6 +286,31 @@ tRectangle module_area(void) {
     return module_area_for_pane(gCurrentModulePane);
 }
 
+void module_pane_clip_begin(void) {
+    tRectangle pane = module_area();
+
+    // glScissor works in framebuffer pixels with the origin at the BOTTOM left, where everything
+    // else here is in scaled window units with the origin at the top left — hence the flip.
+    double     x    = pane.coord.x * gGlobalGuiScale;
+    double     w    = pane.size.w * gGlobalGuiScale;
+    double     h    = pane.size.h * gGlobalGuiScale;
+    double     y    = (double)gRenderHeight - ((pane.coord.y * gGlobalGuiScale) + h);
+
+    if (w < 0.0) {
+        w = 0.0;
+    }
+
+    if (h < 0.0) {
+        h = 0.0;
+    }
+    glEnable(GL_SCISSOR_TEST);
+    glScissor((GLint)x, (GLint)y, (GLsizei)w, (GLsizei)h);
+}
+
+void module_pane_clip_end(void) {
+    glDisable(GL_SCISSOR_TEST);
+}
+
 // Returns true if any part of `rectangle` (moduleArea-local coordinates, i.e. the same
 // space passed to render_rectangle(moduleArea, ...) / render_module()'s own moduleRectangle)
 // would land within the currently visible, scrolled/zoomed module canvas. Callers can use
@@ -1646,6 +1671,16 @@ void set_x_scroll_percent(double percent) {
 
 void set_y_scroll_percent(double percent) {
     gModulePane[gCurrentModulePane].yScrollPercent = percent;
+}
+
+// Read back the current pane's scroll, so a caller drawing that pane's own scrollbar can put the
+// thumb where the pane actually is rather than tracking it separately and drifting.
+double get_x_scroll_percent(void) {
+    return gModulePane[gCurrentModulePane].xScrollPercent;
+}
+
+double get_y_scroll_percent(void) {
+    return gModulePane[gCurrentModulePane].yScrollPercent;
 }
 
 // ── List scrollbar (bankBrowser.cpp, fileBrowser.cpp, and similar) ──────────────────────────────

@@ -96,6 +96,15 @@ tRectangle module_area(void);
 // each pane in turn to decide which one it landed in.
 tRectangle module_area_for_pane(uint32_t pane);
 
+// Clips drawing to the current pane's rectangle. REQUIRED around a pane's render pass once there
+// is more than one pane, and it is what makes panes actually independent: a module taller than its
+// pane, or scrolled so it straddles the divider, would otherwise keep drawing straight into its
+// neighbour — nothing else in this library clips. It also hides the connectors that
+// render_modules() deliberately still draws for culled modules (so cables keep their endpoints),
+// which used to be safely off-screen and, with panes, land in the other half of the window.
+void module_pane_clip_begin(void);
+void module_pane_clip_end(void);
+
 bool rectangle_visible_in_module_area(tRectangle rectangle);
 tRectangle render_line(tArea area, tCoord start, tCoord end, double thickness);
 tRectangle render_rectangle(tArea area, tRectangle rectangle);
@@ -132,6 +141,8 @@ double set_scroll_bar_percent(double percent, double renderSize);
 double clamp_scroll_bar(double value, double max_value);
 void set_x_scroll_percent(double percent);
 void set_y_scroll_percent(double percent);
+double get_x_scroll_percent(void);
+double get_y_scroll_percent(void);
 void set_zoom_factor(double zoomFactor, tCoord mouseCoord);
 //void set_x_end_max(double xEndMax);
 //void set_y_end_max(double yEndMax);
