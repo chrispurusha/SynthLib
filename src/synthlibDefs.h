@@ -111,6 +111,18 @@ void usb_log_text(const char * fmt, ...);
 #define RGB_ORANGE_2                 {1.00, 0.70, 0.00}
 #endif
 
+// The MODULE CANVAS's own scrollbar metrics — deliberately OUTSIDE the per-app #ifdef below.
+//
+// utilsGraphics.c compiles WITHOUT G2_EDIT defined (see the note in draw_panel_close_button), so
+// anything inside that branch is invisible to it. That is exactly how the canvas came to reserve
+// one width for the scrollbars while G2-Edit's split view drew them at another: module_area_for_pane()
+// read the #else value and the app read the G2_EDIT one. Both sides read these instead.
+//
+// Matched to the Patch Window Split Bar's height (SPLIT_BAR_HEIGHT in G2-Edit's splitView.h) so the
+// divider and the bars read as one family of furniture; if one changes, change the other.
+#define MODULE_SCROLLBAR_WIDTH     (11.0)
+#define MODULE_SCROLLBAR_MARGIN    MODULE_SCROLLBAR_WIDTH
+
 // TODO - Might want to come up with another mechanism for switching these between projects
 #ifdef G2_EDIT
 #define TOP_BAR_HEIGHT    (80.0)

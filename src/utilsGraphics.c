@@ -264,8 +264,8 @@ tRectangle module_area_for_pane(uint32_t pane) {
     // canvas used to be, and it is what the panes divide up between them.
     double left       = MODULE_MARGIN;
     double bandTop    = gTheme.topBarHeight + MODULE_MARGIN;
-    double width      = (gRenderWidth / gGlobalGuiScale) - SCROLLBAR_WIDTH - (MODULE_MARGIN * 2.0);
-    double bandHeight = (gRenderHeight / gGlobalGuiScale) - gTheme.topBarHeight - SCROLLBAR_WIDTH - (MODULE_MARGIN * 2.0);
+    double width      = (gRenderWidth / gGlobalGuiScale) - MODULE_SCROLLBAR_WIDTH - (MODULE_MARGIN * 2.0);
+    double bandHeight = (gRenderHeight / gGlobalGuiScale) - gTheme.topBarHeight - MODULE_SCROLLBAR_WIDTH - (MODULE_MARGIN * 2.0);
 
     if (pane >= MAX_MODULE_PANES) {
         pane = 0;
