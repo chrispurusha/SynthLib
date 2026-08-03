@@ -113,8 +113,12 @@ void usb_log_text(const char * fmt, ...);
 
 // TODO - Might want to come up with another mechanism for switching these between projects
 #ifdef G2_EDIT
-#define TOP_BAR_HEIGHT           (80.0)
-#define SCROLLBAR_WIDTH          (15.0)
+#define TOP_BAR_HEIGHT    (80.0)
+// Matched to the Patch Window Split Bar's own height (SPLIT_BAR_HEIGHT in splitView.h), so the
+// divider and the scrollbars read as the same family of furniture rather than three thicknesses.
+// Kept as a literal because this header cannot see the app's own headers; if one changes, change
+// both.
+#define SCROLLBAR_WIDTH          (11.0)
 #define SCROLLBAR_LENGTH         (100.0)
 #define SCROLLBAR_MARGIN         SCROLLBAR_WIDTH
 
