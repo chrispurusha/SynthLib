@@ -45,6 +45,9 @@ typedef struct {
 // TOP_BAR_HEIGHT/RGB_ORANGE_1/etc from its own defs.h.
 void configure_synthlib_theme(tSynthLibTheme theme);
 
+// Dims the whole canvas behind a modal panel.
+void draw_dialog_background_overlay(void);
+
 void set_rgb_colour(tRgb rgb);
 void set_rgba_colour(tRgba rgba);
 

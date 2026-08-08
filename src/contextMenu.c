@@ -31,6 +31,7 @@ extern "C" {
 #include "utilsGraphics.h"
 #include "synthlibHost.h"
 #include "synthlibGlobals.h"
+#include "utils.h"   // get_time_ms(): a clock, which is all glfwGetTime() ever was here
 #include "contextMenu.h"
 
 tContextMenu gContextMenu = {0};
@@ -40,19 +41,6 @@ tContextMenu gContextMenu = {0};
 // gContextMenu.frame[0..depth-1] is the stack of currently visible levels —
 // frame[0] is the original top-level menu, frame[depth-1] the deepest open
 // flyout. Every level stays visible and clickable while a deeper one is open.
-
-#include <time.h>
-
-// Elapsed seconds from a monotonic clock. This was glfwGetTime(), which is the ONLY reason this file
-// referred to GLFW at all — and it is a clock, not a window. Using the system clock directly lets
-// the whole context-menu system link into a build with no GLFW in it, which is what the G2-Edit VST3
-// plug-in needs; nothing about the behaviour changes for the applications.
-static double menu_time_seconds(void) {
-    struct timespec ts;
-
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (double)ts.tv_sec + ((double)ts.tv_nsec / 1000000000.0);
-}
 
 static double menu_cell_width(const tMenuFrame * frame) {
     if (frame->cellWidth > 0.0) {
@@ -203,7 +191,7 @@ bool handle_context_menu_click(tCoord coord) {
             push_menu_frame(side_of_rect(itemRect), item->subMenu, item->subMenuColumns, item->subMenuCellWidth);
             gContextMenu.hoverFrame     = f;
             gContextMenu.hoverIndex     = index;
-            gContextMenu.hoverStartTime = menu_time_seconds();
+            gContextMenu.hoverStartTime = (get_time_ms() / 1000.0);
         } else if (item->action != NULL) {
             void (*action)(int) = item->action;
             action(index);
@@ -257,7 +245,7 @@ void update_context_menu_hover(void) {
         }
         gContextMenu.hoverFrame     = hitFrame;
         gContextMenu.hoverIndex     = hitIndex;
-        gContextMenu.hoverStartTime = menu_time_seconds();
+        gContextMenu.hoverStartTime = (get_time_ms() / 1000.0);
         synthlib_request_redraw();
         return;
     }
@@ -265,7 +253,7 @@ void update_context_menu_hover(void) {
 
     if (  (item->subMenu != NULL)
        && (hitFrame == (int)gContextMenu.depth - 1)
-       && ((menu_time_seconds() - gContextMenu.hoverStartTime) >= MENU_HOVER_DELAY_SECS)) {
+       && (((get_time_ms() / 1000.0) - gContextMenu.hoverStartTime) >= MENU_HOVER_DELAY_SECS)) {
         tRectangle itemRect = menu_item_rect(&gContextMenu.frame[hitFrame], hitIndex);
 
         push_menu_frame(side_of_rect(itemRect), item->subMenu, item->subMenuColumns, item->subMenuCellWidth);

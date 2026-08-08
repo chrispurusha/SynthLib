@@ -2062,3 +2062,12 @@ tRectangle render_dial_with_text(tArea area, tRectangle rectangle, const char * 
 }
 #endif
 
+// Dims the whole canvas behind a modal panel. Was in G2-Edit's graphics.c; it is six lines of
+// drawing with no window in it, and the VST3 plug-in needs it for the same panels.
+void draw_dialog_background_overlay(void) {
+    double renderW = get_render_width() / gGlobalGuiScale;
+    double renderH = get_render_height() / gGlobalGuiScale;
+
+    set_rgb_colour((tRgb)RGB_GREY_2);
+    render_rectangle(mainArea, (tRectangle){{0.0, 0.0}, {renderW, renderH}});
+}

@@ -18,7 +18,11 @@
  */
 
 #define GL_SILENCE_DEPRECATION    1
+// GLFW here is for its KEY CONSTANTS only — no GLFW function is called, so this links into
+// a build with no GLFW library. get_time_ms() replaced the one call that was (glfwGetTime).
 #include <GLFW/glfw3.h>
+
+#include "utils.h"
 
 #include <algorithm>
 #include <string>
@@ -85,7 +89,7 @@ struct tBankBrowserState {
     bool                                  cancelPressed  = false;
     bool                                  confirmPressed = false;
     int32_t                               hoveredRow     = -1;
-    double                                lastClickTime  = 0.0; // glfwGetTime() of the last row click - double-click detection
+    double                                lastClickTime  = 0.0; // (get_time_ms() / 1000.0) of the last row click - double-click detection
 };
 
 tBankBrowserState sState;
@@ -478,7 +482,7 @@ bool handle_bank_browser_click(tCoord coord) {
         int32_t index     = rowInView + (int32_t)sState.scrollOffset;
 
         if ((index >= 0) && (index < (int32_t)sState.rows.size()) && (sState.rows[(size_t)index].kind == rowNormal)) {
-            double now           = glfwGetTime();
+            double now           = (get_time_ms() / 1000.0);
             bool   isDoubleClick = (index == sState.selectedRow) && ((now - sState.lastClickTime) <= DOUBLE_CLICK_DELAY_SECS);
 
             sState.selectedRow   = index;

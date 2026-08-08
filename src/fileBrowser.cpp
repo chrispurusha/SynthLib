@@ -18,7 +18,11 @@
  */
 
 #define GL_SILENCE_DEPRECATION    1
+// GLFW here is for its KEY CONSTANTS only — no GLFW function is called, so this links into
+// a build with no GLFW library. get_time_ms() replaced the one call that was (glfwGetTime).
 #include <GLFW/glfw3.h>
+
+#include "utils.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -546,7 +550,7 @@ bool handle_file_browser_click(tCoord coord) {
 
         if ((index >= 0) && (index < (int32_t)sState.entries.size())) {
             const tFileBrowserEntry &entry        = sState.entries[(size_t)index];
-            double                  now           = glfwGetTime();
+            double                  now           = (get_time_ms() / 1000.0);
             bool                    isDoubleClick = (index == sState.lastClickedRow) && ((now - sState.lastClickTime) <= DOUBLE_CLICK_DELAY_SECS);
 
             sState.lastClickedRow = index;
