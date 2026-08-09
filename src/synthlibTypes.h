@@ -110,7 +110,12 @@ typedef enum {
 // its own app-local struct, set before opening the menu and read back from
 // inside its own action callbacks.
 typedef struct _struct_menuItem {
-    char *                    label;
+    // CONST, because a menu item's label is only ever READ — rendered, measured, matched. It was
+    // `char *`, which made every caller passing a `const char *` table (a string map, a static const
+    // array of names) discard a qualifier to get it in, and two of those were the last warnings in
+    // G2-Edit's build. Nothing anywhere writes through this field; a label built at runtime is built in
+    // the caller's own buffer and that buffer's address stored here.
+    const char *              label;
     tRgb                      colour;
     void (*action)(int index);
     uint32_t                  param;

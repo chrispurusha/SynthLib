@@ -44,7 +44,7 @@ uint16_t crc_iterator(int32_t seed, int32_t val) {
     return (uint16_t)((seed << 8) ^ crc) & 0xFFFF;
 }
 
-uint16_t calc_crc16(uint8_t * buff, int length) {
+uint16_t calc_crc16(const uint8_t * buff, int length) {
     uint16_t crc  = 0;
     int      i    = 0;
     uint8_t  byte = 0;
