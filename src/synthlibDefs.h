@@ -49,8 +49,16 @@ void usb_log_text(const char * fmt, ...);
    do {fprintf(stdout, fmt, ## __VA_ARGS__); \
        _USB_LOG(fmt, ## __VA_ARGS__);} while (0)
 #else
-#define LOG_DEBUG(fmt, ...)           ((void)0)
-#define LOG_DEBUG_DIRECT(fmt, ...)    ((void)0)
+// DISABLED, BUT THE ARGUMENTS STILL COUNT AS USED. `((void)0)` discarded them entirely, so any variable
+// that existed only to be logged became an unused variable in Release while being perfectly used in
+// Debug — two of those turned into errors the moment warnings became errors, and only in the
+// configuration do-release builds. `if (0)` keeps every argument in an expression the compiler must
+// still check, so the format string and its arguments stay type-checked in both configurations, then
+// optimises away to nothing.
+#define LOG_DEBUG(fmt, ...)                                                        \
+   do {if (0) {fprintf(stdout, "D %s() " fmt, __func__, ## __VA_ARGS__);}} while (0)
+#define LOG_DEBUG_DIRECT(fmt, ...)                                \
+   do {if (0) {fprintf(stdout, fmt, ## __VA_ARGS__);}} while (0)
 #endif
 #ifdef ENABLE_LOG_MODULE_DATA
 #define LOG_MODULE_DATA(fmt, ...)                                \
@@ -60,8 +68,13 @@ void usb_log_text(const char * fmt, ...);
    do {fprintf(stdout, fmt, ## __VA_ARGS__); \
        _USB_LOG(fmt, ## __VA_ARGS__);} while (0)
 #else
-#define LOG_MODULE_DATA(fmt, ...)           ((void)0)
-#define LOG_MODULE_DATA_DIRECT(fmt, ...)    ((void)0)
+// Same treatment as LOG_DEBUG above, and for the same reason — ENABLE_LOG_MODULE_DATA is defined by no
+// configuration at all, so without this every variable that exists only to be logged here is unused in
+// every build.
+#define LOG_MODULE_DATA(fmt, ...)                                                  \
+   do {if (0) {fprintf(stdout, "D %s() " fmt, __func__, ## __VA_ARGS__);}} while (0)
+#define LOG_MODULE_DATA_DIRECT(fmt, ...)                          \
+   do {if (0) {fprintf(stdout, fmt, ## __VA_ARGS__);}} while (0)
 #endif
 
 #define MAX_GLYPH_CHAR    (127)
