@@ -26,9 +26,23 @@ extern "C" {
 #include <stdlib.h>
 
 #include "geometry.h"
+#include "inputState.h"
 
 double       gGlobalGuiScale = 1.0;
 tScrollState gScrollState    = {0};
+
+// See geometry.h. 200 unmodified; with Shift, 10x slower for anything narrower than the floor, and
+// exactly one raw unit per pixel for anything wider (a 65536-step dial keeps 65536, which is already
+// as fine as a mouse can resolve — multiplying THAT would make it unusable).
+#define DIAL_DRAG_PIXELS         200.0
+#define DIAL_FINE_DRAG_PIXELS    2000.0
+
+double dial_drag_pixels_for_full_range(uint32_t range) {
+    if (!shift_modifier_held()) {
+        return DIAL_DRAG_PIXELS;
+    }
+    return ((double)range > DIAL_FINE_DRAG_PIXELS) ? (double)range : DIAL_FINE_DRAG_PIXELS;
+}
 
 double value_to_angle(uint32_t value, uint32_t range) {
     if (range < 2) {
