@@ -69,6 +69,12 @@ bool ctrl_modifier_held(void);
 // selection?" should not have to restate which keys mean that.
 bool multi_select_modifier_held(void);
 
+// THE GLFW SHELL'S ONE CALL. Pass the `mods` argument GLFW already gives a key or mouse-button
+// callback and it translates and stores it. Declared here but implemented in inputStateGlfw.c, so
+// this header stays free of platform headers and a plug-in links inputState.c alone — see that file
+// for why the mapping is shared rather than repeated in each application.
+void set_modifier_state_from_glfw(int glfwMods);
+
 #ifdef __cplusplus
 }
 #endif
