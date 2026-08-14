@@ -120,6 +120,13 @@ tRectangle render_circle_part_angle(tArea area, tCoord coord, double radius, dou
 tRectangle render_radial_line(tArea area, tCoord coord, double radius, double angleDegrees, double thickness);
 tRectangle draw_power_button(tArea area, tRectangle rectangle, bool active);
 tRectangle draw_button(tArea area, tRectangle rectangle, const char * text, tRgb backgroundColour);
+
+// A button whose face is painted in two colours, split across the middle — for a control carrying
+// two independent states that one fill colour cannot express (G2-Edit's variation buttons: green
+// for "selected", orange for "linked", and both at once when it is both). Identical to draw_button()
+// in every other respect, and draw_button() is itself this with one colour passed twice. Pass the
+// same colour for both to get a plain button.
+tRectangle draw_button_split(tArea area, tRectangle rectangle, const char * text, tRgb topColour, tRgb bottomColour);
 tRectangle draw_button_bounds(tRectangle rectangle);   // the true clickable rect draw_button() draws for a given input
 tRectangle draw_slider(tArea area, tRectangle rectangle, uint32_t value, uint32_t range, uint32_t morphRange, tRgb colour);
 

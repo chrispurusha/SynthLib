@@ -996,7 +996,13 @@ tRectangle draw_button_bounds(tRectangle rectangle) {
     return rectangle;
 }
 
-tRectangle draw_button(tArea area, tRectangle rectangle, const char * text, tRgb backgroundColour) {
+// Exact comparison is right here rather than an epsilon: both sides originate as the same RGB_*
+// macro, so "the caller passed one colour twice" is the only thing this needs to detect.
+static bool rgb_same(tRgb a, tRgb b) {
+    return (a.red == b.red) && (a.green == b.green) && (a.blue == b.blue);
+}
+
+tRectangle draw_button_split(tArea area, tRectangle rectangle, const char * text, tRgb topColour, tRgb bottomColour) {
     tRectangle retRectangle    = {0};
     double     borderLineWidth = 1.0;
     double     margin          = DRAW_BUTTON_MARGIN;
@@ -1019,45 +1025,66 @@ tRectangle draw_button(tArea area, tRectangle rectangle, const char * text, tRgb
     //if (isPressed == true) {
     //    set_rgb_colour((tRgb)RGB_GREY_7);
     //}
-    set_rgb_colour(backgroundColour);
+    set_rgb_colour(topColour);
     internal_render_rectangle(rectangle);
 
+    // The whole face is painted in the top colour first and the lower half painted over it, rather
+    // than two half-height fills: at these sizes a button is only a dozen-odd pixels tall, and two
+    // independently rounded rectangles can leave a background-coloured hairline along the seam.
+    if (!rgb_same(topColour, bottomColour)) {
+        double     halfHeight = rectangle.size.h / 2.0;
+        tRectangle bottomHalf = {{
+                                     rectangle.coord.x, rectangle.coord.y + halfHeight
+                                 },{
+                                     rectangle.size.w, rectangle.size.h - halfHeight
+                                 }};
+
+        set_rgb_colour(bottomColour);
+        internal_render_rectangle(bottomHalf);
+    }
     set_rgb_colour((tRgb)RGB_BLACK);
 
     tRectangle line = {0};
-    line                   = (tRectangle){{
-                                              rectangle.coord.x, rectangle.coord.y + rectangle.size.h - borderLineWidth
-                                          }, {
-                                              rectangle.size.w, borderLineWidth
-                                          }
+    line = (tRectangle){{
+                            rectangle.coord.x, rectangle.coord.y + rectangle.size.h - borderLineWidth
+                        }, {
+                            rectangle.size.w, borderLineWidth
+                        }
     };
     internal_render_rectangle(line); // Bottom
-    line                   = (tRectangle){{
-                                              rectangle.coord.x, rectangle.coord.y
-                                          }, {
-                                              borderLineWidth, rectangle.size.h
-                                          }
+    line = (tRectangle){{
+                            rectangle.coord.x, rectangle.coord.y
+                        }, {
+                            borderLineWidth, rectangle.size.h
+                        }
     };
     internal_render_rectangle(line); // Left
-    line                   = (tRectangle){{
-                                              rectangle.coord.x, rectangle.coord.y
-                                          }, {
-                                              rectangle.size.w, borderLineWidth
-                                          }
+    line = (tRectangle){{
+                            rectangle.coord.x, rectangle.coord.y
+                        }, {
+                            rectangle.size.w, borderLineWidth
+                        }
     };
     internal_render_rectangle(line); // Top
-    line                   = (tRectangle){{
-                                              rectangle.coord.x + rectangle.size.w - borderLineWidth, rectangle.coord.y
-                                          }, {
-                                              borderLineWidth, rectangle.size.h
-                                          }
+    line = (tRectangle){{
+                            rectangle.coord.x + rectangle.size.w - borderLineWidth, rectangle.coord.y
+                        }, {
+                            borderLineWidth, rectangle.size.h
+                        }
     };
     internal_render_rectangle(line); // Right
 
-    set_rgb_colour(contrasting_text_colour(backgroundColour));
+    // Contrast is taken from the TOP colour. The glyph crosses the seam, so no single choice is
+    // ideal, but the two colours a split button is ever given are both light enough to want the same
+    // black text — and if that ever stops being true, the top half is where the label's mass sits.
+    set_rgb_colour(contrasting_text_colour(topColour));
     internal_render_text(textRectangle, text);
 
     return retRectangle;
+}
+
+tRectangle draw_button(tArea area, tRectangle rectangle, const char * text, tRgb backgroundColour) {
+    return draw_button_split(area, rectangle, text, backgroundColour, backgroundColour);
 }
 
 tRectangle draw_slider(tArea area, tRectangle rectangle, uint32_t value, uint32_t range, uint32_t morphRange, tRgb colour) {
