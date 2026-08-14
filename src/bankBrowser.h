@@ -70,6 +70,20 @@ typedef void (*tBankBrowserCallback)(bool confirmed, uint32_t bank1Indexed, uint
 // (e.g. a domain with no meaningful per-item category). message is word-wrapped to the panel width.
 void open_bank_browser(const char * title, const char * message, const char * confirmButtonTitle, const tBankBrowserItem * items, uint32_t itemCount, const char *const * categoryNames, uint32_t categoryNameCount, tBankBrowserCallback callback);
 
+// Category sort mode lists its groups alphabetically. Any category named here is floated to the TOP
+// of that list instead, in the order given, ahead of the alphabetical run — for the categories a
+// device treats as the user's own, which are worth reaching first however they happen to be spelt
+// (G2-Edit's "User 1"/"User 2" land under U, at the very bottom, purely by accident of the alphabet).
+//
+// Named, not indexed, because the grouping itself is keyed on the category NAME: sharing that key
+// means a pinned group can never sort apart from the header it is drawn under. Names must match the
+// categoryNames passed to open_bank_browser() exactly; any that match nothing are simply inert.
+//
+// Persists until changed and applies to every browser opened afterwards (and re-groups one already
+// on screen), so an app with a single category vocabulary sets it once at startup. Pass count 0 to
+// clear it and go back to plain alphabetical.
+void bank_browser_set_priority_categories(const char *const * categoryNames, uint32_t count);
+
 bool bank_browser_active(void);
 void handle_bank_browser_mouse_down(tCoord coord);
 bool handle_bank_browser_mouse_move(tCoord coord);

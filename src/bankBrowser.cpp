@@ -70,26 +70,31 @@ struct tBankBrowserItemInternal {
 };
 
 struct tBankBrowserState {
-    bool                                  active         = false;
+    bool                                  active   = false;
     std::string                           title;
     std::string                           confirmLabel;
-    tBankBrowserCallback                  callback       = nullptr;
+    tBankBrowserCallback                  callback = nullptr;
 
     std::vector<tBankBrowserItemInternal> items;
     std::vector<std::string>              categoryNames;
     std::vector<std::string>              messageLines;
 
-    int32_t                               sortMode       = 0; // 0 = Bank/Loc, 1 = Category, 2 = A-Z
-    std::vector<tBankBrowserRow>          rows;
-    int32_t                               selectedRow    = -1;
-    double                                scrollOffset   = 0.0;
+    // Category groups to float above the alphabetical run, most-important first — see
+    // bank_browser_set_priority_categories(). Deliberately NOT cleared by open_bank_browser(): it is
+    // a property of the app's category vocabulary, not of one browser invocation.
+    std::vector<std::string>     priorityCategories;
 
-    tRectangle                            panelRect      = {0};
-    bool                                  closePressed   = false;
-    bool                                  cancelPressed  = false;
-    bool                                  confirmPressed = false;
-    int32_t                               hoveredRow     = -1;
-    double                                lastClickTime  = 0.0; // (get_time_ms() / 1000.0) of the last row click - double-click detection
+    int32_t                      sortMode          = 0;       // 0 = Bank/Loc, 1 = Category, 2 = A-Z
+    std::vector<tBankBrowserRow> rows;
+    int32_t                      selectedRow       = -1;
+    double                       scrollOffset      = 0.0;
+
+    tRectangle                   panelRect         = {0};
+    bool                         closePressed      = false;
+    bool                         cancelPressed     = false;
+    bool                         confirmPressed    = false;
+    int32_t                      hoveredRow        = -1;
+    double                       lastClickTime     = 0.0;       // (get_time_ms() / 1000.0) of the last row click - double-click detection
 };
 
 tBankBrowserState sState;
@@ -186,11 +191,24 @@ const std::string &category_name_for(uint8_t category) {
     return unknown;
 }
 
+// Where a category group sorts against the others: its position in the priority list, or -1 when it
+// was never pinned. Keyed on the category NAME because that is what the grouping below keys on, so
+// the two can never disagree about which rows belong under which header.
+int32_t category_priority(const std::string &name) {
+    for (size_t i = 0; i < sState.priorityCategories.size(); i++) {
+        if (sState.priorityCategories[i] == name) {
+            return (int32_t)i;
+        }
+    }
+
+    return -1;
+}
+
 // Rebuilds the flattened display list from sState.items for the current sState.sortMode — mirrors
 // the Cocoa data source's rebuildForSortMode: this panel replaced. mode 0 keeps the caller's raw
-// order (assumed Bank/Loc already) with a separator between banks; mode 1 groups alphabetically by
-// category with a header row per group (skipped entirely if the caller supplied no category
-// names); mode 2 is fully alphabetical with no grouping.
+// order (assumed Bank/Loc already) with a separator between banks; mode 1 groups by category with a
+// header row per group (skipped entirely if the caller supplied no category names) — pinned
+// categories first, the rest alphabetically; mode 2 is fully alphabetical with no grouping.
 void rebuild_rows(void) {
     std::vector<int32_t> order(sState.items.size());
 
@@ -204,6 +222,14 @@ void rebuild_rows(void) {
             const std::string &cb = category_name_for(sState.items[(size_t)b].category);
 
             if (ca != cb) {
+                int32_t pa = category_priority(ca);
+                int32_t pb = category_priority(cb);
+
+                // Unpinned (-1) sorts after every pinned group, not before it, so the -1 cannot just
+                // be compared as a number. Below that, both orders are still by name.
+                if (pa != pb) {
+                    return (pa < 0) ? false : ((pb < 0) ? true : (pa < pb));
+                }
                 return ca < cb;
             }
             return sState.items[(size_t)a].name < sState.items[(size_t)b].name;
@@ -352,6 +378,24 @@ void confirm_current(void) {
 } // namespace
 
 extern "C" {
+void bank_browser_set_priority_categories(const char *const * categoryNames, uint32_t count) {
+    sState.priorityCategories.clear();
+    sState.priorityCategories.reserve(count);
+
+    for (uint32_t i = 0; (categoryNames != nullptr) && (i < count); i++) {
+        if (categoryNames[i] != nullptr) {
+            sState.priorityCategories.push_back(categoryNames[i]);
+        }
+    }
+
+    // A browser already on screen re-groups rather than showing the old order until it is next
+    // opened. rebuild_rows() drops the selection and scrolls back to the top, which is what a
+    // re-sorted list wants anyway — the row that was selected is no longer where it was.
+    if (sState.active) {
+        rebuild_rows();
+    }
+}
+
 void open_bank_browser(const char * title, const char * message, const char * confirmButtonTitle,
                        const tBankBrowserItem * items, uint32_t itemCount,
                        const char *const * categoryNames, uint32_t categoryNameCount,
