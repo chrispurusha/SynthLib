@@ -123,7 +123,21 @@ static void clamp_menu_to_screen(tMenuFrame * frame) {
     }
 }
 
+// A COLLAPSE THAT HAS BEEN ASKED FOR BUT NOT YET DONE. Set when the pointer touches an item at a
+// level above the deepest open flyout; acted on only once it has stayed there for
+// MENU_SUBMENU_CLOSE_DELAY_SECS. Reaching the flyout, or leaving the items altogether, cancels it.
+static int32_t sCollapseArmedFrame = -1;
+static int32_t sCollapseArmedIndex = -1;
+static double  sCollapseArmedTime  = 0.0;
+
+static void cancel_pending_collapse(void) {
+    sCollapseArmedFrame = -1;
+    sCollapseArmedIndex = -1;
+    sCollapseArmedTime  = 0.0;
+}
+
 void open_context_menu(tCoord coord, tMenuItem * items, uint32_t columns, double cellWidth) {
+    cancel_pending_collapse();
     gContextMenu.frame[0]       = (tMenuFrame){
         coord, items, columns, cellWidth
     };
@@ -136,6 +150,7 @@ void open_context_menu(tCoord coord, tMenuItem * items, uint32_t columns, double
 }
 
 void close_context_menu(void) {
+    cancel_pending_collapse();
     memset(&gContextMenu, 0, sizeof(gContextMenu));
     gContextMenu.hoverFrame = -1;
     gContextMenu.hoverIndex = -1;
@@ -217,12 +232,12 @@ void update_context_menu_hover(void) {
     if (gContextMenu.active == false) {
         return;
     }
-    tCoord  mouseCoord = {0};
+    tCoord  mouseCoord   = {0};
 
     synthlib_host_mouse_coord(&mouseCoord);
 
-    int32_t hitFrame   = -1;
-    int32_t hitIndex   = -1;
+    int32_t hitFrame     = -1;
+    int32_t hitIndex     = -1;
 
     for (int f = (int)gContextMenu.depth - 1; (f >= 0) && (hitIndex < 0); f--) {
         int32_t index = menu_hit_test(&gContextMenu.frame[f], mouseCoord);
@@ -233,27 +248,61 @@ void update_context_menu_hover(void) {
         }
     }
 
+    double  now          = (get_time_ms() / 1000.0);
+
     if (hitIndex < 0) {
+        // Off the items entirely — which is most of the journey across to a flyout. The open frames
+        // are deliberately left alone (see this function's header), and any armed collapse is
+        // dropped: the pointer is no longer on the item that asked for it.
+        cancel_pending_collapse();
         gContextMenu.hoverFrame = -1;
         gContextMenu.hoverIndex = -1;
         return;
     }
+    // Is the pointer on a level ABOVE the deepest open flyout? That is the case that used to close
+    // the flyout on the spot, and is now the case that arms the wait.
+    bool    aboveDeepest = (hitFrame < (int)gContextMenu.depth - 1);
 
     if ((hitFrame != gContextMenu.hoverFrame) || (hitIndex != gContextMenu.hoverIndex)) {
-        if (hitFrame < (int)gContextMenu.depth - 1) {
-            pop_menu_frames_to((uint32_t)hitFrame + 1);
-        }
+        // The highlight always follows the pointer immediately — only the collapse waits, so the
+        // menu still feels live while the flyout it would destroy is given a moment's grace.
         gContextMenu.hoverFrame     = hitFrame;
         gContextMenu.hoverIndex     = hitIndex;
-        gContextMenu.hoverStartTime = (get_time_ms() / 1000.0);
+        gContextMenu.hoverStartTime = now;
+
+        if (aboveDeepest) {
+            sCollapseArmedFrame = hitFrame;
+            sCollapseArmedIndex = hitIndex;
+            sCollapseArmedTime  = now;
+        } else {
+            cancel_pending_collapse();   // arrived at the flyout: it has earned its place
+        }
         synthlib_request_redraw();
         return;
     }
+
+    if (aboveDeepest) {
+        // Still on the same parent item. Collapse once it has been dwelt on long enough to mean it.
+        if (  (sCollapseArmedFrame == hitFrame)
+           && (sCollapseArmedIndex == hitIndex)
+           && ((now - sCollapseArmedTime) >= MENU_SUBMENU_CLOSE_DELAY_SECS)) {
+            pop_menu_frames_to((uint32_t)hitFrame + 1);
+            cancel_pending_collapse();
+            // Restart this item's own dwell, so its flyout (if it has one) opens a hover delay from
+            // NOW rather than instantly on the next tick — otherwise moving along a row of items
+            // with submenus would snap the new one open the moment the old one went.
+            gContextMenu.hoverStartTime = now;
+            synthlib_request_redraw();
+        }
+        return;
+    }
+    cancel_pending_collapse();
+
     tMenuItem * item = &gContextMenu.frame[hitFrame].items[hitIndex];
 
     if (  (item->subMenu != NULL)
        && (hitFrame == (int)gContextMenu.depth - 1)
-       && (((get_time_ms() / 1000.0) - gContextMenu.hoverStartTime) >= MENU_HOVER_DELAY_SECS)) {
+       && ((now - gContextMenu.hoverStartTime) >= MENU_HOVER_DELAY_SECS)) {
         tRectangle itemRect = menu_item_rect(&gContextMenu.frame[hitFrame], hitIndex);
 
         push_menu_frame(side_of_rect(itemRect), item->subMenu, item->subMenuColumns, item->subMenuCellWidth);

@@ -85,6 +85,18 @@ void usb_log_text(const char * fmt, ...);
 #define MAX_MENU_DEPTH           (4)
 #define MENU_HOVER_DELAY_SECS    (0.3)
 
+// HOW LONG AN OPEN FLYOUT SURVIVES the pointer wandering onto one of its parent's other items.
+//
+// Reaching a flyout means travelling diagonally, and the direct line from the item that opened it to
+// the flyout's contents passes straight over the items BELOW that item. Collapsing the moment one of
+// those is touched forces the user to trace an L — out along their own row first, then down — and
+// missing by a pixel shuts the menu. Real menus all forgive this: macOS tracks a triangle toward the
+// flyout, Windows simply waits. Waiting is what fits a per-frame hover tick.
+//
+// The parent item still highlights immediately; only the collapse waits. Long enough to cross a menu
+// diagonally, short enough that deliberately moving to a sibling still feels like it responds.
+#define MENU_SUBMENU_CLOSE_DELAY_SECS    (0.35)
+
 // Clickable-rectangle registry (see clickRegion.h) — upper bound on how many
 // regions a single frame can register across every render function combined.
 #define MAX_CLICK_REGIONS            (4096)
