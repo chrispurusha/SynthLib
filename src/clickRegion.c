@@ -46,17 +46,70 @@ static uint32_t     sRegionCount   = 0;
 static tClickRegion sCapture       = {0};
 static bool         sCaptureActive = false;
 
+static tRectangle   sClip          = {0};
+static bool         sClipActive    = false;
+
 void cancel_click_region_capture(void) {
     sCaptureActive = false;
 }
 
 void clear_click_regions(void) {
     sRegionCount = 0;
+    sClipActive  = false;   // a clip must never outlive the frame that set it
+}
+
+void set_click_region_clip(const tRectangle * clip) {
+    if (clip == NULL) {
+        sClipActive = false;
+        return;
+    }
+    sClip       = *clip;
+    sClipActive = true;
+}
+
+// Intersect rect with the clip. Returns false if nothing of it survives.
+static bool clip_rect(tRectangle * rect) {
+    if (!sClipActive) {
+        return true;
+    }
+    double left   = (rect->coord.x > sClip.coord.x) ? rect->coord.x : sClip.coord.x;
+    double top    = (rect->coord.y > sClip.coord.y) ? rect->coord.y : sClip.coord.y;
+    double right  = rect->coord.x + rect->size.w;
+    double bottom = rect->coord.y + rect->size.h;
+    double clipR  = sClip.coord.x + sClip.size.w;
+    double clipB  = sClip.coord.y + sClip.size.h;
+
+    if (right > clipR) {
+        right = clipR;
+    }
+
+    if (bottom > clipB) {
+        bottom = clipB;
+    }
+
+    if ((right <= left) || (bottom <= top)) {
+        return false;
+    }
+    *rect = (tRectangle){
+        {
+            left, top
+        }, {
+            right - left, bottom - top
+        }
+    };
+    return true;
 }
 
 void register_click_region(tRectangle rect, eClickLayer layer, tClickHandler handler, void * userData) {
     if (sRegionCount >= MAX_CLICK_REGIONS) {
         LOG_WARNING("MAX_CLICK_REGIONS exceeded, dropping region\n");
+        return;
+    }
+
+    // Clipped to the viewport that is currently drawing, if any — see set_click_region_clip(). A
+    // widget scrolled out of its pane is not registered at all, which is what stops it being clicked
+    // through whatever is drawn over that part of the screen.
+    if (!clip_rect(&rect)) {
         return;
     }
     sRegions[sRegionCount].rect     = rect;

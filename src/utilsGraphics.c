@@ -37,6 +37,7 @@ extern "C" {
 #include <string.h>
 
 #include "synthlibDefs.h"
+#include "clickRegion.h"
 #include "geometry.h"
 #include "utilsGraphics.h"
 
@@ -305,10 +306,17 @@ void module_pane_clip_begin(void) {
     }
     glEnable(GL_SCISSOR_TEST);
     glScissor((GLint)x, (GLint)y, (GLsizei)w, (GLsizei)h);
+
+    // The CLICK regions get the same clip as the pixels, set here so the two cannot drift apart. A
+    // module scrolled past the bottom of its pane is not drawn there — and must not be clickable
+    // there either, which it was: in the split view a Voice Area module scrolled under the FX pane
+    // could still be selected through it. See set_click_region_clip().
+    set_click_region_clip(&pane);
 }
 
 void module_pane_clip_end(void) {
     glDisable(GL_SCISSOR_TEST);
+    set_click_region_clip(NULL);
 }
 
 // Returns true if any part of `rectangle` (moduleArea-local coordinates, i.e. the same

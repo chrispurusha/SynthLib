@@ -135,6 +135,30 @@ static bool context_menu_active(void) {
     return gContextMenu.active;
 }
 
+// THE MENU IS DRAWN OVER EVERYTHING ON THE CANVAS, SO IT IS ASKED FIRST — which it was not, and that
+// was a real bug: a right-click menu overlapping the horizontal scrollbar, the vertical scrollbar or
+// the split drag bar passed its clicks THROUGH to them, so choosing "add module" also scrolled or
+// dragged the pane, and an item that happened to sit over a scrollbar could not be chosen at all.
+// The host tested those in a fixed sequence of ifs that ran before its context-menu call, so paint
+// order and hit-test order disagreed.
+//
+// SWALLOWING THE PRESS IS THE HALF THAT FIXES IT. The menu itself only acts on the release, but it is
+// the PRESS that a scrollbar or a drag bar latches onto; letting that through is what made the thing
+// underneath start moving.
+//
+// A click OUTSIDE the menu is deliberately not consumed: dismissing an open menu by clicking away
+// from it is the host's own business, and it needs to see that click to decide what else it means.
+static bool context_menu_mouse(tCoord coord, tMouseButton mouseButton) {
+    if (!context_menu_contains(coord)) {
+        return false;
+    }
+
+    if (mouseButton == mouseButtonLeftUp) {
+        return handle_context_menu_click(coord);
+    }
+    return true;
+}
+
 static bool menu_bar_active(void) {
     return (gMenuBarItems != NULL) && (gMenuBarRect != NULL);
 }
@@ -145,16 +169,18 @@ static void menu_bar_tick(void) {
 
 // SynthLib's own five, in one table so that the order is stated rather than implied by the sequence
 // of calls in somebody else's render function.
-// CLICKS FOR THE MENU BAR AND THE CONTEXT MENU ARE STILL THE HOST'S, deliberately, and the mouse
-// entries below are NULL to say so. Both sit BEHIND the floating panels in every host's input
-// pipeline — a panel is allowed to overlap the top bar, so a click where a panel covers the bar
-// belongs to the panel — and this coordinator is invoked before the panels are consulted. Dispatching
-// them here would silently move them in front. Their RENDER and their HOVER TICK move now, which is
-// where the duplication actually caused bugs; their click routing follows once the hosts' own
-// pipeline steps are registered here too, and not before.
+// THE MENU BAR'S CLICKS ARE STILL THE HOST'S, deliberately, and its mouse entry below is NULL to say
+// so: the BAR sits behind the floating panels in every host's input pipeline — a panel is allowed to
+// overlap the top bar, so a click where a panel covers the bar belongs to the panel — and this
+// coordinator is invoked before the panels are consulted. Dispatching it here would silently move it
+// in front. Only its render and its hover tick are ours.
+//
+// THE CONTEXT MENU IS DIFFERENT, and was moved here on 2026-08-20 for a reason worth stating: it is
+// drawn AFTER the floating panels and after all the canvas chrome, so it genuinely is in front of
+// them, and being hit-tested last was a bug rather than a caution. See context_menu_mouse().
 static const tSynthLibPopup gLibPopups[] = {
     {"menuBar",     SYNTHLIB_POPUP_LAYER_MENU_BAR,     false, menu_bar_active,     NULL,                menu_bar_tick,             NULL,               NULL,             NULL,                NULL             },
-    {"contextMenu", SYNTHLIB_POPUP_LAYER_CONTEXT_MENU, false, context_menu_active, render_context_menu, update_context_menu_hover, NULL,               NULL,             NULL,                NULL             },
+    {"contextMenu", SYNTHLIB_POPUP_LAYER_CONTEXT_MENU, false, context_menu_active, render_context_menu, update_context_menu_hover, context_menu_mouse, NULL,             NULL,                NULL             },
     {"fileBrowser", SYNTHLIB_POPUP_LAYER_BROWSERS,     true,  file_browser_active, render_file_browser, NULL,                      file_browser_mouse, file_browser_key, file_browser_scroll, file_browser_char},
     {"bankBrowser", SYNTHLIB_POPUP_LAYER_BROWSERS + 1, true,  bank_browser_active, render_bank_browser, update_bank_browser_hover, bank_browser_mouse, bank_browser_key, bank_browser_scroll, NULL             },
     {"alertDialog", SYNTHLIB_POPUP_LAYER_ALERT,        true,  alert_dialog_active, render_alert_dialog, NULL,                      alert_dialog_mouse, alert_dialog_key, NULL,                NULL             },

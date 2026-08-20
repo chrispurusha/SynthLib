@@ -53,6 +53,16 @@ extern tContextMenu gContextMenu;
 void open_context_menu(tCoord coord, tMenuItem * items, uint32_t columns, double cellWidth);
 void close_context_menu(void);
 bool handle_context_menu_click(tCoord coord);
+// Is this coordinate over any part of the open menu?
+//
+// A menu frame is drawn as exactly its grid of item cells — no border or padding beyond them — so
+// this is precisely "the pointer is on something the menu painted". Needed because the menu is drawn
+// OVER everything on the canvas but, in a host that hit-tests by a fixed sequence of ifs, was tested
+// after the canvas chrome underneath it: a right-click menu overlapping a scrollbar or a split bar
+// passed its clicks straight through to them, and an item sitting over a scrollbar could not be
+// selected at all. Whatever is drawn on top has to be asked first.
+bool context_menu_contains(tCoord coord);
+
 void update_context_menu_hover(void);
 void render_context_menu(void);
 

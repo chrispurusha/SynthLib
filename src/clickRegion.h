@@ -86,6 +86,21 @@ void cancel_click_region_capture(void);
 
 void clear_click_regions(void);
 void register_click_region(tRectangle rect, eClickLayer layer, tClickHandler handler, void * userData);
+// CLIP REGISTRATIONS TO A VIEWPORT, exactly as glScissor clips the drawing of the same widgets.
+//
+// A scrolling pane draws its contents clipped, so a module scrolled past the bottom of its pane
+// simply is not painted there. Its click region was registered all the same, in window coordinates,
+// and stayed live underneath whatever the neighbouring pane was drawing — so in G2-Edit's split view
+// a Voice Area module scrolled under the FX pane could still be selected and right-clicked through
+// it, invisible but hittable.
+//
+// Set this where the scissor is set and clear it where the scissor is cleared, and the two cannot
+// drift apart: a region entirely outside the clip is dropped, and one straddling the edge is TRIMMED
+// to the visible part, so a half-scrolled widget is clickable exactly where it can be seen.
+//
+// NULL clears it. Not stacked — one viewport at a time, which is all a pane render needs.
+void set_click_region_clip(const tRectangle * clip);
+
 bool dispatch_click_region(tCoord coord, eClickPhase phase);
 
 // WHAT IS UNDER THIS COORDINATE, without delivering anything to it.

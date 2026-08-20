@@ -183,6 +183,20 @@ static void push_menu_frame(tCoord coord, tMenuItem * items, uint32_t columns, d
     clamp_menu_to_screen(&gContextMenu.frame[gContextMenu.depth - 1]);
 }
 
+bool context_menu_contains(tCoord coord) {
+    if (gContextMenu.active == false) {
+        return false;
+    }
+
+    for (int f = (int)gContextMenu.depth - 1; f >= 0; f--) {
+        if (menu_hit_test(&gContextMenu.frame[f], coord) >= 0) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 bool handle_context_menu_click(tCoord coord) {
     if (gContextMenu.active == false) {
         return false;
