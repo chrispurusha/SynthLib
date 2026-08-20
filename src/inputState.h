@@ -25,6 +25,7 @@ extern "C" {
 #endif
 
 #include <stdbool.h>
+#include "synthlibTypes.h"   // tCoord / tMouseButton, for the coordinate and button helpers
 #include <stdint.h>
 
 // WHICH MODIFIER KEYS ARE HELD, AS PUSHED STATE RATHER THAN SOMETHING TO POLL.
@@ -74,6 +75,26 @@ bool multi_select_modifier_held(void);
 // this header stays free of platform headers and a plug-in links inputState.c alone — see that file
 // for why the mapping is shared rather than repeated in each application.
 void set_modifier_state_from_glfw(int glfwMods);
+
+//
+// The transform from window pixels to the logical, GUI-scaled space everything above the GLFW layer
+// works in. It was written out three times: character-identical in EmuUtility and SynthEdit as a
+// static window_to_logical(), and inlined into G2-Edit's get_global_gui_scaled_mouse_coord() — where
+// it had lost the divide-by-zero guard the other two kept, so a window reporting a zero dimension (it
+// happens while minimising) would have divided by it.
+//
+// No window parameter: SynthLib owns the window (synthlib_window()), and every call site was passing
+// that same window back in.
+tCoord synthlib_window_to_logical(double x, double y);
+
+// Where the cursor is now, in logical coordinates. This is what an app hands to synthlib_host_init()
+// as its mouseCoord, and what the popups and panels ask for when they need the pointer outside an
+// event.
+void synthlib_mouse_coord(tCoord * coord);
+
+// GLFW's (button, action) pair as a tMouseButton. Pure decode, no state — it was G2-Edit's alone,
+// and the other two apps compared raw GLFW constants at each call site instead.
+tMouseButton synthlib_mouse_button(int glfwButton, int glfwAction);
 
 #ifdef __cplusplus
 }

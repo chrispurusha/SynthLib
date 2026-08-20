@@ -87,26 +87,11 @@ typedef struct {
 // there (one preloads a glyph atlas, two call their own init_font()).
 void * synthlib_window_create(const tSynthLibWindowConfig * config, const tSynthLibWindowCallbacks * callbacks);
 
-// ── Window coordinates and buttons ───────────────────────────────────────────
-//
-// The transform from window pixels to the logical, GUI-scaled space everything above the GLFW layer
-// works in. It was written out three times: character-identical in EmuUtility and SynthEdit as a
-// static window_to_logical(), and inlined into G2-Edit's get_global_gui_scaled_mouse_coord() — where
-// it had lost the divide-by-zero guard the other two kept, so a window reporting a zero dimension (it
-// happens while minimising) would have divided by it.
-//
-// No window parameter: SynthLib owns the window (synthlib_window()), and every call site was passing
-// that same window back in.
-tCoord synthlib_window_to_logical(double x, double y);
-
-// Where the cursor is now, in logical coordinates. This is what an app hands to synthlib_host_init()
-// as its mouseCoord, and what the popups and panels ask for when they need the pointer outside an
-// event.
-void synthlib_mouse_coord(tCoord * coord);
-
-// GLFW's (button, action) pair as a tMouseButton. Pure decode, no state — it was G2-Edit's alone,
-// and the other two apps compared raw GLFW constants at each call site instead.
-tMouseButton synthlib_mouse_button(int glfwButton, int glfwAction);
+// The window-coordinate transform and the button decode used to be declared here. They moved to
+// inputState.h — they take plain doubles and ints, no GLFW types, and this header drags in
+// <GLFW/glfw3.h>, which some hosts deliberately keep out of their input files (SynthEdit's
+// mouseHandle.c hand-declares the handful of GLFW functions it needs rather than include it).
+// Putting them on the platform-free input seam is what lets those files use them at all.
 
 // The teardown half, registered as the GLFW close callback by synthlib_window_create(). Exposed
 // because an application may also want to close the window from a menu item rather than the window

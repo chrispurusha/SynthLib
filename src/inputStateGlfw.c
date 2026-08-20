@@ -34,6 +34,10 @@ extern "C" {
 
 #include <GLFW/glfw3.h>
 
+#include "synthlibGlobals.h"
+#include "geometry.h"
+#include "utilsGraphics.h"
+#include "synthlibTypes.h"
 #include "inputState.h"
 
 // NOT A CAST, EVEN THOUGH BOTH SIDES ARE BIT FLAGS. GLFW orders them Shift, Control, Alt, Super
@@ -59,6 +63,59 @@ void set_modifier_state_from_glfw(int glfwMods) {
         bits |= (uint32_t)eModifierCtrl;
     }
     set_modifier_state(bits);
+}
+
+tCoord synthlib_window_to_logical(double x, double y) {
+    GLFWwindow * window = (GLFWwindow *)synthlib_window();
+    int          winW   = 0;
+    int          winH   = 0;
+
+    if (window == NULL) {
+        return (tCoord){
+            x, y
+        };
+    }
+    glfwGetWindowSize(window, &winW, &winH);
+
+    // The guards are not decoration: a window can report a zero dimension while it is being
+    // minimised, and the un-guarded copy of this maths would have divided by it.
+    return (tCoord){
+        .x = (winW > 0) ? (x / (double)winW) * (get_render_width() / gGlobalGuiScale) : x,
+        .y = (winH > 0) ? (y / (double)winH) * (get_render_height() / gGlobalGuiScale) : y,
+    };
+}
+
+void synthlib_mouse_coord(tCoord * coord) {
+    GLFWwindow * window = (GLFWwindow *)synthlib_window();
+    double       x      = 0.0;
+    double       y      = 0.0;
+
+    if ((coord == NULL) || (window == NULL)) {
+        return;
+    }
+    glfwGetCursorPos(window, &x, &y);
+    *coord = synthlib_window_to_logical(x, y);
+}
+
+tMouseButton synthlib_mouse_button(int glfwButton, int glfwAction) {
+    if (glfwAction == GLFW_PRESS) {
+        if (glfwButton == GLFW_MOUSE_BUTTON_LEFT) {
+            return mouseButtonLeftDown;
+        }
+
+        if (glfwButton == GLFW_MOUSE_BUTTON_RIGHT) {
+            return mouseButtonRightDown;
+        }
+    } else if (glfwAction == GLFW_RELEASE) {
+        if (glfwButton == GLFW_MOUSE_BUTTON_LEFT) {
+            return mouseButtonLeftUp;
+        }
+
+        if (glfwButton == GLFW_MOUSE_BUTTON_RIGHT) {
+            return mouseButtonRightUp;
+        }
+    }
+    return mouseButtonNone;
 }
 
 #ifdef __cplusplus
