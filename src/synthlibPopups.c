@@ -212,12 +212,42 @@ static const tSynthLibPopup gLibPopups[] = {
 
 #define LIB_POPUP_COUNT    ((uint32_t)(sizeof(gLibPopups) / sizeof(gLibPopups[0])))
 
+// THE LIBRARY'S OWN FIVE, CHECKED AGAINST EACH OTHER. Deliberately not part of the function above,
+// and deliberately not called from registration: an application need not register any popups at all
+// — SynthEdit and EmuUtility both use the library's and register none of their own — so a check that
+// ran only from synthlib_popups_register() would never run for either of them, which is precisely
+// the half of the check they depend on.
+//
+// Once per process. The table is static, so the answer cannot change between calls, and collect() is
+// on the render path where repeating it every frame would be pure waste.
+static void warn_on_lib_layer_collisions_once(void) {
+    static bool checked = false;
+
+    if (checked) {
+        return;
+    }
+    checked = true;
+
+    for (uint32_t i = 0; i < LIB_POPUP_COUNT; i++) {
+        for (uint32_t j = i + 1; j < LIB_POPUP_COUNT; j++) {
+            if (gLibPopups[i].layer == gLibPopups[j].layer) {
+                LOG_ERROR("popup layer %d is shared by library popups '%s' and '%s' — '%s' sorts in "
+                          "front, by table order rather than by intent\n",
+                          gLibPopups[i].layer, gLibPopups[i].name, gLibPopups[j].name,
+                          gLibPopups[j].name);
+            }
+        }
+    }
+}
+
 // ── The merged, layer-ordered view ───────────────────────────────────────────
 
 // Built fresh per call rather than kept: the app's array can be re-registered, and the cost is a
 // sort of at most 21 pointers against a frame that is about to draw a whole patch.
 static uint32_t collect(const tSynthLibPopup ** out, uint32_t max) {
     uint32_t count = 0;
+
+    warn_on_lib_layer_collisions_once();
 
     for (uint32_t i = 0; (i < LIB_POPUP_COUNT) && (count < max); i++) {
         out[count++] = &gLibPopups[i];
@@ -247,12 +277,44 @@ static bool popup_is_active(const tSynthLibPopup * popup) {
     return (popup->active == NULL) || popup->active();
 }
 
+// A SHARED LAYER IS NOT AN ERROR, BUT IT IS ALWAYS WORTH KNOWING ABOUT. The sort is stable, so two
+// popups on one layer keep their registration order — and that order runs the library's table first
+// and the application's second, which means an app popup that collides with a library one sorts
+// BEHIND it every time, whatever the host intended. Silent, and invisible until the day the two
+// overlap on screen.
+//
+// The whole premise of this file is that the ordering is data and can therefore be checked, so it is
+// checked. Logged rather than refused: the collision may well be deliberate (the two browsers are
+// never up together, and G2-Edit's progress panels are mutually exclusive), and a library that
+// declines to show a panel because of a number would be a far worse failure than a line in the log.
+static void warn_on_layer_collisions(const tSynthLibPopup * popups, uint32_t count) {
+    for (uint32_t i = 0; i < count; i++) {
+        for (uint32_t j = 0; j < LIB_POPUP_COUNT; j++) {
+            if (popups[i].layer == gLibPopups[j].layer) {
+                LOG_ERROR("popup layer %d is shared by app popup '%s' and library popup '%s' — the "
+                          "library's sorts in front, which may not be what was meant\n",
+                          popups[i].layer, popups[i].name, gLibPopups[j].name);
+            }
+        }
+
+        for (uint32_t j = i + 1; j < count; j++) {
+            if (popups[i].layer == popups[j].layer) {
+                LOG_ERROR("popup layer %d is shared by app popups '%s' and '%s' — '%s' sorts in "
+                          "front, by registration order rather than by intent\n",
+                          popups[i].layer, popups[i].name, popups[j].name, popups[j].name);
+            }
+        }
+    }
+}
+
 void synthlib_popups_register(const tSynthLibPopup * popups, uint32_t count) {
     if (count > MAX_APP_POPUPS) {
         LOG_ERROR("synthlib_popups_register: %u popups exceeds the %u supported\n",
                   (unsigned)count, (unsigned)MAX_APP_POPUPS);
         count = MAX_APP_POPUPS;
     }
+    warn_on_layer_collisions(popups, count);
+
     gAppPopups     = popups;
     gAppPopupCount = count;
 }
