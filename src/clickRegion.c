@@ -66,6 +66,38 @@ void register_click_region(tRectangle rect, eClickLayer layer, tClickHandler han
     sRegionCount++;
 }
 
+// The one walk both the query and the dispatch use. Front to back: modal layer first, and within a
+// layer the most recently registered wins, which is registration order = paint order = topmost.
+static const tClickRegion * region_at(tCoord coord, eClickLayer onlyLayer, bool anyLayer) {
+    for (eClickLayer layer = eClickLayerModal; ; layer--) {
+        if (anyLayer || (layer == onlyLayer)) {
+            for (int32_t i = (int32_t)sRegionCount - 1; i >= 0; i--) {
+                if ((sRegions[i].layer == layer) && within_rectangle(coord, sRegions[i].rect)) {
+                    return &sRegions[i];
+                }
+            }
+        }
+
+        if (layer == eClickLayerCanvas) {
+            break;
+        }
+    }
+
+    return NULL;
+}
+
+void * click_region_at(tCoord coord) {
+    const tClickRegion * region = region_at(coord, eClickLayerCanvas, true);
+
+    return (region != NULL) ? region->userData : NULL;
+}
+
+void * click_region_at_layer(tCoord coord, eClickLayer layer) {
+    const tClickRegion * region = region_at(coord, layer, false);
+
+    return (region != NULL) ? region->userData : NULL;
+}
+
 bool dispatch_click_region(tCoord coord, eClickPhase phase) {
     // A captured press owns its release outright — no coordinate lookup, so dragging off the widget
     // (or onto a different one) still delivers to whoever started the gesture.

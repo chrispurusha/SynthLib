@@ -88,6 +88,26 @@ void clear_click_regions(void);
 void register_click_region(tRectangle rect, eClickLayer layer, tClickHandler handler, void * userData);
 bool dispatch_click_region(tCoord coord, eClickPhase phase);
 
+// WHAT IS UNDER THIS COORDINATE, without delivering anything to it.
+//
+// dispatch_click_region() answers an EVENT: it finds the front-most region and calls its handler.
+// Several things need the same question answered without an event — a right-click that wants to open
+// a menu FOR whatever is under the cursor, a keyboard nudge that acts on the widget being pointed at,
+// an overlay deciding what to describe. Each of those used to walk the app's own render-time
+// rectangle arrays instead, which is a second, parallel description of where every widget is: it can
+// disagree with this registry about z-order, it goes stale in exactly the frames where a widget was
+// drawn but deliberately not registered, and it kept G2-Edit's 6MB gParamRectangle readable.
+//
+// Answers with the SAME front-to-back walk dispatch uses, so a query and a click can never disagree
+// about which widget is in front. Returns the region's userData — the app's own handle for whatever
+// it registered — or NULL if nothing is there. Does not touch the press capture.
+void * click_region_at(tCoord coord);
+
+// The same, restricted to one layer: "what canvas widget is under the pointer" while ignoring the
+// chrome and popups drawn over it.
+void * click_region_at_layer(tCoord coord, eClickLayer layer);
+
+
 #ifdef __cplusplus
 }
 #endif
