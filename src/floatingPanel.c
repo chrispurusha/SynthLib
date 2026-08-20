@@ -21,6 +21,8 @@
 extern "C" {
 #endif
 
+#include <stddef.h>   // NULL, which this file used without ever being sure of getting it
+
 #include "synthlibDefs.h"
 #include "synthlibTypes.h"
 #include "geometry.h"
