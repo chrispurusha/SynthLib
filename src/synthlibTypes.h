@@ -147,4 +147,17 @@ typedef struct {
     double  hoverStartTime;            // glfwGetTime() timestamp when (hoverFrame, hoverIndex) last changed
 } tContextMenu;
 
+// Mouse press/release, normalised away from GLFW's button/action pair.
+//
+// MOVED HERE FROM G2-Edit's types.h (2026-08-20) because the shared floating-panel registry takes it
+// in its handler signature. It was G2-Edit's alone; EmuUtility and SynthEdit still pass GLFW's raw
+// ints around, which is exactly why neither of them could adopt a panel until now.
+typedef enum {
+    mouseButtonNone,
+    mouseButtonLeftDown,
+    mouseButtonLeftUp,
+    mouseButtonRightDown,
+    mouseButtonRightUp
+} tMouseButton;
+
 #endif // __SYNTHLIB_TYPES_H__
