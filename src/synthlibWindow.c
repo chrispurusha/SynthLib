@@ -32,6 +32,7 @@ extern "C" {
 #include "synthlibWindow.h"
 #include "synthlibDefs.h"
 #include "synthlibPersistence.h"
+#include "inputState.h"
 #include "synthlibScale.h"
 #include "synthlibGlobals.h"
 #include "geometry.h"
@@ -91,6 +92,84 @@ static void window_close_callback(GLFWwindow * window) {
     synthlib_window_close();
 }
 
+// ── The normalised shims ─────────────────────────────────────────────────────
+//
+// The boilerplate that used to be repeated around every event in every app, once. See
+// tSynthLibInputHandlers in the header for what this deliberately does NOT take over.
+
+static tSynthLibInputHandlers gHandlers = {0};
+
+static void shim_mouse_button(GLFWwindow * window, int button, int action, int mods) {
+    double x = 0.0;
+    double y = 0.0;
+
+    // BEFORE the handler runs: handlers read the shift/ctrl/cmd predicates, so the state has to be
+    // current by the time they do. EmuUtility's own shim never did this at all.
+    set_modifier_state_from_glfw(mods);
+    glfwGetCursorPos(window, &x, &y);
+
+    if (gHandlers.mouseButton != NULL) {
+        gHandlers.mouseButton(synthlib_window_to_logical(x, y), synthlib_mouse_button(button, action), mods);
+    }
+    synthlib_request_redraw();
+}
+
+static void shim_cursor_pos(GLFWwindow * window, double x, double y) {
+    (void)window;
+
+    if (gHandlers.cursorPos != NULL) {
+        gHandlers.cursorPos(synthlib_window_to_logical(x, y));
+    }
+    // NO REDRAW REQUEST HERE, matching what all three apps already did: a mouse move that changes
+    // nothing should not repaint, and a handler that DOES change something asks for itself.
+}
+
+static void shim_key(GLFWwindow * window, int key, int scancode, int action, int mods) {
+    (void)window;
+    set_modifier_state_from_glfw(mods);   // a modifier press or release is a key event like any other
+
+    if (gHandlers.key != NULL) {
+        gHandlers.key(key, scancode, action, mods);
+    }
+    synthlib_request_redraw();
+}
+
+static void shim_char(GLFWwindow * window, unsigned int codepoint) {
+    (void)window;
+
+    if (gHandlers.character != NULL) {
+        gHandlers.character(codepoint);
+    }
+    synthlib_request_redraw();
+}
+
+static void shim_scroll(GLFWwindow * window, double dx, double dy) {
+    (void)window;
+
+    if (gHandlers.scroll != NULL) {
+        gHandlers.scroll(dx, dy);
+    }
+    synthlib_request_redraw();
+}
+
+static void shim_window_focus(GLFWwindow * window, int focused) {
+    (void)window;
+
+    if (gHandlers.windowFocus != NULL) {
+        gHandlers.windowFocus(focused != GLFW_FALSE);
+    }
+    synthlib_request_redraw();
+}
+
+static void shim_window_refresh(GLFWwindow * window) {
+    (void)window;
+
+    if (gHandlers.windowRefresh != NULL) {
+        gHandlers.windowRefresh();
+    }
+    synthlib_request_redraw();
+}
+
 // ── Create ───────────────────────────────────────────────────────────────────
 
 void * synthlib_window_create(const tSynthLibWindowConfig * config, const tSynthLibWindowCallbacks * callbacks) {
@@ -111,6 +190,39 @@ void * synthlib_window_create(const tSynthLibWindowConfig * config, const tSynth
         0
     };
 
+    // Normalised handlers take precedence over raw callbacks for the events they cover: an app
+    // supplies one form or the other, never both for the same event.
+    if (config->handlers != NULL) {
+        gHandlers = *config->handlers;
+
+        if (gHandlers.mouseButton != NULL) {
+            gCallbacks.mouseButton = shim_mouse_button;
+        }
+
+        if (gHandlers.cursorPos != NULL) {
+            gCallbacks.cursorPos = shim_cursor_pos;
+        }
+
+        if (gHandlers.key != NULL) {
+            gCallbacks.key = shim_key;
+        }
+
+        if (gHandlers.character != NULL) {
+            gCallbacks.character = shim_char;
+        }
+
+        if (gHandlers.scroll != NULL) {
+            gCallbacks.scroll = shim_scroll;
+        }
+
+        if (gHandlers.windowFocus != NULL) {
+            gCallbacks.windowFocus = shim_window_focus;
+        }
+
+        if (gHandlers.windowRefresh != NULL) {
+            gCallbacks.windowRefresh = shim_window_refresh;
+        }
+    }
     // Everything that must be true before the first frame, and none of it needs a window: the dial
     // mode is set here rather than left to each app's saved-settings load, so a value read back from
     // NVM overwrites a known default rather than whatever the global happened to hold.

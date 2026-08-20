@@ -52,6 +52,33 @@
 extern "C" {
 #endif
 
+// THE NORMALISED INPUT HANDLERS — the alternative to supplying raw GLFW callbacks below.
+//
+// Every app wrote the same shim around every event: update the modifier state from the GLFW mods,
+// fetch and scale the cursor position, decode the button/action pair, call its own handler, ask for
+// a redraw. Seven tiny functions per app, three apps, and they had already drifted — EmuUtility's
+// shims never called set_modifier_state_from_glfw() at all, so its shift/ctrl predicates only ever
+// held whatever a previous event happened to leave behind.
+//
+// Supply these instead of the raw callbacks and SynthLib installs its own shims: the boilerplate
+// happens once, and the app receives events already in its own vocabulary — a logical tCoord and a
+// tMouseButton — rather than GLFW's.
+//
+// WHAT THIS DOES NOT DO, deliberately: it does not dispatch popups for you. Each host still calls
+// synthlib_popups_dispatch_*() from inside its own handler, because where that sits relative to the
+// host's other early checks is a real decision — G2-Edit swallows canvas input during a device
+// operation BEFORE consulting the popups, and moving that silently would change behaviour nobody
+// asked to change. Normalising the shim is mechanical; reordering the pipeline is not.
+typedef struct {
+    void (*mouseButton)(tCoord coord, tMouseButton button, int mods);
+    void (*cursorPos)(tCoord coord);
+    void (*key)(int key, int scancode, int action, int mods);
+    void (*character)(unsigned int codepoint);
+    void (*scroll)(double dx, double dy);
+    void (*windowFocus)(bool focused);
+    void (*windowRefresh)(void);
+} tSynthLibInputHandlers;
+
 typedef struct {
     const char *          title;       // the whole title, composed by the app: it owns __DATE__/__TIME__
     int                   targetWidth; // design-space framebuffer size, and the locked aspect ratio
@@ -60,6 +87,10 @@ typedef struct {
     tDialMode             dialMode;    // G2-Edit is rotary, the other two vertical
     tSynthLibTheme        theme;       // built from the app's own colour/metric macros
     tSynthLibMouseCoordFn mouseCoord;  // synthlib_host_init's injection point, see synthlibHost.h
+
+    // Normalised handlers. When non-NULL, SynthLib installs its own GLFW shims for the events these
+    // cover, and the matching raw callbacks are ignored — see tSynthLibInputHandlers above.
+    const tSynthLibInputHandlers * handlers;
 } tSynthLibWindowConfig;
 
 // Every one of these is optional. NULL simply leaves that GLFW callback unregistered, which is what
