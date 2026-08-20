@@ -86,6 +86,14 @@ static const tClickRegion * region_at(tCoord coord, eClickLayer onlyLayer, bool 
     return NULL;
 }
 
+bool click_region_capture_rect(tRectangle * rect) {
+    if ((rect == NULL) || !sCaptureActive) {
+        return false;
+    }
+    *rect = sCapture.rect;
+    return true;
+}
+
 void * click_region_at(tCoord coord) {
     const tClickRegion * region = region_at(coord, eClickLayerCanvas, true);
 

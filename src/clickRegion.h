@@ -102,6 +102,19 @@ bool dispatch_click_region(tCoord coord, eClickPhase phase);
 // about which widget is in front. Returns the region's userData — the app's own handle for whatever
 // it registered — or NULL if nothing is there. Does not touch the press capture.
 void * click_region_at(tCoord coord);
+// The rectangle of the region that owns the press currently in flight, if there is one.
+//
+// dispatch_click_region() already captures the whole region on eClickPress — it has to, so the
+// matching release goes to the same handler wherever the cursor ends up. This exposes the rect it
+// captured, so a handler starting a gesture can keep the geometry it was clicked on without going
+// back to whatever array the app happened to record it in. That matters for a rotary drag, which
+// needs the widget's centre on every mouse-move: re-deriving it per event is a lookup that can go
+// stale or disagree, where the press already knew the answer exactly.
+//
+// Valid only from inside a press handler, which is the only time a capture is armed. Returns false
+// otherwise and leaves rect untouched.
+bool click_region_capture_rect(tRectangle * rect);
+
 
 // The same, restricted to one layer: "what canvas widget is under the pointer" while ignoring the
 // chrome and popups drawn over it.
