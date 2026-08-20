@@ -44,10 +44,15 @@
 // in front — and the layer that decides drawing is by construction the layer that decides which
 // popup gets the click.
 //
-// WHAT THIS IS NOT. It does not own floating panels: those already have a registry of their own
-// (floatingPanel.h) whose order is dynamic — they raise on click, so their z-order is a property of
-// the panels rather than a constant. Register floating panels there, modal and fixed-order popups
-// here.
+// FLOATING PANELS KEEP THEIR OWN REGISTRY (floatingPanel.h) and should still be registered there:
+// their order among THEMSELVES is dynamic — they raise on click, so it is a property of the panels
+// rather than a constant, and no fixed layer could describe it. What belongs here is where that
+// whole group sits relative to everything else, which IS a constant. A host registers one entry
+// whose mouse handler walks its own sorted panel list; see G2-Edit's "floatingPanels".
+//
+// That is what let the menu bar's clicks move in here at all — see the note above gLibPopups in the
+// .c. Two orderings, each authoritative over a different thing, is the arrangement; two orderings
+// that both claim the same thing is the bug this file exists to remove.
 
 #include "synthlibTypes.h"
 #include "menuBar.h"
@@ -80,7 +85,7 @@ typedef struct {
     // Return true if the event was consumed. A modal popup should consume everything that reaches
     // it, whether or not the coordinate landed on it — that is what modal means.
     bool (*mouse)(tCoord coord, tMouseButton mouseButton);
-    bool (*key)(int key, int action);
+    bool (*key)(int key, int mods, int action);
 
     // The other two input channels, which are cascaded by hand in every host for exactly the same
     // reason the clicks were. Only the browsers implement scroll; only the file browser takes text.
@@ -111,7 +116,7 @@ void synthlib_popups_tick(void);
 // at the frontmost modal popup, whichever comes first. Returns true if the host should treat the
 // event as handled and do nothing further with it.
 bool synthlib_popups_dispatch_click(tCoord coord, tMouseButton mouseButton);
-bool synthlib_popups_dispatch_key(int key, int action);
+bool synthlib_popups_dispatch_key(int key, int mods, int action);
 bool synthlib_popups_dispatch_scroll(double yDelta);
 bool synthlib_popups_dispatch_char(unsigned int codepoint);
 

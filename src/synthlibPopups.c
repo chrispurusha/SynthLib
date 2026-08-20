@@ -65,7 +65,8 @@ static bool file_browser_mouse(tCoord coord, tMouseButton mouseButton) {
     return true;
 }
 
-static bool file_browser_key(int key, int action) {
+static bool file_browser_key(int key, int mods, int action) {
+    (void)mods;
     handle_file_browser_key(key, action);
     return true;
 }
@@ -89,7 +90,8 @@ static bool bank_browser_mouse(tCoord coord, tMouseButton mouseButton) {
     return true;
 }
 
-static bool bank_browser_key(int key, int action) {
+static bool bank_browser_key(int key, int mods, int action) {
+    (void)mods;
     handle_bank_browser_key(key, action);
     return true;
 }
@@ -122,7 +124,9 @@ static bool alert_dialog_mouse(tCoord coord, tMouseButton mouseButton) {
 
 // Escape closes just the picker first, if it is open, rather than the whole dialog underneath it —
 // the same precedence a host's own menu-versus-Escape handling uses.
-static bool alert_dialog_key(int key, int action) {
+static bool alert_dialog_key(int key, int mods, int action) {
+    (void)mods;
+
     if (gContextMenu.active && (key == GLFW_KEY_ESCAPE) && (action == GLFW_PRESS)) {
         gContextMenu.active = false;
     } else {
@@ -167,19 +171,39 @@ static void menu_bar_tick(void) {
     update_menu_bar_hover(gMenuBarItems, gMenuBarRect());
 }
 
+// The bar opens its menu on the PRESS, which is why only the press is offered to it: the matching
+// release is what the context menu (the dropdown IS a context menu) acts on, and consuming that here
+// would stop a menu item ever being chosen.
+//
+// Returning false when the coordinate misses the bar is what lets the host see the click — the bar
+// is not modal and a press beside it means whatever the canvas says it means.
+static bool menu_bar_mouse(tCoord coord, tMouseButton mouseButton) {
+    if (mouseButton != mouseButtonLeftDown) {
+        return false;
+    }
+    return handle_menu_bar_click(gMenuBarItems, gMenuBarRect(), coord);
+}
+
 // SynthLib's own five, in one table so that the order is stated rather than implied by the sequence
 // of calls in somebody else's render function.
-// THE MENU BAR'S CLICKS ARE STILL THE HOST'S, deliberately, and its mouse entry below is NULL to say
-// so: the BAR sits behind the floating panels in every host's input pipeline — a panel is allowed to
-// overlap the top bar, so a click where a panel covers the bar belongs to the panel — and this
-// coordinator is invoked before the panels are consulted. Dispatching it here would silently move it
-// in front. Only its render and its hover tick are ours.
+// THE MENU BAR'S CLICKS ARRIVED HERE ON 2026-08-20, and what had to happen first is the point. The
+// BAR sits behind the floating panels in every host's input pipeline — a panel may overlap the top
+// bar, so a click where a panel covers the bar belongs to the panel — and while the panels were
+// dispatched by the host AFTER this coordinator ran, moving the bar in here would have silently put
+// it in front of them. The fix was not to special-case the bar but to give the panels a layer of
+// their own in this same ordering (the host registers them; see G2-Edit's floatingPanels entry).
+// Once the panels are ranked rather than sequenced, the bar's own layer — the lowest there is —
+// says exactly what the old call order said, and says it where it can be checked.
+//
+// Its RENDER stays the host's: the bar is chrome the panels float above, so it must be drawn before
+// them, which is a different position in the sequence from the one its clicks want. That is not an
+// inconsistency to fix — it is the one popup that is genuinely behind what it is in front of.
 //
 // THE CONTEXT MENU IS DIFFERENT, and was moved here on 2026-08-20 for a reason worth stating: it is
 // drawn AFTER the floating panels and after all the canvas chrome, so it genuinely is in front of
 // them, and being hit-tested last was a bug rather than a caution. See context_menu_mouse().
 static const tSynthLibPopup gLibPopups[] = {
-    {"menuBar",     SYNTHLIB_POPUP_LAYER_MENU_BAR,     false, menu_bar_active,     NULL,                menu_bar_tick,             NULL,               NULL,             NULL,                NULL             },
+    {"menuBar",     SYNTHLIB_POPUP_LAYER_MENU_BAR,     false, menu_bar_active,     NULL,                menu_bar_tick,             menu_bar_mouse,     NULL,             NULL,                NULL             },
     {"contextMenu", SYNTHLIB_POPUP_LAYER_CONTEXT_MENU, false, context_menu_active, render_context_menu, update_context_menu_hover, context_menu_mouse, NULL,             NULL,                NULL             },
     {"fileBrowser", SYNTHLIB_POPUP_LAYER_BROWSERS,     true,  file_browser_active, render_file_browser, NULL,                      file_browser_mouse, file_browser_key, file_browser_scroll, file_browser_char},
     {"bankBrowser", SYNTHLIB_POPUP_LAYER_BROWSERS + 1, true,  bank_browser_active, render_bank_browser, update_bank_browser_hover, bank_browser_mouse, bank_browser_key, bank_browser_scroll, NULL             },
@@ -288,8 +312,8 @@ typedef enum {
     eDispatchChar
 } eDispatchKind;
 
-static bool dispatch(eDispatchKind kind, tCoord coord, tMouseButton mouseButton, int key, int action,
-                     double yDelta, unsigned int codepoint) {
+static bool dispatch(eDispatchKind kind, tCoord coord, tMouseButton mouseButton, int key, int mods,
+                     int action, double yDelta, unsigned int codepoint) {
     const tSynthLibPopup * ordered[LIB_POPUP_COUNT + MAX_APP_POPUPS];
     uint32_t               count = collect(ordered, (uint32_t)(sizeof(ordered) / sizeof(ordered[0])));
 
@@ -303,7 +327,7 @@ static bool dispatch(eDispatchKind kind, tCoord coord, tMouseButton mouseButton,
         switch (kind) {
             case eDispatchKey:
 
-                if ((popup->key != NULL) && popup->key(key, action)) {
+                if ((popup->key != NULL) && popup->key(key, mods, action)) {
                     return true;
                 }
                 break;
@@ -342,19 +366,19 @@ static bool dispatch(eDispatchKind kind, tCoord coord, tMouseButton mouseButton,
 static const tCoord kNoCoord = {0.0, 0.0};
 
 bool synthlib_popups_dispatch_click(tCoord coord, tMouseButton mouseButton) {
-    return dispatch(eDispatchMouse, coord, mouseButton, 0, 0, 0.0, 0);
+    return dispatch(eDispatchMouse, coord, mouseButton, 0, 0, 0, 0.0, 0);
 }
 
-bool synthlib_popups_dispatch_key(int key, int action) {
-    return dispatch(eDispatchKey, kNoCoord, mouseButtonNone, key, action, 0.0, 0);
+bool synthlib_popups_dispatch_key(int key, int mods, int action) {
+    return dispatch(eDispatchKey, kNoCoord, mouseButtonNone, key, mods, action, 0.0, 0);
 }
 
 bool synthlib_popups_dispatch_scroll(double yDelta) {
-    return dispatch(eDispatchScroll, kNoCoord, mouseButtonNone, 0, 0, yDelta, 0);
+    return dispatch(eDispatchScroll, kNoCoord, mouseButtonNone, 0, 0, 0, yDelta, 0);
 }
 
 bool synthlib_popups_dispatch_char(unsigned int codepoint) {
-    return dispatch(eDispatchChar, kNoCoord, mouseButtonNone, 0, 0, 0.0, codepoint);
+    return dispatch(eDispatchChar, kNoCoord, mouseButtonNone, 0, 0, 0, 0.0, codepoint);
 }
 
 #ifdef __cplusplus
