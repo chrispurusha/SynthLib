@@ -139,6 +139,10 @@ tRectangle floating_panel_place(tFloatingPanel * panel, double width, double hei
     return panel->rect;
 }
 
+bool floating_panel_entry_visible(const tFloatingPanelEntry * entry) {
+    return (entry->visible == NULL) || *entry->visible;
+}
+
 bool floating_panel_contains(const tFloatingPanel * panel, tCoord coord) {
     return within_rectangle(coord, panel->rect);
 }

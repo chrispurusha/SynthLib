@@ -119,7 +119,22 @@ typedef struct {
     // Keys are ordered too, not just clicks: Escape has to close the panel you are looking at, and a
     // fixed call order closed whichever handler came first regardless of what was in front.
     bool (*key)(int key, int mods, int action);
+
+    // IS THE PANEL UP? Points at the application's own visibility flag; NULL means "always shown".
+    //
+    // This is the column the table was missing, and its absence had already cost a bug. Every
+    // OTHER user of a panel could ask privately — each render function and each mouse handler opens
+    // by testing its own flag and doing nothing if it is clear — so the table never needed to know.
+    // The HOVER path cannot: its question is "is the pointer over any panel at all", asked before
+    // any particular panel is in hand, and rect alone cannot answer it because a panel keeps its
+    // rectangle after it is closed. G2-Edit answered it by naming ONE panel in an if, so hovering
+    // over any of the other six ran the canvas hover underneath and hid cables that the panel was
+    // covering anyway.
+    const bool * visible;
 } tFloatingPanelEntry;
+
+// Is this entry's panel currently shown? Reads the flag above, treating NULL as always.
+bool floating_panel_entry_visible(const tFloatingPanelEntry * entry);
 
 // What a press or release on a floating panel turned out to be.
 //
