@@ -122,6 +122,14 @@ typedef struct _struct_menuItem {
     struct _struct_menuItem * subMenu;          // Non-NULL: hovering (after MENU_HOVER_DELAY_SECS) or clicking this item opens it as a flyout instead of running action
     uint32_t                  subMenuColumns;   // Layout for that flyout — same meaning as tMenuFrame's own columns (0/1 = single column)
     double                    subMenuCellWidth; // Layout for that flyout — 0 = auto width
+    // OPTIONAL CUSTOM FACE. When set, the item's cell is painted by this instead of by its label —
+    // the engine still measures and lays out from the label, so the cell comes out the size the text
+    // would have needed and the item stays keyboard- and search-friendly. Added for G2-Edit's
+    // waveform pickers, which the original hardware editor draws as little pictures of the wave
+    // rather than as words. Deliberately takes only the cell and the item's own `param`: SynthLib
+    // knows nothing about modules, so an app that needs more context stores it app-side before
+    // opening the menu, exactly as the note above this struct describes.
+    void (*drawItem)(tRectangle cell, uint32_t param);
 } tMenuItem;
 
 // One visible level of the menu — the top-level menu plus zero or more

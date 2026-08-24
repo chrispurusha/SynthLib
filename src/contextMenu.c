@@ -369,9 +369,14 @@ static void render_menu_frame(const tMenuFrame * frameData, tCoord mouseCoord) {
         render_rectangle(mainArea, menuItem);
 
         set_rgb_colour(contrasting_text_colour(frameData->items[i].colour));
-        render_text(mainArea, (tRectangle){
-            {x + 5, y + 5}, {BLANK_SIZE, itemHeight}
-        }, frameData->items[i].label);
+
+        if (frameData->items[i].drawItem != NULL) {
+            frameData->items[i].drawItem(menuItem, frameData->items[i].param);
+        } else {
+            render_text(mainArea, (tRectangle){
+                {x + 5, y + 5}, {BLANK_SIZE, itemHeight}
+            }, frameData->items[i].label);
+        }
 
         if (columns > 1) {
             set_rgb_colour((tRgb)RGB_BLACK);
