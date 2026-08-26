@@ -51,6 +51,42 @@ void draw_dialog_background_overlay(void);
 void set_rgb_colour(tRgb rgb);
 void set_rgba_colour(tRgba rgba);
 
+// ── Render backend seam ──────────────────────────────────────────────────────
+//
+// The four things outside this file that ever touched the graphics API directly.
+// Everything else in all three apps — and in G2-Edit's VST3 plug-in — draws through
+// the render_*/draw_* primitives, so these four calls plus this file's own drawing
+// code are the complete surface a different backend (Metal, D3D, Vulkan) has to
+// reimplement.
+//
+// Each of them had three or four separate copies before: the GLFW window layer, the
+// scale/resize path, each app's frame loop, and the plug-in's own NSOpenGLView
+// (vst3/g2GlDraw.c), which shares these renderers but has no GLFW underneath it.
+
+// Session-wide drawing state. Call once, after a context is current and before
+// anything is drawn. BLENDING IS ON FOR THE WHOLE SESSION and no drawing code turns
+// it off again: an opaque draw (alpha == 1.0) resolves to the source colour whether
+// blending is enabled or not, so the invariant costs opaque drawing nothing and
+// spares every translucent caller an enable/disable pair of its own. render_text()
+// used to end by DISABLING blend, which silently revoked the session-wide enable
+// after the first string was drawn and is why the two translucent callers each
+// carried their own pair.
+void render_backend_init(void);
+
+// Viewport plus the 2D orthographic projection the whole UI is laid out in: origin
+// top-left, y increasing downwards, one unit per physical pixel. Call on any
+// framebuffer size change.
+void render_backend_set_surface(int width, int height);
+
+// Clears the colour buffer. No depth buffer is in play — render_backend_init()
+// disables depth testing and nothing ever writes depth — so colour is the whole frame.
+void render_backend_clear(tRgb colour);
+
+// Reads the frame back as tightly-packed RGB triples, bottom row first, into a
+// caller-supplied buffer of at least width*height*3 bytes. Backs the backdoor
+// SCREENSHOT command. False if the arguments are unusable.
+bool render_backend_read_pixels_rgb(int x, int y, int width, int height, uint8_t * out);
+
 // Perceptual (Rec. 601) luminance of bg, thresholded at 0.5 — the usual
 // black/white crossover point for this formula. Lets callers put a label on
 // a caller-supplied background colour (module/category colours, which range

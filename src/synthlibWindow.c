@@ -299,10 +299,10 @@ void * synthlib_window_create(const tSynthLibWindowConfig * config, const tSynth
     if (gCallbacks.windowRefresh != NULL) {
         glfwSetWindowRefreshCallback(window, gCallbacks.windowRefresh);
     }
-    // Blending is on for the whole session in all three apps — every one of them enabled it here and
-    // then again inside its text rendering. Once, here, is enough.
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    // Session-wide drawing state, set once now the context is current. Blending is on for the
+    // whole session in all three apps; render_backend_init() owns that (and the invariant note),
+    // so this layer no longer names a graphics API of its own.
+    render_backend_init();
 
     return (void *)window;
 }

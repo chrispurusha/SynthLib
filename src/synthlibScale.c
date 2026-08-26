@@ -51,7 +51,7 @@ void synthlib_scale_query_initial(void * glfwWindow) {
 }
 
 void synthlib_scale_update(int width, int height) {
-    glViewport(0, 0, width, height);
+    render_backend_set_surface(width, height);
 
     set_render_width(width);
     set_render_height(height);
@@ -67,12 +67,6 @@ void synthlib_scale_update(int width, int height) {
     // only the 1x case is fixed. gContentScale is retained only as the change-trigger
     // signal (content_scale_callback -> synthlib_scale_set_content_scale recomputes).
     gGlobalGuiScale = 2.0 * (double)width / (double)gTargetFrameBuffWidth;
-
-    glMatrixMode(GL_PROJECTION);
-    glLoadIdentity();
-    glOrtho(0, width, height, 0, -1, 1);
-    glMatrixMode(GL_MODELVIEW);
-    glLoadIdentity();
 }
 
 void synthlib_scale_set_content_scale(void * glfwWindow, float xscale) {

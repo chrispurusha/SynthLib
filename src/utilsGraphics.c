@@ -471,9 +471,10 @@ static void internal_render_text(tRectangle rectangle, const char * text) {
     glEnable(GL_TEXTURE_2D);
     glBindTexture(GL_TEXTURE_2D, atlas->texture);
 
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
+    // No blend enable/disable here: render_backend_init() turns blending on for the
+    // whole session. This function used to enable it and then DISABLE it on the way
+    // out, which revoked the session-wide enable the moment the first string was
+    // drawn — see the invariant in utilsGraphics.h.
     glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 
     // No glScalef: glyphs are blitted at their rasterized size, one texel per pixel. Positions are
@@ -534,7 +535,6 @@ static void internal_render_text(tRectangle rectangle, const char * text) {
         ch++;
     }
     glDisable(GL_TEXTURE_2D);
-    glDisable(GL_BLEND);
 }
 
 tRectangle render_line(tArea area, tCoord start, tCoord end, double thickness) {
@@ -824,6 +824,49 @@ tRectangle render_radial_line(tArea area, tCoord coord, double radius, double an
     internal_render_line((tCoord){coord.x, coord.y}, (tCoord){x, y}, thickness);
 
     return retRectangle;
+}
+
+// ── Render backend seam ──────────────────────────────────────────────────────
+// What this is, and why it is only four functions, is in utilsGraphics.h.
+
+void render_backend_init(void) {
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    // The canvas is 2D and painted back to front. GL leaves depth testing off by
+    // default and the app relied on that; the plug-in's context said so explicitly.
+    // Stated once here so the two cannot differ.
+    glDisable(GL_DEPTH_TEST);
+}
+
+void render_backend_set_surface(int width, int height) {
+    glViewport(0, 0, width, height);
+
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glOrtho(0, width, height, 0, -1, 1);
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+}
+
+void render_backend_clear(tRgb colour) {
+    glClearColor((GLfloat)colour.red, (GLfloat)colour.green, (GLfloat)colour.blue, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+}
+
+bool render_backend_read_pixels_rgb(int x, int y, int width, int height, uint8_t * out) {
+    if ((width <= 0) || (height <= 0) || (out == NULL)) {
+        return false;
+    }
+    // Tightly-packed rows (width*3 bytes). Without this, glReadPixels' default
+    // GL_PACK_ALIGNMENT of 4 pads each row up to a 4-byte multiple whenever width*3
+    // isn't already one (i.e. any width not a multiple of 4) — which both shears
+    // the saved PNG (row stride mismatch vs stbi's width*3) AND overruns the
+    // width*height*3 buffer. Only bit us at odd window sizes; Retina captures were
+    // multiples of 4.
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(x, y, width, height, GL_RGB, GL_UNSIGNED_BYTE, out);
+    return true;
 }
 
 void set_rgb_colour(tRgb rgb) {
