@@ -121,19 +121,19 @@ void gfx_submit(const tVertex * verts, size_t count, uint32_t texture) {
     }
 }
 
-void gfx_scissor(double x, double y, double width, double height) {
-    if (width < 0.0) {
+void gfx_scissor(int x, int y, int width, int height) {
+    if (width < 0) {
         glDisable(GL_SCISSOR_TEST);
         return;
     }
-    // THE FLIP LIVES HERE, and it has to happen in floating point BEFORE the truncation. Doing it
-    // on already-truncated integers moves the bottom edge by a pixel whenever the caller's y or
-    // height has a fraction, which at some window sizes it always does. This is also exactly the
-    // kind of thing that would otherwise have become an #ifdef in the middle of the pane code:
-    // it is a property of OpenGL, not of the UI, and Metal will need no flip at all.
+    // THE FLIP LIVES HERE, because a bottom-left scissor origin is a property of OpenGL and not of
+    // the UI — Metal's is top-left and needs none. It is exact: the rectangle arrives in whole
+    // pixels, so nothing is truncated and both backends cover the same rows. It did not used to
+    // be, and that was the one thing the Metal port actually got wrong — see renderBackend.h.
+    //
+    // GL clamps an out-of-bounds rectangle silently, so there is nothing to do about that here.
     glEnable(GL_SCISSOR_TEST);
-    glScissor((GLint)x, (GLint)((double)gSurfaceHeight - (y + height)),
-              (GLsizei)width, (GLsizei)height);
+    glScissor(x, gSurfaceHeight - (y + height), width, height);
 }
 
 bool gfx_read_pixels_rgb(int x, int y, int width, int height, uint8_t * out) {

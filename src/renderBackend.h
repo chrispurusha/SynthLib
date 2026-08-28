@@ -79,11 +79,21 @@ void gfx_clear(tRgb colour);
 // and must not be culled. `count` is always a multiple of three and never zero.
 void gfx_submit(const tVertex * verts, size_t count, uint32_t texture);
 
-// Clips subsequent drawing to a rectangle, in framebuffer pixels with the origin TOP LEFT to
-// match tVertex. A NEGATIVE width turns clipping off. Doubles rather than ints because the
-// caller's rectangle is fractional and the rounding is the backend's business — under OpenGL the
-// flip to a bottom-left origin has to happen before the truncation, or the edge moves by a pixel.
-void gfx_scissor(double x, double y, double width, double height);
+// Clips subsequent drawing to a rectangle, in WHOLE framebuffer pixels with the origin TOP LEFT
+// to match tVertex: the columns x up to x+width, and the rows y up to y+height. A NEGATIVE width
+// turns clipping off.
+//
+// INTEGERS, and the rounding happens ONCE, in module_pane_clip_begin(), rather than here. It used
+// to be a double rect that each backend truncated for itself, and that is exactly how the two
+// backends disagreed: OpenGL truncates the flipped bottom edge and the height separately, which
+// lands its rectangle a row lower than truncating the top and bottom edges does. Two rows out of
+// 1704, at the pane boundary, and invisible — but it cost the ability to say the two backends
+// produce identical frames, which is the only cheap proof a port is correct. Rounded here, both
+// get the same whole pixels and the flip below is exact.
+//
+// A backend must CLAMP to the render target. OpenGL does it silently; Metal treats an out-of-
+// bounds scissor as a validation failure.
+void gfx_scissor(int x, int y, int width, int height);
 
 // Reads the frame back as tightly-packed RGB triples, BOTTOM row first, into a caller-supplied
 // buffer of at least width*height*3 bytes. Backs the backdoor SCREENSHOT command in all three

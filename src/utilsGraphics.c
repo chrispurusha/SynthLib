@@ -476,7 +476,13 @@ void module_pane_clip_begin(void) {
     // Anything already queued was drawn UNCLIPPED and must go out before the clip exists.
     render_backend_flush();
 
-    gfx_scissor(x, y, w, h);
+    // ROUNDED HERE, ONCE, so that every backend clips the same whole pixels. Truncating both
+    // EDGES — rather than the origin and the size separately — makes the rectangle cover exactly
+    // the pixels whose top-left corner lies inside it, which is the obvious reading of a
+    // fractional rect and, unlike leaving it to each backend, one they cannot disagree about.
+    // They did disagree: it was the single defect the Metal port turned up, two rows out of 1704
+    // at the pane boundary. See gfx_scissor() in renderBackend.h.
+    gfx_scissor((int)x, (int)y, (int)(x + w) - (int)x, (int)(y + h) - (int)y);
 
     // The CLICK regions get the same clip as the pixels, set here so the two cannot drift apart. A
     // module scrolled past the bottom of its pane is not drawn there — and must not be clickable
@@ -489,7 +495,7 @@ void module_pane_clip_end(void) {
     // ...and what was queued INSIDE the clip must go out before it is dropped.
     render_backend_flush();
 
-    gfx_scissor(0.0, 0.0, -1.0, 0.0);   // negative width = clipping off
+    gfx_scissor(0, 0, -1, 0);   // negative width = clipping off
     set_click_region_clip(NULL);
 }
 
