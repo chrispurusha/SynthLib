@@ -67,7 +67,7 @@ extern "C" {
 
 typedef struct {
     int       pixelHeight;                   // key: drawn text height this atlas serves, 0 when unused
-    GLuint    texture;
+    uint32_t  texture;                       // opaque backend handle, not a GLuint — see utilsGraphics.h
     int       width;
     int       height;
     uint64_t  lastUsed;
@@ -287,6 +287,193 @@ tRectangle module_area(void) {
     return module_area_for_pane(gCurrentModulePane);
 }
 
+// ── Geometry batching ────────────────────────────────────────────────────────
+//
+// Every primitive below used to be a glBegin/glVertex/glEnd burst — immediate mode, one GL call
+// per vertex. Nothing after OpenGL has an immediate mode: Metal, D3D and Vulkan all want a buffer
+// of vertices and one submission. So the primitives no longer talk to GL at all; they append
+// triangles here, and the batch is submitted as a single array.
+//
+// WHAT THIS IS NOT: a reordering. A 2D UI is painted back to front and every overlap depends on
+// draw order, so the batch is flushed the moment anything that would change how subsequent
+// vertices rasterize changes — the bound texture, the scissor rect, a clear, a read-back, or the
+// end of the frame. Consecutive draws that share all of those merge; nothing else does. That keeps
+// the pixels bit-identical while still collapsing the common runs (a module face's rectangles, a
+// string's glyphs) into one call.
+//
+// The four topologies the old code used (GL_QUADS, GL_POLYGON, GL_TRIANGLE_FAN, GL_TRIANGLE_STRIP)
+// all become plain triangle lists, which is the one topology every backend agrees on. Winding is
+// not normalised because nothing in any of the three apps enables face culling.
+
+typedef struct {
+    float x, y;        // position, framebuffer units
+    float u, v;        // texture coordinates
+    float r, g, b, a;  // per-vertex colour — render_bezier_curve genuinely needs it, see below
+} tVertex;
+
+static tVertex * gBatchVerts    = NULL;
+static size_t    gBatchCount    = 0;
+static size_t    gBatchCap      = 0;
+static uint32_t  gBatchTexture  = 0;   // 0 = untextured
+
+// THE CURRENT COLOUR, which used to be GL's. set_rgb_colour()/set_rgba_colour() are called ~188
+// times across the three apps to set the colour of whatever is drawn next; that was glColor3f/4f,
+// i.e. GL state. It is a plain variable now, written into each vertex at append time.
+static tRgba     gCurrentColour = {1.0, 1.0, 1.0, 1.0};
+
+static void batch_push(float x, float y, float u, float v, tRgba c) {
+    if (gBatchCount == gBatchCap) {
+        size_t    newCap = (gBatchCap == 0) ? 4096 : (gBatchCap * 2);
+        tVertex * grown  = (tVertex *)realloc(gBatchVerts, newCap * sizeof(tVertex));
+
+        if (grown == NULL) {
+            return;    // Drop the vertex rather than die mid-frame; the frame redraws constantly.
+        }
+        gBatchVerts = grown;
+        gBatchCap   = newCap;
+    }
+    gBatchVerts[gBatchCount++] = (tVertex){
+        x, y, u, v,
+        (float)c.red, (float)c.green, (float)c.blue, (float)c.alpha
+    };
+}
+
+void render_backend_flush(void) {
+    if (gBatchCount == 0) {
+        return;
+    }
+
+    if (gBatchTexture != 0) {
+        glEnable(GL_TEXTURE_2D);
+        glBindTexture(GL_TEXTURE_2D, gBatchTexture);
+        // Modulate: the glyph atlas is white coverage, tinted by the vertex colour. This was set
+        // once inside the old text renderer and never reset, so it already applied to both
+        // textured paths; stating it per flush removes the hidden dependency on that ordering.
+        glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+    }
+    glEnableClientState(GL_VERTEX_ARRAY);
+    glEnableClientState(GL_COLOR_ARRAY);
+    glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+
+    glVertexPointer(2, GL_FLOAT, sizeof(tVertex), &gBatchVerts[0].x);
+    glColorPointer(4, GL_FLOAT, sizeof(tVertex), &gBatchVerts[0].r);
+    glTexCoordPointer(2, GL_FLOAT, sizeof(tVertex), &gBatchVerts[0].u);
+
+    glDrawArrays(GL_TRIANGLES, 0, (GLsizei)gBatchCount);
+
+    glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+    glDisableClientState(GL_COLOR_ARRAY);
+    glDisableClientState(GL_VERTEX_ARRAY);
+
+    if (gBatchTexture != 0) {
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glDisable(GL_TEXTURE_2D);
+    }
+    gBatchCount = 0;
+}
+
+// Anything that changes how following vertices rasterize flushes what is already queued first.
+static void batch_set_texture(uint32_t texture) {
+    if (texture != gBatchTexture) {
+        render_backend_flush();
+        gBatchTexture = texture;
+    }
+}
+
+// UNTEXTURED geometry has to say so, and this is the one thing about the batch that is not
+// obvious: the texture is STICKY. In immediate mode every draw stated its own texturing —
+// internal_render_text() and internal_render_texture() each ended by unbinding and disabling
+// GL_TEXTURE_2D, so a rectangle drawn afterwards was untextured because the last textured draw
+// had cleaned up after itself. Nothing cleans up here: the batch carries whatever texture was
+// last selected until something selects another. Without this call every shape drawn after the
+// first string samples texel (0,0) of the glyph atlas — which is empty, so alpha 0, so the
+// entire UI except its text renders INVISIBLE. Called from the two places that append plain
+// triangles, which is every primitive that is not text or render_texture().
+static void batch_untextured(void) {
+    batch_set_texture(0);
+}
+
+// ── Topology helpers ─────────────────────────────────────────────────────────
+// Each mirrors one of the four glBegin modes the old code used.
+
+static void batch_tri(float x0, float y0, float x1, float y1, float x2, float y2, tRgba c) {
+    batch_untextured();
+    batch_push(x0, y0, 0.0f, 0.0f, c);
+    batch_push(x1, y1, 0.0f, 0.0f, c);
+    batch_push(x2, y2, 0.0f, 0.0f, c);
+}
+
+// GL_QUADS, one quad: corners in the same order the old glVertex calls used.
+static void batch_quad(float x0, float y0, float x1, float y1,
+                       float x2, float y2, float x3, float y3, tRgba c) {
+    batch_tri(x0, y0, x1, y1, x2, y2, c);
+    batch_tri(x0, y0, x2, y2, x3, y3, c);
+}
+
+// GL_QUADS with texture coordinates, for the glyph atlas and render_texture().
+static void batch_quad_uv(float x0, float y0, float u0, float v0,
+                          float x1, float y1, float u1, float v1,
+                          float x2, float y2, float u2, float v2,
+                          float x3, float y3, float u3, float v3, tRgba c) {
+    batch_push(x0, y0, u0, v0, c);
+    batch_push(x1, y1, u1, v1, c);
+    batch_push(x2, y2, u2, v2, c);
+
+    batch_push(x0, y0, u0, v0, c);
+    batch_push(x2, y2, u2, v2, c);
+    batch_push(x3, y3, u3, v3, c);
+}
+
+// GL_TRIANGLE_STRIP, fed one vertex at a time exactly as the old loops did.
+typedef struct {
+    float x[2], y[2];
+    tRgba c[2];
+    int   n;
+} tStripBuild;
+
+static void strip_add(tStripBuild * s, float x, float y, tRgba c) {
+    batch_untextured();
+
+    if (s->n >= 2) {
+        batch_push(s->x[0], s->y[0], 0.0f, 0.0f, s->c[0]);
+        batch_push(s->x[1], s->y[1], 0.0f, 0.0f, s->c[1]);
+        batch_push(x, y, 0.0f, 0.0f, c);
+
+        s->x[0] = s->x[1];
+        s->y[0] = s->y[1];
+        s->c[0] = s->c[1];
+        s->x[1] = x;
+        s->y[1] = y;
+        s->c[1] = c;
+    } else {
+        s->x[s->n] = x;
+        s->y[s->n] = y;
+        s->c[s->n] = c;
+        s->n++;
+    }
+}
+
+// GL_TRIANGLE_FAN. First vertex is the hub, as it was for glBegin(GL_TRIANGLE_FAN).
+typedef struct {
+    float cx, cy, px, py;
+    int   n;
+} tFanBuild;
+
+static void fan_add(tFanBuild * f, float x, float y, tRgba c) {
+    if (f->n == 0) {
+        f->cx = x;
+        f->cy = y;
+    } else if (f->n == 1) {
+        f->px = x;
+        f->py = y;
+    } else {
+        batch_tri(f->cx, f->cy, f->px, f->py, x, y, c);
+        f->px = x;
+        f->py = y;
+    }
+    f->n++;
+}
+
 void module_pane_clip_begin(void) {
     tRectangle pane = module_area();
 
@@ -304,6 +491,9 @@ void module_pane_clip_begin(void) {
     if (h < 0.0) {
         h = 0.0;
     }
+    // Anything already queued was drawn UNCLIPPED and must go out before the clip exists.
+    render_backend_flush();
+
     glEnable(GL_SCISSOR_TEST);
     glScissor((GLint)x, (GLint)y, (GLsizei)w, (GLsizei)h);
 
@@ -315,6 +505,9 @@ void module_pane_clip_begin(void) {
 }
 
 void module_pane_clip_end(void) {
+    // ...and what was queued INSIDE the clip must go out before it is dropped.
+    render_backend_flush();
+
     glDisable(GL_SCISSOR_TEST);
     set_click_region_clip(NULL);
 }
@@ -336,83 +529,80 @@ bool rectangle_visible_in_module_area(tRectangle rectangle) {
 }
 
 static void internal_render_line(tCoord start, tCoord end, double thickness) {
-    double half_thickness = thickness * 0.5;
-    double dx             = end.x - start.x;
-    double dy             = end.y - start.y;
-    double length         = sqrt(dx * dx + dy * dy);
+    double      half_thickness = thickness * 0.5;
+    double      dx             = end.x - start.x;
+    double      dy             = end.y - start.y;
+    double      length         = sqrt(dx * dx + dy * dy);
 
     if (length == 0.0) {
         return;
     }
     // Normalize direction
-    double nx             = dx / length;
-    double ny             = dy / length;
+    double      nx             = dx / length;
+    double      ny             = dy / length;
 
     // Perpendicular vector (for thickness)
-    double px             = -ny * half_thickness;
-    double py             = nx * half_thickness;
+    double      px             = -ny * half_thickness;
+    double      py             = nx * half_thickness;
 
-    // Draw the thick line as a rectangle
-    glBegin(GL_TRIANGLE_STRIP);
-    glVertex2f(start.x - px, start.y - py);
-    glVertex2f(start.x + px, start.y + py);
-    glVertex2f(end.x - px, end.y - py);
-    glVertex2f(end.x + px, end.y + py);
-    glEnd();
+    // Draw the thick line as a rectangle. Fed through strip_add in the same order the four
+    // glVertex calls used, so the two triangles cover exactly what GL_TRIANGLE_STRIP covered.
+    tStripBuild strip          = {0};
+
+    strip_add(&strip, (float)(start.x - px), (float)(start.y - py), gCurrentColour);
+    strip_add(&strip, (float)(start.x + px), (float)(start.y + py), gCurrentColour);
+    strip_add(&strip, (float)(end.x - px), (float)(end.y - py), gCurrentColour);
+    strip_add(&strip, (float)(end.x + px), (float)(end.y + py), gCurrentColour);
 }
 
 static void internal_render_rectangle(tRectangle rectangle) {
     if ((rectangle.size.w > 0.0) && (rectangle.size.h > 0.0)) {
-        glBegin(GL_QUADS);
-        glVertex2f(rectangle.coord.x, rectangle.coord.y);
-        glVertex2f(rectangle.coord.x + rectangle.size.w, rectangle.coord.y);
-        glVertex2f(rectangle.coord.x + rectangle.size.w, rectangle.coord.y + rectangle.size.h);
-        glVertex2f(rectangle.coord.x, rectangle.coord.y + rectangle.size.h);
-        glEnd();
+        batch_quad((float)rectangle.coord.x, (float)rectangle.coord.y,
+                   (float)(rectangle.coord.x + rectangle.size.w), (float)rectangle.coord.y,
+                   (float)(rectangle.coord.x + rectangle.size.w), (float)(rectangle.coord.y + rectangle.size.h),
+                   (float)rectangle.coord.x, (float)(rectangle.coord.y + rectangle.size.h),
+                   gCurrentColour);
     }
 }
 
 static void internal_render_texture(tRectangle rectangle, uint32_t texture) {
     if ((rectangle.size.w > 0.0) && (rectangle.size.h > 0.0)) {
-        glEnable(GL_TEXTURE_2D);
-        glBindTexture(GL_TEXTURE_2D, texture);
-        glColor3f(1.0f, 1.0f, 1.0f);
+        batch_set_texture(texture);
 
-        glBegin(GL_QUADS);
-        glTexCoord2f(0.0f, 0.0f);
-        glVertex2d(rectangle.coord.x, rectangle.coord.y);
-        glTexCoord2f(1.0f, 0.0f);
-        glVertex2d(rectangle.coord.x + rectangle.size.w, rectangle.coord.y);
-        glTexCoord2f(1.0f, 1.0f);
-        glVertex2d(rectangle.coord.x + rectangle.size.w, rectangle.coord.y + rectangle.size.h);
-        glTexCoord2f(0.0f, 1.0f);
-        glVertex2d(rectangle.coord.x, rectangle.coord.y + rectangle.size.h);
-        glEnd();
+        // White, so the texture blits untinted. The old code set the GL colour here and never
+        // put it back, leaving white current for whatever drew next; that is kept rather than
+        // tidied — this is EmuUtility's LCD, its only caller, and what follows it on screen was
+        // drawn against that colour.
+        gCurrentColour = (tRgba){
+            1.0, 1.0, 1.0, 1.0
+        };
 
-        glBindTexture(GL_TEXTURE_2D, 0);
-        glDisable(GL_TEXTURE_2D);
+        batch_quad_uv((float)rectangle.coord.x, (float)rectangle.coord.y, 0.0f, 0.0f,
+                      (float)(rectangle.coord.x + rectangle.size.w), (float)rectangle.coord.y, 1.0f, 0.0f,
+                      (float)(rectangle.coord.x + rectangle.size.w), (float)(rectangle.coord.y + rectangle.size.h), 1.0f, 1.0f,
+                      (float)rectangle.coord.x, (float)(rectangle.coord.y + rectangle.size.h), 0.0f, 1.0f,
+                      gCurrentColour);
     }
 }
 
 static void internal_render_circle_part(tCoord coord, double radius, int segments, int startSeg, int numSegs) {
-    double angle = 0.0;
-    double x     = 0.0;
-    double y     = 0.0;
-    int    i     = 0;
+    double    angle = 0.0;
+    double    x     = 0.0;
+    double    y     = 0.0;
+    int       i     = 0;
 
     // seg 0 starting point = horizontel, right
 
-    glBegin(GL_TRIANGLE_FAN);
-    glVertex2f(coord.x, coord.y);  // Center
+    tFanBuild fan   = {0};
+
+    fan_add(&fan, (float)coord.x, (float)coord.y, gCurrentColour);  // Center
 
     for (i = 0; i <= numSegs; i++) {
         angle = 2.0f * M_PI * (double)(i + startSeg) / (double)segments;
         x     = coord.x + cos(angle) * radius;
         y     = coord.y + sin(angle) * radius;
-        glVertex2f(x, y);
+        fan_add(&fan, (float)x, (float)y, gCurrentColour);
     }
-
-    glEnd();
 }
 
 static void internal_render_circle_line_part_angle(tCoord coord, double radius, double startAngle, double endAngle, double thickness, int numSteps) {
@@ -426,8 +616,9 @@ static void internal_render_circle_line_part_angle(tCoord coord, double radius, 
     if (sweep == 0) {
         return;                    // Avoid rendering nothing
     }
-    glEnable(GL_LINE_SMOOTH);
-    glBegin(GL_TRIANGLE_STRIP);
+    // GL_LINE_SMOOTH used to be enabled here. It only ever applied to GL_LINES, and this has
+    // drawn triangles for as long as it has existed, so it did nothing at all.
+    tStripBuild  strip          = {0};
 
     for (int i = 0; i <= numSteps; i++) {
         double interpAngle = startAngle + (sweep * (double)i / (double)numSteps);
@@ -441,11 +632,9 @@ static void internal_render_circle_line_part_angle(tCoord coord, double radius, 
         x_outer = coord.x + cos(angle) * (radius + half_thickness);
         y_outer = coord.y + sin(angle) * (radius + half_thickness);
 
-        glVertex2f(x_inner, y_inner);
-        glVertex2f(x_outer, y_outer);
+        strip_add(&strip, (float)x_inner, (float)y_inner, gCurrentColour);
+        strip_add(&strip, (float)x_outer, (float)y_outer, gCurrentColour);
     }
-
-    glEnd();
 }
 
 static void internal_render_text(tRectangle rectangle, const char * text) {
@@ -468,14 +657,15 @@ static void internal_render_text(tRectangle rectangle, const char * text) {
     if (atlas == NULL) {
         return;
     }
-    glEnable(GL_TEXTURE_2D);
-    glBindTexture(GL_TEXTURE_2D, atlas->texture);
-
     // No blend enable/disable here: render_backend_init() turns blending on for the
     // whole session. This function used to enable it and then DISABLE it on the way
     // out, which revoked the session-wide enable the moment the first string was
     // drawn — see the invariant in utilsGraphics.h.
-    glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+    //
+    // The atlas is SELECTED, not bound: batch_set_texture() flushes whatever is queued against
+    // the previous texture and records this one, and render_backend_flush() does the binding.
+    // Consecutive strings drawn at the same size therefore leave as a single call.
+    batch_set_texture(atlas->texture);
 
     // No glScalef: glyphs are blitted at their rasterized size, one texel per pixel. Positions are
     // snapped to whole pixels so that stays true for every glyph in the string.
@@ -519,22 +709,16 @@ static void internal_render_text(tRectangle rectangle, const char * text) {
         double        h         = glyph->height;
 
         if ((w > 0.0) && (h > 0.0)) {
-            glBegin(GL_QUADS);
-            glTexCoord2f(u1, v1);
-            glVertex2f(xPos, yPos);                                 // Bottom-left
-            glTexCoord2f(u2, v1);
-            glVertex2f(xPos + w, yPos);                             // Bottom-right
-            glTexCoord2f(u2, v2);
-            glVertex2f(xPos + w, yPos + h);                         // Top-right
-            glTexCoord2f(u1, v2);
-            glVertex2f(xPos, yPos + h);                             // Top-left
-            glEnd();
+            batch_quad_uv((float)xPos, (float)yPos, (float)u1, (float)v1,               // Bottom-left
+                          (float)(xPos + w), (float)yPos, (float)u2, (float)v1,         // Bottom-right
+                          (float)(xPos + w), (float)(yPos + h), (float)u2, (float)v2,   // Top-right
+                          (float)xPos, (float)(yPos + h), (float)u1, (float)v2,         // Top-left
+                          gCurrentColour);
         }
         xCharOffset += gCanonInfo[character].advance_x * scaleFactor;
 
         ch++;
     }
-    glDisable(GL_TEXTURE_2D);
 }
 
 tRectangle render_line(tArea area, tCoord start, tCoord end, double thickness) {
@@ -664,11 +848,10 @@ tRectangle render_triangle(tArea area, tTriangle triangle) {
     triangle.coord2rel = global_scale_coord(triangle.coord2rel);
     triangle.coord3rel = global_scale_coord(triangle.coord3rel);
 
-    glBegin(GL_POLYGON);
-    glVertex2f(triangle.coord1.x, triangle.coord1.y);
-    glVertex2f(triangle.coord1.x + triangle.coord2rel.x, triangle.coord1.y + triangle.coord2rel.y);
-    glVertex2f(triangle.coord1.x + triangle.coord3rel.x, triangle.coord1.y + triangle.coord3rel.y);
-    glEnd();
+    batch_tri((float)triangle.coord1.x, (float)triangle.coord1.y,
+              (float)(triangle.coord1.x + triangle.coord2rel.x), (float)(triangle.coord1.y + triangle.coord2rel.y),
+              (float)(triangle.coord1.x + triangle.coord3rel.x), (float)(triangle.coord1.y + triangle.coord3rel.y),
+              gCurrentColour);
 
     return retRectangle;
 }
@@ -695,8 +878,9 @@ tRectangle render_circle_line(tArea area, tCoord coord, double radius, int segme
     const double DEG_TO_RAD     = 2.0 * M_PI / (double)segments;
     double       half_thickness = thickness * 0.5;
 
-    glEnable(GL_LINE_SMOOTH);
-    glBegin(GL_TRIANGLE_STRIP);
+    // GL_LINE_SMOOTH was enabled here too, and did nothing here too — see
+    // internal_render_circle_line_part_angle().
+    tStripBuild  strip          = {0};
 
     for (int i = 0; i <= segments; i++) {
         double angle = i * DEG_TO_RAD;
@@ -704,14 +888,12 @@ tRectangle render_circle_line(tArea area, tCoord coord, double radius, int segme
         double sin_a = sin(angle);
 
         // Compute inner and outer edge vertices
-        glVertex2f(coord.x + cos_a * (radius - half_thickness),
-                   coord.y + sin_a * (radius - half_thickness));
+        strip_add(&strip, (float)(coord.x + cos_a * (radius - half_thickness)),
+                  (float)(coord.y + sin_a * (radius - half_thickness)), gCurrentColour);
 
-        glVertex2f(coord.x + cos_a * (radius + half_thickness),
-                   coord.y + sin_a * (radius + half_thickness));
+        strip_add(&strip, (float)(coord.x + cos_a * (radius + half_thickness)),
+                  (float)(coord.y + sin_a * (radius + half_thickness)), gCurrentColour);
     }
-
-    glEnd();
 
     return retRectangle;
 }
@@ -760,8 +942,9 @@ tRectangle render_circle_part_angle(tArea area, tCoord coord, double radius, dou
     double     y            = 0.0;
     int        i            = 0;
 
-    glBegin(GL_TRIANGLE_FAN);
-    glVertex2f(coord.x, coord.y);  // Center of the circle
+    tFanBuild  fan          = {0};
+
+    fan_add(&fan, (float)coord.x, (float)coord.y, gCurrentColour);  // Center of the circle
 
     // Handle cases where the arc spans across 0°
     if (endAngle < startAngle) {
@@ -781,10 +964,8 @@ tRectangle render_circle_part_angle(tArea area, tCoord coord, double radius, dou
         // Compute vertex position
         x     = coord.x + cos(angle) * radius;
         y     = coord.y + sin(angle) * radius;
-        glVertex2f(x, y);
+        fan_add(&fan, (float)x, (float)y, gCurrentColour);
     }
-
-    glEnd();
 
     return retRectangle;
 }
@@ -840,6 +1021,8 @@ void render_backend_init(void) {
 }
 
 void render_backend_set_surface(int width, int height) {
+    render_backend_flush();    // queued vertices belong to the old projection
+
     glViewport(0, 0, width, height);
 
     glMatrixMode(GL_PROJECTION);
@@ -850,6 +1033,11 @@ void render_backend_set_surface(int width, int height) {
 }
 
 void render_backend_clear(tRgb colour) {
+    // A clear wipes the buffer, so anything queued has to be resolved against the OLD contents
+    // first. In practice the batch is empty here — the frame loop clears before it draws — but
+    // this is the general rule for the seam, not an assumption about one caller.
+    render_backend_flush();
+
     glClearColor((GLfloat)colour.red, (GLfloat)colour.green, (GLfloat)colour.blue, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
 }
@@ -864,17 +1052,84 @@ bool render_backend_read_pixels_rgb(int x, int y, int width, int height, uint8_t
     // the saved PNG (row stride mismatch vs stbi's width*3) AND overruns the
     // width*height*3 buffer. Only bit us at odd window sizes; Retina captures were
     // multiples of 4.
+    // The frame is not finished until the batch is submitted — without this a SCREENSHOT taken
+    // straight after a render would miss everything drawn since the last flush.
+    render_backend_flush();
+
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     glReadPixels(x, y, width, height, GL_RGB, GL_UNSIGNED_BYTE, out);
     return true;
 }
 
+// glColor3f/4f, as a plain variable. Nothing is submitted here — the colour is written into
+// each vertex as it is appended, so a colour change between two draws no longer splits them
+// into separate submissions the way a GL state change would have.
+uint32_t render_backend_texture_create(int width, int height, const uint8_t * rgba) {
+    GLuint texture = 0;
+
+    if ((width <= 0) || (height <= 0)) {
+        return 0;
+    }
+    glGenTextures(1, &texture);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+
+    // GL_NEAREST: every caller blits one texel per pixel, so filtering could only blur a sample
+    // that already lands dead centre on its texel.
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    // Left unbound. The batch binds whatever it needs at flush time, so no drawing code depends
+    // on what happens to be bound when this returns — which the inline copies of this did.
+    glBindTexture(GL_TEXTURE_2D, 0);
+    return (uint32_t)texture;
+}
+
+void render_backend_texture_update(uint32_t texture, int x, int y, int width, int height, const uint8_t * rgba) {
+    if ((texture == 0) || (width <= 0) || (height <= 0) || (rgba == NULL)) {
+        return;
+    }
+
+    // A HAZARD THAT DID NOT EXIST BEFORE BATCHING: in immediate mode every draw was submitted
+    // before the next statement ran, so an upload could never overtake one. Queued vertices now
+    // outlive the call that appended them, and they were appended to sample what this texture
+    // held THEN. Uploading underneath them would redraw already-issued geometry with new pixels.
+    if (texture == gBatchTexture) {
+        render_backend_flush();
+    }
+    glBindTexture(GL_TEXTURE_2D, (GLuint)texture);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, x, y, width, height, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    glBindTexture(GL_TEXTURE_2D, 0);
+}
+
+void render_backend_texture_destroy(uint32_t texture) {
+    GLuint name = (GLuint)texture;
+
+    if (texture == 0) {
+        return;
+    }
+
+    // Same reason as _update(), one step further: nothing queued may outlive its texture at all.
+    // Owning the rule here rather than at each call site is why the glyph-atlas eviction and
+    // free_textures() no longer flush by hand.
+    if (texture == gBatchTexture) {
+        render_backend_flush();
+        gBatchTexture = 0;
+    }
+    glDeleteTextures(1, &name);
+}
+
 void set_rgb_colour(tRgb rgb) {
-    glColor3f(rgb.red, rgb.green, rgb.blue);
+    // glColor3f set alpha to 1.0; so does this.
+    gCurrentColour = (tRgba){
+        rgb.red, rgb.green, rgb.blue, 1.0
+    };
 }
 
 void set_rgba_colour(tRgba rgba) {
-    glColor4f(rgba.red, rgba.green, rgba.blue, rgba.alpha);
+    gCurrentColour = rgba;
 }
 
 tRgb contrasting_text_colour(tRgb bg) {
@@ -905,17 +1160,14 @@ tRgb contrasting_text_colour(tRgb bg) {
 tRectangle render_bezier_curve(tArea area, tCoord start, tCoord control, tCoord end, double thickness, int segments) {
     tRectangle   retRectangle   = {0};
 
-    // Capture the current colour for lighting calculations before any GL calls
-    float        baseR = 0.0f, baseG = 0.0f, baseB = 0.0f, baseA = 0.0f;
-
-    glGetFloatv(GL_CURRENT_COLOR, (float[]){baseR, baseG, baseB, 0.0f});
-    // glGetFloatv with GL_CURRENT_COLOR fills all 4 components; use a proper array
-    float        rgba[4]        = {0};
-    glGetFloatv(GL_CURRENT_COLOR, rgba);
-    baseR = rgba[0];
-    baseG = rgba[1];
-    baseB = rgba[2];
-    baseA = rgba[3];
+    // The base colour the lighting is derived from. This used to be READ BACK OUT OF GL with
+    // glGetFloatv(GL_CURRENT_COLOR) — the one place in the file that queried the graphics API
+    // rather than driving it, and a pipeline stall to recover a value the caller had just set.
+    // The colour is ours now, so it is simply read.
+    double       baseR          = gCurrentColour.red;
+    double       baseG          = gCurrentColour.green;
+    double       baseB          = gCurrentColour.blue;
+    double       baseA          = gCurrentColour.alpha;
 
     // Derive highlight (top-lit) and shadow colours from base
     // Light source assumed at top — normal pointing up (negative screen-y) = highlight
@@ -923,14 +1175,14 @@ tRectangle render_bezier_curve(tArea area, tCoord start, tCoord control, tCoord 
     const double shadowDrop     = 0.15;
 
     tRgb         highlight      = {
-        fmin(1.0, (double)baseR + highlightBoost),
-        fmin(1.0, (double)baseG + highlightBoost),
-        fmin(1.0, (double)baseB + highlightBoost)
+        fmin(1.0, baseR + highlightBoost),
+        fmin(1.0, baseG + highlightBoost),
+        fmin(1.0, baseB + highlightBoost)
     };
     tRgb         shadow         = {
-        fmax(0.0, (double)baseR - shadowDrop),
-        fmax(0.0, (double)baseG - shadowDrop),
-        fmax(0.0, (double)baseB - shadowDrop)
+        fmax(0.0, baseR - shadowDrop),
+        fmax(0.0, baseG - shadowDrop),
+        fmax(0.0, baseB - shadowDrop)
     };
 
     if (area == moduleArea) {
@@ -951,7 +1203,9 @@ tRectangle render_bezier_curve(tArea area, tCoord start, tCoord control, tCoord 
     end          = global_scale_coord(end);
     thickness    = global_scale(thickness);
 
-    glBegin(GL_TRIANGLE_STRIP);
+    tRgba        lit   = {highlight.red, highlight.green, highlight.blue, baseA};
+    tRgba        unlit = {shadow.red, shadow.green, shadow.blue, baseA};
+    tStripBuild  strip = {0};
 
     for (int i = 0; i <= segments; i++) {
         double t   = (double)i / (double)segments;
@@ -981,23 +1235,17 @@ tRectangle render_bezier_curve(tArea area, tCoord start, tCoord control, tCoord 
         // So if tx > 0, vertex A faces up (highlight); if tx < 0, vertex B faces up
         if (ny < 0.0) {
             // Vertex A faces upward — highlight
-            glColor4f(highlight.red, highlight.green, highlight.blue, baseA);
-            glVertex2f(x + nx, y + ny);
-            glColor4f(shadow.red, shadow.green, shadow.blue, baseA);
-            glVertex2f(x - nx, y - ny);
+            strip_add(&strip, (float)(x + nx), (float)(y + ny), lit);
+            strip_add(&strip, (float)(x - nx), (float)(y - ny), unlit);
         } else {
             // Vertex B faces upward — highlight
-            glColor4f(shadow.red, shadow.green, shadow.blue, baseA);
-            glVertex2f(x + nx, y + ny);
-            glColor4f(highlight.red, highlight.green, highlight.blue, baseA);
-            glVertex2f(x - nx, y - ny);
+            strip_add(&strip, (float)(x + nx), (float)(y + ny), unlit);
+            strip_add(&strip, (float)(x - nx), (float)(y - ny), lit);
         }
     }
 
-    glEnd();
-
-    // Restore base colour for end caps
-    glColor4f(baseR, baseG, baseB, baseA);
+    // The end caps take the base colour, which gCurrentColour still holds: the lighting above
+    // is per-vertex, so unlike the glColor4f calls it replaced there is nothing to put back.
     internal_render_circle_part(start, thickness / 2.0, 10, 0, 10);
     internal_render_circle_part(end, thickness / 2.0, 10, 0, 10);
 
@@ -1528,23 +1776,15 @@ static bool build_glyph_atlas(const char * fontPath, double fontSize, tSizedAtla
     free_glyph_rasters(raster);
 
     if (outAtlas->texture != 0) {
-        glDeleteTextures(1, &outAtlas->texture);
+        render_backend_texture_destroy(outAtlas->texture);
         outAtlas->texture = 0;
     }
-    glGenTextures(1, &outAtlas->texture);
-    glBindTexture(GL_TEXTURE_2D, outAtlas->texture);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, newWidth, newHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, atlasBuffer);
-    // GL_NEAREST: glyphs are blitted one texel per pixel, so any filtering here could only blur
-    // a sample that already lands dead centre on its texel.
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    outAtlas->texture = render_backend_texture_create(newWidth, newHeight, atlasBuffer);
 
     free(atlasBuffer);
 
-    outAtlas->width  = newWidth;
-    outAtlas->height = newHeight;
+    outAtlas->width   = newWidth;
+    outAtlas->height  = newHeight;
 
     LOG_DEBUG("Glyph atlas built at %.0fpx (%dx%d)\n", fontSize, newWidth, newHeight);
     return true;
@@ -1588,7 +1828,7 @@ static tSizedAtlas * atlas_for_height(int pixelHeight) {
     }
     tSizedAtlas   built    = {};
 
-    built.texture     = victim->texture; // reuse the evicted texture name; build_glyph_atlas frees it
+    built.texture     = victim->texture; // reuse the evicted handle; build_glyph_atlas destroys it
 
     if (!build_glyph_atlas(gFontPath, fontSize, &built, NULL, NULL, NULL)) {
         return NULL;
@@ -1696,7 +1936,7 @@ double largest_text_width(int numItems, const char ** text, double targetHeight,
 void free_textures(void) {
     for (int i = 0; i < GLYPH_ATLAS_CACHE_SIZE; i++) {
         if (gAtlasCache[i].texture != 0) {
-            glDeleteTextures(1, &gAtlasCache[i].texture);
+            render_backend_texture_destroy(gAtlasCache[i].texture);
         }
         gAtlasCache[i] = (tSizedAtlas){};
     }

@@ -53,15 +53,19 @@ void set_rgba_colour(tRgba rgba);
 
 // ── Render backend seam ──────────────────────────────────────────────────────
 //
-// The four things outside this file that ever touched the graphics API directly.
-// Everything else in all three apps — and in G2-Edit's VST3 plug-in — draws through
-// the render_*/draw_* primitives, so these four calls plus this file's own drawing
-// code are the complete surface a different backend (Metal, D3D, Vulkan) has to
-// reimplement.
+// THE COMPLETE SURFACE a different backend (Metal, D3D, Vulkan) has to reimplement:
+// these eight calls, plus this file's own drawing code. Everything else in all three
+// apps — and in G2-Edit's VST3 plug-in — draws through the render_*/draw_* primitives
+// and cannot name the graphics API even by accident.
 //
-// Each of them had three or four separate copies before: the GLFW window layer, the
+// Four of them had three or four separate copies before: the GLFW window layer, the
 // scale/resize path, each app's frame loop, and the plug-in's own NSOpenGLView
 // (vst3/g2GlDraw.c), which shares these renderers but has no GLFW underneath it.
+// render_backend_flush() arrived with geometry batching, and the three texture calls
+// on 2026-08-28 — EmuUtility was creating and uploading its LCD texture with raw GL in
+// its own emuGraphics.c, with a "TODO - move into utilsGraphics" beside each. It was
+// the last thing outside this file that named the API, so the claim above is only
+// true from that date.
 
 // Session-wide drawing state. Call once, after a context is current and before
 // anything is drawn. BLENDING IS ON FOR THE WHOLE SESSION and no drawing code turns
@@ -81,6 +85,53 @@ void render_backend_set_surface(int width, int height);
 // Clears the colour buffer. No depth buffer is in play — render_backend_init()
 // disables depth testing and nothing ever writes depth — so colour is the whole frame.
 void render_backend_clear(tRgb colour);
+
+// Submits everything the drawing primitives have queued since the last submission.
+//
+// The primitives no longer issue a draw call each: they append triangles to one vertex
+// array, which goes out in a single call. That array must be submitted before the frame
+// is presented, so CALL THIS IMMEDIATELY BEFORE THE BUFFER SWAP in every frame loop —
+// the three applications' render_frame() and the plug-in's g2_gl_draw_frame(). Miss it
+// and the frame shows only what a mid-frame flush happened to force out; on a frame
+// whose last drawing was a plain filled rectangle, that is nothing at all.
+//
+// Everything else that needs it calls it already, and all inside utilsGraphics.c: the
+// module-pane scissor, the projection change, the clear, the frame read-back behind
+// SCREENSHOT, and any glyph-atlas texture the batch might still be referencing. The
+// batch is also submitted whenever the texture changes, so an untextured run and a run
+// of text are separate calls; consecutive draws sharing a texture and a clip are one.
+//
+// Draw ORDER is never reordered. A 2D UI is painted back to front, so the batch is a
+// pure concatenation of what was already going to be drawn, flushed at every point that
+// would change how subsequent vertices rasterize.
+void render_backend_flush(void);
+
+// ── Textures ────────────────────────────────────────────────────────────────
+//
+// A texture is an OPAQUE HANDLE, not a graphics-API object. Under OpenGL it happens to
+// be the GLuint; under Metal it will be an index into a table the backend keeps, since
+// an id<MTLTexture> does not fit in an integer. Callers see no difference — which is
+// the point, because the two things that hold one (this file's glyph atlases and
+// EmuUtility's gLcdTexture) are already plain integers and do not change when the
+// backend does. 0 is "no texture" and is never a valid handle.
+//
+// Every texture is RGBA8, nearest-filtered and clamped to edge. There is no parameter
+// for any of that because both callers blit one texel per pixel: filtering could only
+// blur a sample that already lands dead centre on its texel, and a UV never leaves
+// [0,1] so the wrap mode is unobservable. If a caller ever genuinely needs filtering,
+// add it then, with the case in front of you.
+
+// Allocates width*height RGBA8 texels. `rgba` fills them, or NULL leaves them
+// undefined for a later _update(). Returns 0 on failure.
+uint32_t render_backend_texture_create(int width, int height, const uint8_t * rgba);
+
+// Replaces a sub-rectangle. Flushes first if the batch is still referencing this
+// texture — queued vertices were appended to sample the OLD contents, and a mid-frame
+// upload would silently give them the new ones.
+void render_backend_texture_update(uint32_t texture, int x, int y, int width, int height, const uint8_t * rgba);
+
+// Frees it. Flushes first for the same reason, so nothing queued outlives its texture.
+void render_backend_texture_destroy(uint32_t texture);
 
 // Reads the frame back as tightly-packed RGB triples, bottom row first, into a
 // caller-supplied buffer of at least width*height*3 bytes. Backs the backdoor
