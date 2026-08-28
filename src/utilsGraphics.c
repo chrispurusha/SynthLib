@@ -354,6 +354,11 @@ void render_backend_flush(void) {
     gBatchCount = 0;
 }
 
+void render_present(void) {
+    render_backend_flush();
+    gfx_present();
+}
+
 // Anything that changes how following vertices rasterize flushes what is already queued first.
 static void batch_set_texture(uint32_t texture) {
     if (texture != gBatchTexture) {

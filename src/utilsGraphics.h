@@ -110,6 +110,15 @@ void render_backend_clear(tRgb colour);
 // would change how subsequent vertices rasterize.
 void render_backend_flush(void);
 
+// ENDS THE FRAME: submits the batch, then puts it on screen. This is the last call in every
+// application's render_frame(), and it replaced a render_backend_flush() followed by
+// glfwSwapBuffers() — which was the last GLFW call left in any frame loop, and could not survive
+// Metal, where the window is created with GLFW_CLIENT_API set to GLFW_NO_API and there is no
+// context to swap.
+//
+// Not used by the VST3 plug-in, which is drawn into a view its host presents.
+void render_present(void);
+
 // ── Textures ────────────────────────────────────────────────────────────────
 //
 // A texture is an OPAQUE HANDLE, not a graphics-API object. Under OpenGL it happens to

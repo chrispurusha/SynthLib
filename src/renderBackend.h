@@ -45,8 +45,15 @@
 //     _destroy() submit the batch first when it still references that texture; gfx_texture_write()
 //     and gfx_texture_free() below are the raw operations underneath and know nothing about it. A
 //     new backend therefore cannot forget the rule, because it never sees it.
-//   - anything about windows, contexts, drawables or presenting. The window layer owns that; a
-//     backend is handed a surface that is already current.
+//   - anything about WHICH window exists, where it is, or what events it delivers. The window
+//     layer owns all of that and hands the backend one native handle.
+//
+// PRESENTING IS IN THE CONTRACT, which contradicts what this comment said when it was first
+// written — the correction is worth stating rather than quietly editing away. Presenting looked
+// like a window concern, and it is not separable from the API: under OpenGL it is a buffer swap on
+// the context GLFW created, and under Metal it is a blit into a drawable a CAMetalLayer vends,
+// using the same device the frame was rendered with. There is no form of words covering both
+// without naming an API, so gfx_attach_window() and gfx_present() are here.
 
 // One vertex, as submitted. Position is in framebuffer pixels with the origin TOP LEFT and y
 // increasing downwards — the space the whole UI is laid out in — so a backend whose device
@@ -110,5 +117,18 @@ bool gfx_read_pixels_rgb(int x, int y, int width, int height, uint8_t * out);
 uint32_t gfx_texture_alloc(int width, int height, const uint8_t * rgba);  // rgba may be NULL
 void gfx_texture_write(uint32_t texture, int x, int y, int width, int height, const uint8_t * rgba);
 void gfx_texture_free(uint32_t texture);
+
+// ── Presenting ──────────────────────────────────────────────────────────────
+
+// Hands the backend the native window it will present into, once, at window creation. On macOS
+// that is the NSWindow from glfwGetCocoaWindow(). A backend that got its surface another way — the
+// OpenGL one, where GLFW has already created a context and made it current before this is reached
+// — ignores it.
+void gfx_attach_window(void * nativeWindow);
+
+// Puts the finished frame on screen. Called once per frame by render_present(), which submits the
+// batch first. NOT called by the VST3 plug-in: a plug-in draws into a view the HOST presents, so
+// g2GlDraw.c ends its frame at render_backend_flush() and g2GlView.m takes it from there.
+void gfx_present(void);
 
 #endif // RENDER_BACKEND_H

@@ -47,6 +47,8 @@
 //     clamped it. So it is clamped here, explicitly.
 
 #import <Metal/Metal.h>
+#import <QuartzCore/CAMetalLayer.h>
+#import <AppKit/AppKit.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -111,6 +113,7 @@ static id<MTLRenderPipelineState> gPipeline    = nil;
 static id<MTLSamplerState>        gSampler     = nil;
 static id<MTLTexture>             gWhite       = nil;   // 1x1 opaque white, for untextured draws
 static id<MTLTexture>             gTarget      = nil;   // the offscreen frame
+static CAMetalLayer *             gLayer       = nil;   // nil until gfx_attach_window()
 static id<MTLCommandBuffer>       gCommands    = nil;
 static id<MTLRenderCommandEncoder> gEncoder    = nil;
 
@@ -312,6 +315,12 @@ void gfx_set_surface(int width, int height) {
     desc.storageMode = MTLStorageModeManaged;
     gTarget          = [gDevice newTextureWithDescriptor:desc];
 
+    // The drawable has to match the target exactly, because gfx_present() blits one to the other
+    // and a size mismatch is a validation failure rather than a scaled copy.
+    if (gLayer != nil) {
+        gLayer.drawableSize = CGSizeMake((CGFloat)width, (CGFloat)height);
+    }
+
     // There is no projection matrix to set: the vertex shader is handed the surface size and does
     // the mapping itself, so this is the whole of what glViewport + glOrtho did.
 }
@@ -506,6 +515,77 @@ void gfx_texture_write(uint32_t texture, int x, int y, int width, int height, co
                             withBytes:swapped
                           bytesPerRow:rowBytes];
     free(swapped);
+}
+
+void gfx_attach_window(void * nativeWindow) {
+    gfx_init();
+
+    if ((gDevice == nil) || (nativeWindow == NULL)) {
+        return;
+    }
+    // GLFW made this window with GLFW_CLIENT_API = GLFW_NO_API, so it has no context and no
+    // drawable of its own — which is the whole point. What it has is an NSWindow, and a
+    // CAMetalLayer put on its content view becomes the thing frames are presented into.
+    NSWindow * window = (__bridge NSWindow *)nativeWindow;
+    NSView *   view   = [window contentView];
+
+    gLayer                  = [CAMetalLayer layer];
+    gLayer.device           = gDevice;
+    gLayer.pixelFormat      = MTLPixelFormatBGRA8Unorm;
+
+    // NOT framebuffer-only: gfx_present() blits INTO the drawable rather than rendering into it,
+    // and a framebuffer-only drawable cannot be a blit destination.
+    gLayer.framebufferOnly   = NO;
+
+    // LAYER-HOSTING, not layer-backed: assigning the layer before setting wantsLayer is what tells
+    // AppKit this view's contents are the layer's and that it must not draw over them.
+    view.layer               = gLayer;
+    view.wantsLayer          = YES;
+
+    // Points to pixels. Without this the drawable is sized in points and every frame is presented
+    // at half resolution on a Retina display.
+    gLayer.contentsScale     = [window backingScaleFactor];
+
+    if ((gSurfaceWidth > 0) && (gSurfaceHeight > 0)) {
+        gLayer.drawableSize = CGSizeMake((CGFloat)gSurfaceWidth, (CGFloat)gSurfaceHeight);
+    }
+}
+
+void gfx_present(void) {
+    if ((gLayer == nil) || (gTarget == nil)) {
+        return;    // Offscreen-only build, or before the window exists: the frame simply stays put.
+    }
+    metal_end_pass();
+
+    id<CAMetalDrawable> drawable = [gLayer nextDrawable];
+
+    if (drawable == nil) {
+        return;    // The layer had none free; dropping a frame is the right answer, not stalling.
+    }
+
+    if (gCommands == nil) {
+        gCommands = [gQueue commandBuffer];
+    }
+    // A BLIT, not a second render pass. The frame already exists in gTarget — rendering it again
+    // into the drawable would mean a full-screen quad, another pipeline and a sampler, to copy
+    // pixels that are already correct. The offscreen target is what makes gfx_read_pixels_rgb()
+    // work, so it earns its keep twice.
+    id<MTLBlitCommandEncoder> blit = [gCommands blitCommandEncoder];
+
+    [blit copyFromTexture:gTarget
+              sourceSlice:0
+              sourceLevel:0
+             sourceOrigin:MTLOriginMake(0, 0, 0)
+               sourceSize:MTLSizeMake((NSUInteger)gSurfaceWidth, (NSUInteger)gSurfaceHeight, 1)
+                toTexture:[drawable texture]
+         destinationSlice:0
+         destinationLevel:0
+        destinationOrigin:MTLOriginMake(0, 0, 0)];
+    [blit endEncoding];
+
+    [gCommands presentDrawable:drawable];
+    [gCommands commit];
+    gCommands = nil;
 }
 
 void gfx_texture_free(uint32_t texture) {

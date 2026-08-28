@@ -182,6 +182,33 @@ void gfx_texture_write(uint32_t texture, int x, int y, int width, int height, co
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
+void gfx_attach_window(void * nativeWindow) {
+    // Nothing to do: GLFW created a context alongside the window and made it current before this
+    // is reached, so the surface is already the one being drawn into. Metal has to be told.
+    (void)nativeWindow;
+}
+
+void gfx_present(void) {
+#ifdef G2_VST3_BUILD
+    // THE PLUG-IN HAS NO GLFW — not just no window, no library. It includes this file for the
+    // drawing and gets its GL headers through glfw3.h, but nothing links libglfw, so naming
+    // glfwSwapBuffers here is an undefined symbol at link time rather than a runtime no-op. It
+    // was, for one build.
+    //
+    // Nothing is lost: a plug-in draws into a view the HOST presents, so g2GlDraw.c ends its frame
+    // at render_backend_flush() and g2GlView.m calls [context flushBuffer]. render_present(), and
+    // therefore this, is never reached there.
+#else
+    // The context GLFW made current — asking it, rather than being handed the window, keeps this
+    // file out of SynthLib's window layer.
+    GLFWwindow * window = glfwGetCurrentContext();
+
+    if (window != NULL) {
+        glfwSwapBuffers(window);
+    }
+#endif
+}
+
 void gfx_texture_free(uint32_t texture) {
     GLuint name = (GLuint)texture;
 

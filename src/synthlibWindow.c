@@ -36,7 +36,22 @@ extern "C" {
 #include "synthlibScale.h"
 #include "synthlibGlobals.h"
 #include "geometry.h"
+#include "renderBackendSelect.h"
+#include "renderBackend.h"
 #include "utilsGraphics.h"
+
+// THE ONE PLACE A BACKEND CHANGES WHAT THE WINDOW IS, and it is a window concern rather than a
+// drawing one, which is why the #if lives here and not in the renderer. OpenGL wants GLFW to
+// create a context alongside the window and make it current. Metal wants GLFW to create no
+// context at all — GLFW_NO_API, the same hint a Vulkan application uses — and then takes the
+// NSWindow and puts a CAMetalLayer on it.
+#if RENDER_BACKEND != RENDER_BACKEND_GL
+#define GLFW_EXPOSE_NATIVE_COCOA    1
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#include <GLFW/glfw3native.h>
+#pragma clang diagnostic pop
+#endif
 
 // The window minimum, as a divisor of the design size. 640x360 for a 2560x1440 target, and still
 // exactly the locked 16:9. The old TARGET/8 allowed a 320pt window, which on a 1x display is a 320px
@@ -244,6 +259,12 @@ void * synthlib_window_create(const tSynthLibWindowConfig * config, const tSynth
     glfwWindowHint(GLFW_COCOA_RETINA_FRAMEBUFFER, GLFW_TRUE);
     glfwWindowHint(GLFW_COCOA_GRAPHICS_SWITCHING, GLFW_TRUE);  // Needed for Intel systems with discrete graphics
 
+#if RENDER_BACKEND != RENDER_BACKEND_GL
+    // No context, no drawable, no swap chain — GLFW is reduced to a window and an event source,
+    // which is exactly what is wanted. Everything below that touches a context is skipped.
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+#endif
+
     window = glfwCreateWindow(config->targetWidth / minDivisor, config->targetHeight / minDivisor,
                               config->title, NULL, NULL);
     synthlib_set_window((void *)window);
@@ -256,7 +277,9 @@ void * synthlib_window_create(const tSynthLibWindowConfig * config, const tSynth
                             GLFW_DONT_CARE, GLFW_DONT_CARE);
     glfwSetWindowAspectRatio(window, config->targetWidth, config->targetHeight);
 
+#if RENDER_BACKEND == RENDER_BACKEND_GL
     glfwMakeContextCurrent(window);
+#endif
 
     // Real initial scale for whichever display the window opens on, not the 2.0 (Retina-only)
     // assumption this used to hardcode — see content_scale_callback() above.
@@ -270,7 +293,11 @@ void * synthlib_window_create(const tSynthLibWindowConfig * config, const tSynth
     glfwSetWindowSizeCallback(window, window_size_callback);
     glfwSetWindowPosCallback(window, window_pos_callback);
     glfwSetWindowCloseCallback(window, window_close_callback);
+#if RENDER_BACKEND == RENDER_BACKEND_GL
+    // Vsync. There is no context to set it on under any other backend; a CAMetalLayer is
+    // synchronised to the display by default instead.
     glfwSwapInterval(1);
+#endif
 
     if (gCallbacks.key != NULL) {
         glfwSetKeyCallback(window, gCallbacks.key);
@@ -299,10 +326,17 @@ void * synthlib_window_create(const tSynthLibWindowConfig * config, const tSynth
     if (gCallbacks.windowRefresh != NULL) {
         glfwSetWindowRefreshCallback(window, gCallbacks.windowRefresh);
     }
-    // Session-wide drawing state, set once now the context is current. Blending is on for the
-    // whole session in all three apps; render_backend_init() owns that (and the invariant note),
-    // so this layer no longer names a graphics API of its own.
+    // Session-wide drawing state, set once now the surface exists. Blending is on for the whole
+    // session in all three apps; render_backend_init() owns that (and the invariant note), so this
+    // layer no longer names a graphics API of its own.
     render_backend_init();
+
+#if RENDER_BACKEND != RENDER_BACKEND_GL
+    // The backend gets the NSWindow to present into. AFTER render_backend_init(), so the device
+    // the layer is given is the one the frames are rendered with, and after the framebuffer size
+    // is known, so the drawable is sized correctly on the first frame rather than the second.
+    gfx_attach_window(glfwGetCocoaWindow(window));
+#endif
 
     return (void *)window;
 }
