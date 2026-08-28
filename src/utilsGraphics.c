@@ -21,12 +21,18 @@
 extern "C" {
 #endif
 
+// NO GRAPHICS HEADER, and that is the point of the split (2026-08-28). Everything this file used
+// to do with OpenGL directly now goes through renderBackend.h's nine gfx_* calls, which exactly
+// one renderBackend*.c implements. FreeType stays: rasterizing a glyph produces a buffer in RAM
+// and is not a graphics-API operation.
+//
+// The compiler enforces it. A drawing primitive here cannot reach for a GL call, because there is
+// no declaration for one — which is the same guarantee moduleGraphics.c and paramOverlay.c got
+// when the seam was first drawn, now extended to the file that drew it.
+
 // Disable warnings from external library headers etc.
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Weverything"
-
-#define GL_SILENCE_DEPRECATION    1
-#include <GLFW/glfw3.h>
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -39,6 +45,7 @@ extern "C" {
 #include "synthlibDefs.h"
 #include "clickRegion.h"
 #include "geometry.h"
+#include "renderBackend.h"
 #include "utilsGraphics.h"
 
 // Glyph atlases.
@@ -305,11 +312,8 @@ tRectangle module_area(void) {
 // all become plain triangle lists, which is the one topology every backend agrees on. Winding is
 // not normalised because nothing in any of the three apps enables face culling.
 
-typedef struct {
-    float x, y;        // position, framebuffer units
-    float u, v;        // texture coordinates
-    float r, g, b, a;  // per-vertex colour — render_bezier_curve genuinely needs it, see below
-} tVertex;
+// tVertex is renderBackend.h's — it is the wire format between this file and whichever backend
+// is compiled, so it is declared where the contract is.
 
 static tVertex * gBatchVerts    = NULL;
 static size_t    gBatchCount    = 0;
@@ -338,37 +342,15 @@ static void batch_push(float x, float y, float u, float v, tRgba c) {
     };
 }
 
+// The batch's public face, and the whole of its dealing with the backend: one array of finished
+// triangles and the texture they sample. WHICH triangles ended up in it — the merging rules, the
+// sticky texture, the forced submissions — is decided above and is identical on every platform,
+// which is why none of it is in renderBackend.h.
 void render_backend_flush(void) {
     if (gBatchCount == 0) {
         return;
     }
-
-    if (gBatchTexture != 0) {
-        glEnable(GL_TEXTURE_2D);
-        glBindTexture(GL_TEXTURE_2D, gBatchTexture);
-        // Modulate: the glyph atlas is white coverage, tinted by the vertex colour. This was set
-        // once inside the old text renderer and never reset, so it already applied to both
-        // textured paths; stating it per flush removes the hidden dependency on that ordering.
-        glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
-    }
-    glEnableClientState(GL_VERTEX_ARRAY);
-    glEnableClientState(GL_COLOR_ARRAY);
-    glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-
-    glVertexPointer(2, GL_FLOAT, sizeof(tVertex), &gBatchVerts[0].x);
-    glColorPointer(4, GL_FLOAT, sizeof(tVertex), &gBatchVerts[0].r);
-    glTexCoordPointer(2, GL_FLOAT, sizeof(tVertex), &gBatchVerts[0].u);
-
-    glDrawArrays(GL_TRIANGLES, 0, (GLsizei)gBatchCount);
-
-    glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-    glDisableClientState(GL_COLOR_ARRAY);
-    glDisableClientState(GL_VERTEX_ARRAY);
-
-    if (gBatchTexture != 0) {
-        glBindTexture(GL_TEXTURE_2D, 0);
-        glDisable(GL_TEXTURE_2D);
-    }
+    gfx_submit(gBatchVerts, gBatchCount, gBatchTexture);
     gBatchCount = 0;
 }
 
@@ -477,12 +459,12 @@ static void fan_add(tFanBuild * f, float x, float y, tRgba c) {
 void module_pane_clip_begin(void) {
     tRectangle pane = module_area();
 
-    // glScissor works in framebuffer pixels with the origin at the BOTTOM left, where everything
-    // else here is in scaled window units with the origin at the top left — hence the flip.
+    // Framebuffer pixels, origin TOP LEFT — the same space the vertices are in. The flip to
+    // whatever the backend's scissor origin is belongs to the backend and used to be here.
     double     x    = pane.coord.x * gGlobalGuiScale;
+    double     y    = pane.coord.y * gGlobalGuiScale;
     double     w    = pane.size.w * gGlobalGuiScale;
     double     h    = pane.size.h * gGlobalGuiScale;
-    double     y    = (double)gRenderHeight - ((pane.coord.y * gGlobalGuiScale) + h);
 
     if (w < 0.0) {
         w = 0.0;
@@ -494,8 +476,7 @@ void module_pane_clip_begin(void) {
     // Anything already queued was drawn UNCLIPPED and must go out before the clip exists.
     render_backend_flush();
 
-    glEnable(GL_SCISSOR_TEST);
-    glScissor((GLint)x, (GLint)y, (GLsizei)w, (GLsizei)h);
+    gfx_scissor(x, y, w, h);
 
     // The CLICK regions get the same clip as the pixels, set here so the two cannot drift apart. A
     // module scrolled past the bottom of its pane is not drawn there — and must not be clickable
@@ -508,7 +489,7 @@ void module_pane_clip_end(void) {
     // ...and what was queued INSIDE the clip must go out before it is dropped.
     render_backend_flush();
 
-    glDisable(GL_SCISSOR_TEST);
+    gfx_scissor(0.0, 0.0, -1.0, 0.0);   // negative width = clipping off
     set_click_region_clip(NULL);
 }
 
@@ -1010,26 +991,16 @@ tRectangle render_radial_line(tArea area, tCoord coord, double radius, double an
 // ── Render backend seam ──────────────────────────────────────────────────────
 // What this is, and why it is only four functions, is in utilsGraphics.h.
 
+// The four below keep the application-facing names, because three apps and the plug-in call them.
+// Each is the portable half of its operation — the batching rule — in front of the gfx_* call that
+// does the platform work. Where there is no rule to apply, the wrapper is honestly empty.
 void render_backend_init(void) {
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-    // The canvas is 2D and painted back to front. GL leaves depth testing off by
-    // default and the app relied on that; the plug-in's context said so explicitly.
-    // Stated once here so the two cannot differ.
-    glDisable(GL_DEPTH_TEST);
+    gfx_init();
 }
 
 void render_backend_set_surface(int width, int height) {
     render_backend_flush();    // queued vertices belong to the old projection
-
-    glViewport(0, 0, width, height);
-
-    glMatrixMode(GL_PROJECTION);
-    glLoadIdentity();
-    glOrtho(0, width, height, 0, -1, 1);
-    glMatrixMode(GL_MODELVIEW);
-    glLoadIdentity();
+    gfx_set_surface(width, height);
 }
 
 void render_backend_clear(tRgb colour) {
@@ -1037,88 +1008,48 @@ void render_backend_clear(tRgb colour) {
     // first. In practice the batch is empty here — the frame loop clears before it draws — but
     // this is the general rule for the seam, not an assumption about one caller.
     render_backend_flush();
-
-    glClearColor((GLfloat)colour.red, (GLfloat)colour.green, (GLfloat)colour.blue, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
+    gfx_clear(colour);
 }
 
 bool render_backend_read_pixels_rgb(int x, int y, int width, int height, uint8_t * out) {
-    if ((width <= 0) || (height <= 0) || (out == NULL)) {
-        return false;
-    }
-    // Tightly-packed rows (width*3 bytes). Without this, glReadPixels' default
-    // GL_PACK_ALIGNMENT of 4 pads each row up to a 4-byte multiple whenever width*3
-    // isn't already one (i.e. any width not a multiple of 4) — which both shears
-    // the saved PNG (row stride mismatch vs stbi's width*3) AND overruns the
-    // width*height*3 buffer. Only bit us at odd window sizes; Retina captures were
-    // multiples of 4.
     // The frame is not finished until the batch is submitted — without this a SCREENSHOT taken
     // straight after a render would miss everything drawn since the last flush.
     render_backend_flush();
-
-    glPixelStorei(GL_PACK_ALIGNMENT, 1);
-    glReadPixels(x, y, width, height, GL_RGB, GL_UNSIGNED_BYTE, out);
-    return true;
+    return gfx_read_pixels_rgb(x, y, width, height, out);
 }
 
 // glColor3f/4f, as a plain variable. Nothing is submitted here — the colour is written into
 // each vertex as it is appended, so a colour change between two draws no longer splits them
 // into separate submissions the way a GL state change would have.
+// Creating one has no bearing on queued geometry — nothing can be sampling a texture that does
+// not exist yet — so this is a straight pass-through.
 uint32_t render_backend_texture_create(int width, int height, const uint8_t * rgba) {
-    GLuint texture = 0;
-
-    if ((width <= 0) || (height <= 0)) {
-        return 0;
-    }
-    glGenTextures(1, &texture);
-    glBindTexture(GL_TEXTURE_2D, texture);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
-
-    // GL_NEAREST: every caller blits one texel per pixel, so filtering could only blur a sample
-    // that already lands dead centre on its texel.
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-    // Left unbound. The batch binds whatever it needs at flush time, so no drawing code depends
-    // on what happens to be bound when this returns — which the inline copies of this did.
-    glBindTexture(GL_TEXTURE_2D, 0);
-    return (uint32_t)texture;
+    return gfx_texture_alloc(width, height, rgba);
 }
 
 void render_backend_texture_update(uint32_t texture, int x, int y, int width, int height, const uint8_t * rgba) {
-    if ((texture == 0) || (width <= 0) || (height <= 0) || (rgba == NULL)) {
-        return;
-    }
-
     // A HAZARD THAT DID NOT EXIST BEFORE BATCHING: in immediate mode every draw was submitted
     // before the next statement ran, so an upload could never overtake one. Queued vertices now
     // outlive the call that appended them, and they were appended to sample what this texture
     // held THEN. Uploading underneath them would redraw already-issued geometry with new pixels.
+    //
+    // The rule lives HERE rather than in the backend, so that a new backend cannot forget it:
+    // gfx_texture_write() is handed a texture nothing is waiting on.
     if (texture == gBatchTexture) {
         render_backend_flush();
     }
-    glBindTexture(GL_TEXTURE_2D, (GLuint)texture);
-    glTexSubImage2D(GL_TEXTURE_2D, 0, x, y, width, height, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
-    glBindTexture(GL_TEXTURE_2D, 0);
+    gfx_texture_write(texture, x, y, width, height, rgba);
 }
 
 void render_backend_texture_destroy(uint32_t texture) {
-    GLuint name = (GLuint)texture;
-
-    if (texture == 0) {
-        return;
-    }
-
     // Same reason as _update(), one step further: nothing queued may outlive its texture at all.
     // Owning the rule here rather than at each call site is why the glyph-atlas eviction and
-    // free_textures() no longer flush by hand.
-    if (texture == gBatchTexture) {
+    // free_textures() do not flush by hand.
+    if ((texture != 0) && (texture == gBatchTexture)) {
         render_backend_flush();
         gBatchTexture = 0;
     }
-    glDeleteTextures(1, &name);
+    gfx_texture_free(texture);
 }
 
 void set_rgb_colour(tRgb rgb) {

@@ -53,19 +53,23 @@ void set_rgba_colour(tRgba rgba);
 
 // ── Render backend seam ──────────────────────────────────────────────────────
 //
-// THE COMPLETE SURFACE a different backend (Metal, D3D, Vulkan) has to reimplement:
-// these eight calls, plus this file's own drawing code. Everything else in all three
-// apps — and in G2-Edit's VST3 plug-in — draws through the render_*/draw_* primitives
-// and cannot name the graphics API even by accident.
+// The eight calls below are what the APPLICATIONS use to drive the renderer. They are
+// no longer where a port happens: since 2026-08-28 the graphics API itself lives behind
+// renderBackend.h's nine gfx_* calls, implemented once per platform in a renderBackend*.c
+// that renderBackendSelect.h chooses. READ THAT HEADER BEFORE WRITING A BACKEND — it is
+// the contract, and it says what deliberately is NOT part of it.
 //
-// Four of them had three or four separate copies before: the GLFW window layer, the
-// scale/resize path, each app's frame loop, and the plug-in's own NSOpenGLView
+// What these eight are, then, is the portable half: each applies whatever batching rule
+// its operation needs and hands the rest to a gfx_* call. utilsGraphics.c has named no
+// graphics API since the split, which the compiler enforces by there being no such
+// declaration in scope.
+//
+// Four of them had three or four separate copies before the seam existed: the GLFW window
+// layer, the scale/resize path, each app's frame loop, and the plug-in's own NSOpenGLView
 // (vst3/g2GlDraw.c), which shares these renderers but has no GLFW underneath it.
-// render_backend_flush() arrived with geometry batching, and the three texture calls
-// on 2026-08-28 — EmuUtility was creating and uploading its LCD texture with raw GL in
-// its own emuGraphics.c, with a "TODO - move into utilsGraphics" beside each. It was
-// the last thing outside this file that named the API, so the claim above is only
-// true from that date.
+// render_backend_flush() arrived with geometry batching, and the three texture calls with
+// EmuUtility's LCD, which until then created and uploaded its texture with raw GL in its
+// own emuGraphics.c — the last thing outside this file that named the API.
 
 // Session-wide drawing state. Call once, after a context is current and before
 // anything is drawn. BLENDING IS ON FOR THE WHOLE SESSION and no drawing code turns
