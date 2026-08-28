@@ -319,6 +319,23 @@ void gfx_set_surface(int width, int height) {
     // and a size mismatch is a validation failure rather than a scaled copy.
     if (gLayer != nil) {
         gLayer.drawableSize = CGSizeMake((CGFloat)width, (CGFloat)height);
+
+        // THE LAYER'S SIZE IS DERIVED FROM THE DRAWABLE, not from the view, and that is the whole
+        // of a bug worth remembering. A host asked for a 1367x768 editor and the view ended up
+        // 768.9 POINTS tall; convertRectToBacking then truncates 1537.8 pixels to 1537, which is
+        // what gets rendered. Leave the layer at the view's 768.9pt and Core Animation scales a
+        // 1537-pixel frame into a 1537.8-pixel box — a 0.9995 resample that never looks broken,
+        // just faintly soft, and which showed up as 6.5% of pixels differing from the OpenGL build
+        // with the text quietly blurred.
+        //
+        // Sizing the layer at drawable/contentsScale makes the mapping exactly 1:1 again. It can
+        // leave the layer a fraction of a point short of the view, which is invisible; a resampled
+        // frame is not.
+        if (gLayer.superlayer != nil) {
+            gLayer.frame = CGRectMake(0.0, 0.0,
+                                      (CGFloat)width / gLayer.contentsScale,
+                                      (CGFloat)height / gLayer.contentsScale);
+        }
     }
 
     // There is no projection matrix to set: the vertex shader is handed the surface size and does
@@ -523,11 +540,24 @@ void gfx_attach_window(void * nativeWindow) {
     if ((gDevice == nil) || (nativeWindow == NULL)) {
         return;
     }
-    // GLFW made this window with GLFW_CLIENT_API = GLFW_NO_API, so it has no context and no
-    // drawable of its own — which is the whole point. What it has is an NSWindow, and a
-    // CAMetalLayer put on its content view becomes the thing frames are presented into.
-    NSWindow * window = (__bridge NSWindow *)nativeWindow;
-    NSView *   view   = [window contentView];
+    // EITHER AN NSWindow OR AN NSView, and it has to be both because the two callers differ. The
+    // application hands over the NSWindow it got from glfwGetCocoaWindow() — GLFW made that window
+    // with GLFW_CLIENT_API = GLFW_NO_API, so it has no context and no drawable of its own, which is
+    // the whole point. The VST3 plug-in hands over its OWN view, because in a plug-in the window
+    // belongs to the host and is emphatically not ours to put a layer on.
+    id       object = (__bridge id)nativeWindow;
+    NSView * view   = nil;
+    NSWindow * window = nil;
+
+    if ([object isKindOfClass:[NSWindow class]]) {
+        window = (NSWindow *)object;
+        view   = [window contentView];
+    } else if ([object isKindOfClass:[NSView class]]) {
+        view   = (NSView *)object;
+        window = [view window];
+    } else {
+        return;
+    }
 
     gLayer                  = [CAMetalLayer layer];
     gLayer.device           = gDevice;
@@ -537,14 +567,56 @@ void gfx_attach_window(void * nativeWindow) {
     // and a framebuffer-only drawable cannot be a blit destination.
     gLayer.framebufferOnly   = NO;
 
-    // LAYER-HOSTING, not layer-backed: assigning the layer before setting wantsLayer is what tells
-    // AppKit this view's contents are the layer's and that it must not draw over them.
-    view.layer               = gLayer;
-    view.wantsLayer          = YES;
+    // OPAQUE, and this is not a hint — it is a correctness fix. Blending writes the alpha channel
+    // as well as the colour, so wherever a glyph's antialiased edge is drawn with alpha below one
+    // the framebuffer's own alpha ends up below one too. Core Animation then composites the frame
+    // over whatever is behind the layer, which for a plug-in view is the host's dark background,
+    // and every piece of text acquires a dark fringe. Saying the layer is opaque tells Core
+    // Animation to ignore the alpha channel it has been handed, which is what OpenGL's drawable
+    // did implicitly all along.
+    gLayer.opaque            = YES;
+
+    // NO COLOUR MATCHING. A CAMetalLayer is colour-managed by default: Core Animation treats the
+    // pixels as being in some source space and converts them for the display. The OpenGL path is
+    // not — an NSOpenGLView's values go to the screen as written — so the two disagreed on solid
+    // colours by a few counts per channel, RGB_GREEN_ON arriving as (75,179,87) where OpenGL wrote
+    // (77,178,77). Not visible, but it is a real difference in what the user sees and it would
+    // have made every future screen-level comparison useless.
+    //
+    // A nil colorspace means "these pixels are already in the display's space, pass them through",
+    // which is exactly what OpenGL was doing implicitly.
+    gLayer.colorspace        = nil;
+
+    // HOSTING OR SUBLAYER, AND THE CHOICE IS NOT COSMETIC — it decides whether the view is ever
+    // asked to draw at all.
+    //
+    // A LAYER-HOSTING view (assign .layer, then set wantsLayer) tells AppKit the layer's contents
+    // ARE the view's contents, so AppKit stops calling -drawRect: entirely. That is right for the
+    // application, where the render loop drives every frame and nothing waits to be asked.
+    //
+    // It is WRONG for the plug-in, whose every redraw is a -setNeedsDisplay: that AppKit turns into
+    // a -drawRect:. Made layer-hosting, the plug-in editor drew nothing at all: a blank window, no
+    // error, no warning, because the mechanism that would have drawn it had been switched off by
+    // the very call meant to enable it. So a view is given the layer as a SUBLAYER and stays
+    // layer-BACKED, which keeps -drawRect: coming.
+    if (window != nil && [object isKindOfClass:[NSWindow class]]) {
+        view.layer      = gLayer;
+        view.wantsLayer = YES;
+    } else {
+        view.wantsLayer = YES;
+        [view.layer addSublayer:gLayer];
+    }
 
     // Points to pixels. Without this the drawable is sized in points and every frame is presented
-    // at half resolution on a Retina display.
-    gLayer.contentsScale     = [window backingScaleFactor];
+    // at half resolution on a Retina display. A plug-in view may not be in a window yet when the
+    // host attaches it, so fall back to the main screen rather than to 1.0 — being wrong by a
+    // factor of two is far more visible than being wrong about which display.
+    gLayer.contentsScale     = (window != nil) ? [window backingScaleFactor]
+                               : [[NSScreen mainScreen] backingScaleFactor];
+
+    // The layer fills the view. A layer-HOSTING view does not lay its layer out for you, and a
+    // plug-in view is resized by its host, so this is set again from gfx_set_surface().
+    gLayer.frame             = [view bounds];
 
     if ((gSurfaceWidth > 0) && (gSurfaceHeight > 0)) {
         gLayer.drawableSize = CGSizeMake((CGFloat)gSurfaceWidth, (CGFloat)gSurfaceHeight);
