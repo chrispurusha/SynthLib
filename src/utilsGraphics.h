@@ -51,6 +51,12 @@ void draw_dialog_background_overlay(void);
 void set_rgb_colour(tRgb rgb);
 void set_rgba_colour(tRgba rgba);
 
+// tTextureFilter is the backend contract's, because a filter is a property of how the graphics API
+// samples a texture — but it appears in this file's public texture calls, so the contract comes
+// with it. Including it here does NOT let a caller reach the gfx_* functions in any meaningful
+// sense: naming one still means linking the backend, which only SynthLib does.
+#include "renderBackend.h"
+
 // ── Render backend seam ──────────────────────────────────────────────────────
 //
 // The eight calls below are what the APPLICATIONS use to drive the renderer. They are
@@ -135,8 +141,11 @@ void render_present(void);
 // add it then, with the case in front of you.
 
 // Allocates width*height RGBA8 texels. `rgba` fills them, or NULL leaves them
-// undefined for a later _update(). Returns 0 on failure.
-uint32_t render_backend_texture_create(int width, int height, const uint8_t * rgba);
+// undefined for a later _update(). `filter` is eTextureNearest for anything blitted one texel per
+// pixel — which is nearly everything — and eTextureLinear only where a texture is deliberately
+// sampled at another scale, currently just the supersampled small-text atlas. Returns 0 on
+// failure.
+uint32_t render_backend_texture_create(int width, int height, const uint8_t * rgba, tTextureFilter filter);
 
 // Replaces a sub-rectangle. Flushes first if the batch is still referencing this
 // texture — queued vertices were appended to sample the OLD contents, and a mid-frame

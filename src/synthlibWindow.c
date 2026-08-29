@@ -259,6 +259,13 @@ void * synthlib_window_create(const tSynthLibWindowConfig * config, const tSynth
     glfwWindowHint(GLFW_COCOA_RETINA_FRAMEBUFFER, GLFW_TRUE);
     glfwWindowHint(GLFW_COCOA_GRAPHICS_SWITCHING, GLFW_TRUE);  // Needed for Intel systems with discrete graphics
 
+#if (RENDER_BACKEND == RENDER_BACKEND_GL) && (GFX_MSAA_SAMPLES > 1)
+    // Under OpenGL the multisample buffer belongs to the PIXEL FORMAT, so it has to be asked for
+    // before the context exists — there is no enabling it later. Metal has no equivalent here: its
+    // sample count is a property of the render pass and the pipeline, set in the backend.
+    glfwWindowHint(GLFW_SAMPLES, GFX_MSAA_SAMPLES);
+#endif
+
 #if RENDER_BACKEND != RENDER_BACKEND_GL
     // No context, no drawable, no swap chain — GLFW is reduced to a window and an event source,
     // which is exactly what is wanted. Everything below that touches a context is skipped.

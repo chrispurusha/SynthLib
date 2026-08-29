@@ -66,14 +66,30 @@ extern "C" {
 // it stay on one canonical set of metrics (gCanonInfo, taken once at a reference size), so text
 // widths remain continuous and proportional and boxes fit exactly as before. Only the glyph
 // images and their final pixel positions come from the sized atlas.
-#define GLYPH_ATLAS_PADDING       (2)    // transparent gap between glyphs, in atlas pixels
-#define GLYPH_ATLAS_MIN_PX        (4)    // below this there is no glyph left to draw
-#define GLYPH_ATLAS_MAX_PX        (256)
-#define GLYPH_ATLAS_CACHE_SIZE    (6)    // distinct drawn text heights kept resident
-#define GLYPH_REFERENCE_PX        (72.0) // size the canonical layout metrics are taken at
+#define GLYPH_ATLAS_PADDING    (2)       // transparent gap between glyphs, in atlas pixels
+// SMALL TEXT IS RASTERIZED BIG AND SCALED DOWN. Below this drawn height the 1:1 blit costs more
+// than it buys: the atlas em is an INTEGER, and the glyph bitmaps that come out of it are integers
+// too, so at an em of 6 one pixel of rounding is 17% of the text's height. Measured on a 1280x720
+// display, the same button's text filled 0.385 of its box where the Retina build gives 0.526 — the
+// 14% CT could see. Rasterizing at twice the size and drawing at the true fractional height puts
+// the quantisation back under a few percent, at the cost of softer stems, which is the better
+// trade this small. Above the threshold nothing changes and the crisp 1:1 path is untouched.
+//
+// THE TRIGGER IS THE DRAWN HEIGHT, NOT THE DISPLAY. "Retina or not" is a proxy and a leaky one:
+// gGlobalGuiScale runs continuously with the window size (0.69, 0.88 and 2.37 were all measured on
+// one machine in one afternoon), so a zoomed-out canvas on a Retina display draws 6px text too and
+// wants exactly the same treatment.
+#define GLYPH_SUPERSAMPLE_BELOW_PX    (12)
+#define GLYPH_SUPERSAMPLE_FACTOR      (2)
+
+#define GLYPH_ATLAS_MIN_PX            (4)    // below this there is no glyph left to draw
+#define GLYPH_ATLAS_MAX_PX            (256)
+#define GLYPH_ATLAS_CACHE_SIZE        (6)    // distinct drawn text heights kept resident
+#define GLYPH_REFERENCE_PX            (72.0) // size the canonical layout metrics are taken at
 
 typedef struct {
     int       pixelHeight;                   // key: drawn text height this atlas serves, 0 when unused
+    int       supersample;                   // 1 = rasterized at the drawn size and blitted 1:1
     uint32_t  texture;                       // opaque backend handle, not a GLuint — see utilsGraphics.h
     int       width;
     int       height;
@@ -677,7 +693,16 @@ static void internal_render_text(tRectangle rectangle, const char * text) {
     // alignment — the right trade at these sizes.
     double xCharOffset = 0.0;
 
-    ch          = text;
+    // How much to shrink this atlas's bitmaps by when drawing them. 1.0 for a 1:1 atlas. For a
+    // supersampled one it is 1/factor, CORRECTED by the ratio between the height actually asked
+    // for and the integer the atlas was built for — which is what removes the last of the
+    // quantisation rather than merely reducing it.
+    double glyphScale  = 1.0;
+
+    if (atlas->supersample > 1) {
+        glyphScale = (rectangle.size.h / (double)pixelHeight) / (double)atlas->supersample;
+    }
+    ch = text;
 
     while (*ch) {
         // char is signed here, so anything above 127 would index the glyph table negatively
@@ -694,11 +719,16 @@ static void internal_render_text(tRectangle rectangle, const char * text) {
         double        u2        = glyph->u2;
         double        v2        = glyph->v2;
 
-        // Whole-pixel placement, using this atlas's own hinted bearings
-        double        xPos      = round(originX + xCharOffset) + glyph->offset_x;
-        double        yPos      = baselineY - glyph->offset_y;
-        double        w         = glyph->width;
-        double        h         = glyph->height;
+        // Placement. In the 1:1 case the pen is snapped to a whole pixel so the glyph lands on
+        // exact texels — the crisp path, unchanged. In the supersampled case the bitmap is being
+        // scaled anyway, so snapping buys nothing and costs the even letter spacing that made the
+        // text look wrong in the first place: the position stays fractional.
+        double        xPen      = (glyphScale == 1.0) ? round(originX + xCharOffset)
+                                  : (originX + xCharOffset);
+        double        xPos      = xPen + (glyph->offset_x * glyphScale);
+        double        yPos      = baselineY - (glyph->offset_y * glyphScale);
+        double        w         = glyph->width * glyphScale;
+        double        h         = glyph->height * glyphScale;
 
         if ((w > 0.0) && (h > 0.0)) {
             batch_quad_uv((float)xPos, (float)yPos, (float)u1, (float)v1,               // Bottom-left
@@ -1034,8 +1064,8 @@ bool render_backend_read_pixels_rgb(int x, int y, int width, int height, uint8_t
 // into separate submissions the way a GL state change would have.
 // Creating one has no bearing on queued geometry — nothing can be sampling a texture that does
 // not exist yet — so this is a straight pass-through.
-uint32_t render_backend_texture_create(int width, int height, const uint8_t * rgba) {
-    return gfx_texture_alloc(width, height, rgba);
+uint32_t render_backend_texture_create(int width, int height, const uint8_t * rgba, tTextureFilter filter) {
+    return gfx_texture_alloc(width, height, rgba, filter);
 }
 
 void render_backend_texture_update(uint32_t texture, int x, int y, int width, int height, const uint8_t * rgba) {
@@ -1542,7 +1572,7 @@ static bool layout_glyph_atlas(tGlyphRaster * raster, int * outWidth, int * outH
 // until it has fully succeeded, so a failure here leaves existing text rendering untouched.
 // When outAtlas is NULL only the metrics are produced (used for the canonical layout metrics,
 // which never need a texture).
-static bool build_glyph_atlas(const char * fontPath, double fontSize, tSizedAtlas * outAtlas, GlyphInfo * outMetrics, double * outAscent, double * outDescent) {
+static bool build_glyph_atlas(const char * fontPath, double fontSize, tSizedAtlas * outAtlas, tTextureFilter filter, GlyphInfo * outMetrics, double * outAscent, double * outDescent) {
     FT_Library   ftLibrary              = {0};
     FT_Face      face                   = {0};
     tGlyphRaster raster[MAX_GLYPH_CHAR] = {};
@@ -1721,7 +1751,7 @@ static bool build_glyph_atlas(const char * fontPath, double fontSize, tSizedAtla
         render_backend_texture_destroy(outAtlas->texture);
         outAtlas->texture = 0;
     }
-    outAtlas->texture = render_backend_texture_create(newWidth, newHeight, atlasBuffer);
+    outAtlas->texture = render_backend_texture_create(newWidth, newHeight, atlasBuffer, filter);
 
     free(atlasBuffer);
 
@@ -1748,7 +1778,7 @@ static tSizedAtlas * atlas_for_height(int pixelHeight) {
     if (pixelHeight > GLYPH_ATLAS_MAX_PX) {
         pixelHeight = GLYPH_ATLAS_MAX_PX;
     }
-    tSizedAtlas * victim   = &gAtlasCache[0];
+    tSizedAtlas * victim      = &gAtlasCache[0];
 
     for (int i = 0; i < GLYPH_ATLAS_CACHE_SIZE; i++) {
         if (gAtlasCache[i].pixelHeight == pixelHeight) {
@@ -1761,21 +1791,28 @@ static tSizedAtlas * atlas_for_height(int pixelHeight) {
         }
     }
 
+    // Small text is rasterized at a multiple of its drawn size and scaled down when it is drawn;
+    // everything else keeps the one-texel-per-pixel blit. See GLYPH_SUPERSAMPLE_BELOW_PX.
+    int           supersample = (pixelHeight < GLYPH_SUPERSAMPLE_BELOW_PX) ? GLYPH_SUPERSAMPLE_FACTOR : 1;
+
     // FreeType is asked for a pixel size, not an em height, so convert through the ratio the
     // reference rasterization actually produced rather than assuming a relationship between them.
-    double        fontSize = ((double)pixelHeight * GLYPH_REFERENCE_PX) / gCanonEmPx;
+    double        fontSize    = ((double)(pixelHeight * supersample) * GLYPH_REFERENCE_PX) / gCanonEmPx;
 
     if (fontSize < 1.0) {
         fontSize = 1.0;
     }
-    tSizedAtlas   built    = {};
+    tSizedAtlas   built       = {};
 
     built.texture     = victim->texture; // reuse the evicted handle; build_glyph_atlas destroys it
 
-    if (!build_glyph_atlas(gFontPath, fontSize, &built, NULL, NULL, NULL)) {
+    if (!build_glyph_atlas(gFontPath, fontSize, &built,
+                           (supersample > 1) ? eTextureLinear : eTextureNearest,
+                           NULL, NULL, NULL)) {
         return NULL;
     }
     built.pixelHeight = pixelHeight;
+    built.supersample = supersample;
     built.lastUsed    = ++gAtlasUseCounter;
     *victim           = built;
     return victim;
@@ -1796,7 +1833,7 @@ bool preload_glyph_textures(const char * fontPath, double fontSize) {
         return false;
     }
 
-    if (!build_glyph_atlas(fontPath, GLYPH_REFERENCE_PX, NULL, canonInfo, &maxAscent, &maxDescent)) {
+    if (!build_glyph_atlas(fontPath, GLYPH_REFERENCE_PX, NULL, eTextureNearest, canonInfo, &maxAscent, &maxDescent)) {
         return false;
     }
     free_textures();    // drop any atlases built for a previously loaded font

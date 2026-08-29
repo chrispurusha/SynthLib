@@ -55,6 +55,24 @@
 // using the same device the frame was rendered with. There is no form of words covering both
 // without naming an API, so gfx_attach_window() and gfx_present() are here.
 
+// MULTISAMPLING. Every geometry edge in this UI is hard-rasterized: circles and arcs are polygon
+// fans, cables are triangle strips, dial pointers are rotated quads. At 2x a jagged step is half a
+// pixel and reads as smooth; at 1x it is a whole pixel and reads as jagged, which is exactly what
+// CT saw on a 1280x720 display.
+//
+// IT IS NOT SELECTIVE, and that is the thing to understand before turning it up. Multisampling is a
+// property of the render pass, so it smooths EVERY edge at once — the curves and diagonals it is
+// aimed at, and also axis-aligned rectangle edges that land on fractional coordinates, which are
+// currently hard. At 1x that is an improvement (a one-pixel border that presently vanishes or
+// doubles becomes a consistent soft line) but it is a visible change everywhere, not a targeted one.
+//
+// It does NOTHING for text: a glyph is a textured quad, so the only edges multisampling can see are
+// the corners of that quad, not the letterform inside it. Small text is handled separately, by the
+// supersampled atlas in utilsGraphics.c.
+//
+// 0 or 1 disables it.
+#define GFX_MSAA_SAMPLES    (4)
+
 // One vertex, as submitted. Position is in framebuffer pixels with the origin TOP LEFT and y
 // increasing downwards — the space the whole UI is laid out in — so a backend whose device
 // coordinates differ converts in gfx_set_surface()'s projection, not per vertex.
@@ -109,12 +127,21 @@ void gfx_scissor(int x, int y, int width, int height);
 bool gfx_read_pixels_rgb(int x, int y, int width, int height, uint8_t * out);
 
 // ── Textures ────────────────────────────────────────────────────────────────
-// Always RGBA8, nearest-filtered, clamped to edge — see utilsGraphics.h for why there is no
-// parameter for any of that. A handle is opaque and need not be a driver object: under OpenGL it
-// is the GLuint, under Metal it will index a table the backend keeps, because an id<MTLTexture>
-// does not fit in an integer. 0 is "no texture" and is never returned by a successful alloc.
+// Always RGBA8 and clamped to edge. A handle is opaque and need not be a driver object: under
+// OpenGL it is the GLuint, under Metal it indexes a table the backend keeps, because an
+// id<MTLTexture> does not fit in an integer. 0 is "no texture" and is never returned by a
+// successful alloc.
+//
+// THE FILTER IS A PARAMETER, which it was not until 2026-08-28. This header said there was no need
+// for one "because both callers blit one texel per pixel" and that a filter should be added "then,
+// with the case in front of you". The case arrived: small text is now rasterized at twice its
+// drawn size and scaled down, which point sampling would simply throw half the texels away.
+typedef enum {
+    eTextureNearest = 0,   // one texel per pixel — the glyph atlas at normal sizes, and the LCD
+    eTextureLinear  = 1,   // sampled at a scale that is not 1:1 — the supersampled small-text atlas
+} tTextureFilter;
 
-uint32_t gfx_texture_alloc(int width, int height, const uint8_t * rgba);  // rgba may be NULL
+uint32_t gfx_texture_alloc(int width, int height, const uint8_t * rgba, tTextureFilter filter);  // rgba may be NULL
 void gfx_texture_write(uint32_t texture, int x, int y, int width, int height, const uint8_t * rgba);
 void gfx_texture_free(uint32_t texture);
 

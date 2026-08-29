@@ -63,6 +63,15 @@ void gfx_init(void) {
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
+#if GFX_MSAA_SAMPLES > 1
+    // The multisample BUFFER is requested by the window layer, because under OpenGL it is a
+    // property of the pixel format the context was created with and cannot be asked for after the
+    // fact — see the GLFW_SAMPLES hint in synthlibWindow.c and the pixel format in
+    // vst3/g2GlView.m. All that is left here is to switch it on. Harmless if no such buffer
+    // exists: GL simply has nothing to multisample.
+    glEnable(GL_MULTISAMPLE);
+#endif
+
     // The canvas is 2D and painted back to front. GL leaves depth testing off by default and the
     // app relied on that; the plug-in's context said so explicitly. Stated once here so the two
     // cannot differ.
@@ -150,7 +159,7 @@ bool gfx_read_pixels_rgb(int x, int y, int width, int height, uint8_t * out) {
     return true;
 }
 
-uint32_t gfx_texture_alloc(int width, int height, const uint8_t * rgba) {
+uint32_t gfx_texture_alloc(int width, int height, const uint8_t * rgba, tTextureFilter filter) {
     GLuint texture = 0;
 
     if ((width <= 0) || (height <= 0)) {
@@ -160,10 +169,11 @@ uint32_t gfx_texture_alloc(int width, int height, const uint8_t * rgba) {
     glBindTexture(GL_TEXTURE_2D, texture);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
 
-    // GL_NEAREST: every caller blits one texel per pixel, so filtering could only blur a sample
-    // that already lands dead centre on its texel.
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    // Nearest where a texel maps to a pixel, linear where it does not — see tTextureFilter.
+    GLint  mode    = (filter == eTextureLinear) ? GL_LINEAR : GL_NEAREST;
+
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, mode);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, mode);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 

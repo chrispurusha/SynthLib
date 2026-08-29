@@ -110,10 +110,17 @@ static NSString * const kShaderSource =
 static id<MTLDevice>              gDevice      = nil;
 static id<MTLCommandQueue>        gQueue       = nil;
 static id<MTLRenderPipelineState> gPipeline    = nil;
-static id<MTLSamplerState>        gSampler     = nil;
+static id<MTLSamplerState>        gSampler     = nil;   // nearest
+static id<MTLSamplerState>        gSamplerLin  = nil;   // linear, for the supersampled text atlas
 static id<MTLTexture>             gWhite       = nil;   // 1x1 opaque white, for untextured draws
-static id<MTLTexture>             gTarget      = nil;   // the offscreen frame
+static id<MTLTexture>             gTarget      = nil;   // the offscreen frame, resolved, readable
+static id<MTLTexture>             gMsaaTarget  = nil;   // what is actually rendered into, when > 1x
 static CAMetalLayer *             gLayer       = nil;   // nil until gfx_attach_window()
+
+// Whether presentation goes through the Core Animation transaction. YES when the layer is a
+// SUBLAYER of a view AppKit draws — the plug-in — and NO when we own the frame loop, which is the
+// application. See gfx_present().
+static bool                       gPresentInTransaction = false;
 static id<MTLCommandBuffer>       gCommands    = nil;
 static id<MTLRenderCommandEncoder> gEncoder    = nil;
 
@@ -132,7 +139,12 @@ static int  gScissorH  = 0;
 // uint32_t, and an id<MTLTexture> does not fit in one. Slot 0 is never handed out so that 0 can
 // keep meaning "no texture". Freed slots go back to nil and are reused.
 #define MAX_TEXTURES    (64)
-static id<MTLTexture> gTextures[MAX_TEXTURES] = {nil};
+static id<MTLTexture>  gTextures[MAX_TEXTURES]      = {nil};
+
+// Metal separates the sampler from the texture, so the filter a texture was created with has to be
+// remembered and turned into a sampler choice at draw time. Two samplers cover it; there is no
+// per-texture sampler object to keep.
+static tTextureFilter  gTextureFilter[MAX_TEXTURES] = {eTextureNearest};
 
 static void metal_end_pass(void) {
     if (gEncoder != nil) {
@@ -191,7 +203,7 @@ static void metal_begin_pass(const tRgb * clearColour) {
         return;
     }
 
-    if (gTarget == nil) {
+    if ((gTarget == nil) || ((GFX_MSAA_SAMPLES > 1) && (gMsaaTarget == nil))) {
         return;
     }
 
@@ -200,8 +212,20 @@ static void metal_begin_pass(const tRgb * clearColour) {
     }
     MTLRenderPassDescriptor * pass = [MTLRenderPassDescriptor renderPassDescriptor];
 
+#if GFX_MSAA_SAMPLES > 1
+    // STORE AND RESOLVE ON EVERY PASS, not just the last one. A frame here is not one pass: the
+    // batch is submitted, and the pass ended, at every scissor change and every texture change, so
+    // there is no way to know which pass is final. Storing the samples keeps loadAction Load
+    // working for the next pass, and resolving each time keeps gTarget correct whenever a
+    // read-back or a present happens to come next. The cost is bandwidth on a UI that redraws only
+    // when something changes.
+    pass.colorAttachments[0].texture        = gMsaaTarget;
+    pass.colorAttachments[0].resolveTexture = gTarget;
+    pass.colorAttachments[0].storeAction    = MTLStoreActionStoreAndMultisampleResolve;
+#else
     pass.colorAttachments[0].texture     = gTarget;
     pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+#endif
 
     if (clearColour != NULL) {
         pass.colorAttachments[0].loadAction = MTLLoadActionClear;
@@ -244,6 +268,12 @@ void gfx_init(void) {
     // later should not have to convert. Read-back swizzles instead — it happens once a screenshot.
     desc.colorAttachments[0].pixelFormat                 = MTLPixelFormatBGRA8Unorm;
 
+#if GFX_MSAA_SAMPLES > 1
+    // The pipeline's sample count must match the render pass's attachment, or every draw is a
+    // validation failure. See renderBackend.h for what multisampling does and does not fix here.
+    desc.rasterSampleCount                               = GFX_MSAA_SAMPLES;
+#endif
+
     // The session-wide blend that gfx_init() promises: straight (non-premultiplied) source alpha,
     // exactly GL's glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA). There is no depth attachment
     // at all, which is this backend's way of saying what glDisable(GL_DEPTH_TEST) said.
@@ -270,6 +300,10 @@ void gfx_init(void) {
     samp.sAddressMode = MTLSamplerAddressModeClampToEdge;
     samp.tAddressMode = MTLSamplerAddressModeClampToEdge;
     gSampler          = [gDevice newSamplerStateWithDescriptor:samp];
+
+    samp.minFilter    = MTLSamplerMinMagFilterLinear;
+    samp.magFilter    = MTLSamplerMinMagFilterLinear;
+    gSamplerLin       = [gDevice newSamplerStateWithDescriptor:samp];
 
     // The 1x1 white texture that makes untextured drawing need no second pipeline.
     MTLTextureDescriptor * whiteDesc =
@@ -314,6 +348,23 @@ void gfx_set_surface(int width, int height) {
     // works on both architectures.
     desc.storageMode = MTLStorageModeManaged;
     gTarget          = [gDevice newTextureWithDescriptor:desc];
+
+#if GFX_MSAA_SAMPLES > 1
+    // A SECOND TARGET, because a multisampled texture is not readable and not presentable: it is
+    // rendered into and then RESOLVED down into gTarget, which is the one gfx_read_pixels_rgb()
+    // reads and gfx_present() blits. Private storage — nothing on the CPU ever touches it.
+    MTLTextureDescriptor * msaa =
+        [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
+                                                           width:(NSUInteger)width
+                                                          height:(NSUInteger)height
+                                                       mipmapped:NO];
+
+    msaa.textureType = MTLTextureType2DMultisample;
+    msaa.sampleCount = GFX_MSAA_SAMPLES;
+    msaa.usage       = MTLTextureUsageRenderTarget;
+    msaa.storageMode = MTLStorageModePrivate;
+    gMsaaTarget      = [gDevice newTextureWithDescriptor:msaa];
+#endif
 
     // The drawable has to match the target exactly, because gfx_present() blits one to the other
     // and a size mismatch is a validation failure rather than a scaled copy.
@@ -391,11 +442,14 @@ void gfx_submit(const tVertex * verts, size_t count, uint32_t texture) {
     [gEncoder setVertexBytes:xform length:sizeof(xform) atIndex:1];
 
     id<MTLTexture> bound = gWhite;
+    tTextureFilter filter = eTextureNearest;
 
     if ((texture != 0) && (texture < MAX_TEXTURES) && (gTextures[texture] != nil)) {
-        bound = gTextures[texture];
+        bound  = gTextures[texture];
+        filter = gTextureFilter[texture];
     }
     [gEncoder setFragmentTexture:bound atIndex:0];
+    [gEncoder setFragmentSamplerState:((filter == eTextureLinear) ? gSamplerLin : gSampler) atIndex:0];
 
     [gEncoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:count];
 }
@@ -465,7 +519,7 @@ bool gfx_read_pixels_rgb(int x, int y, int width, int height, uint8_t * out) {
     return true;
 }
 
-uint32_t gfx_texture_alloc(int width, int height, const uint8_t * rgba) {
+uint32_t gfx_texture_alloc(int width, int height, const uint8_t * rgba, tTextureFilter filter) {
     gfx_init();
 
     if ((gDevice == nil) || (width <= 0) || (height <= 0)) {
@@ -497,6 +551,8 @@ uint32_t gfx_texture_alloc(int width, int height, const uint8_t * rgba) {
     if (gTextures[slot] == nil) {
         return 0;
     }
+
+    gTextureFilter[slot] = filter;
 
     if (rgba != NULL) {
         gfx_texture_write(slot, 0, 0, width, height, rgba);
@@ -587,6 +643,29 @@ void gfx_attach_window(void * nativeWindow) {
     // which is exactly what OpenGL was doing implicitly.
     gLayer.colorspace        = nil;
 
+    // VSYNC, STATED RATHER THAN ASSUMED. displaySyncEnabled defaults to YES, so presentation is
+    // already paced to the display's refresh — but the OpenGL path asks for the same thing out
+    // loud (glfwSwapInterval(1) in synthlibWindow.c, and the swap interval on the plug-in's
+    // context in g2GlView.m), and an invariant that is explicit in one backend and inherited in
+    // the other is one nobody can answer a question about. Now both say it.
+    gLayer.displaySyncEnabled = YES;
+
+    // PRESENTING INSIDE THE TRANSACTION, for a view whose drawing AppKit drives.
+    //
+    // presentDrawable: hands the frame over asynchronously, OUTSIDE the Core Animation transaction
+    // AppKit is in the middle of. When we own the frame loop that is right and cheapest: nothing
+    // else is laying the window out around us. But the plug-in draws from -drawRect:, inside a
+    // view hierarchy the HOST is laying out, and an asynchronous present means our pixels and
+    // AppKit's idea of the layout land at different moments — which is seen as tearing or a jitter
+    // at the edges, most obviously while something is being dragged or resized.
+    //
+    // The documented answer is to present as part of the transaction instead: commit, wait until
+    // the work is SCHEDULED (not completed — that would stall a frame), then present the drawable
+    // by hand. It costs a synchronisation point per frame, which is why it is not done for the
+    // application.
+    gPresentInTransaction    = (window == nil) || ![object isKindOfClass:[NSWindow class]];
+    gLayer.presentsWithTransaction = gPresentInTransaction;
+
     // HOSTING OR SUBLAYER, AND THE CHOICE IS NOT COSMETIC — it decides whether the view is ever
     // asked to draw at all.
     //
@@ -655,8 +734,16 @@ void gfx_present(void) {
         destinationOrigin:MTLOriginMake(0, 0, 0)];
     [blit endEncoding];
 
-    [gCommands presentDrawable:drawable];
-    [gCommands commit];
+    if (gPresentInTransaction) {
+        // Committed first, then presented by hand once the GPU work is scheduled, so the frame
+        // becomes visible as part of the same Core Animation transaction AppKit is running.
+        [gCommands commit];
+        [gCommands waitUntilScheduled];
+        [drawable present];
+    } else {
+        [gCommands presentDrawable:drawable];
+        [gCommands commit];
+    }
     gCommands = nil;
 }
 
@@ -664,7 +751,8 @@ void gfx_texture_free(uint32_t texture) {
     if ((texture == 0) || (texture >= MAX_TEXTURES)) {
         return;
     }
-    gTextures[texture] = nil;
+    gTextures[texture]     = nil;
+    gTextureFilter[texture] = eTextureNearest;
 }
 
 #endif // RENDER_BACKEND == RENDER_BACKEND_METAL
