@@ -20,32 +20,20 @@
 #ifndef RENDER_BACKEND_SELECT_H
 #define RENDER_BACKEND_SELECT_H
 
-// WHICH BACKEND GETS COMPILED, and it is chosen here rather than by the build system on purpose.
+// WHICH BACKEND THE APPLICATION STARTS WITH when nothing has been saved.
 //
-// The obvious arrangement is to let the project list one backend file and omit the other. That
-// does not survive this codebase: SynthLib/src is a PBXFileSystemSynchronizedRootGroup in all
-// three Xcode projects, so every .c file in it is compiled automatically and there is no list to
-// leave a file out of; and G2-Edit's do-vst3 keeps its source list BY HAND, so a file left out
-// there breaks only the plug-in and only at link time.
+// This header used to CHOOSE the backend, at compile time, with each backend file wrapped in an #if
+// that compiled it to nothing when it was not the one. Both are built now — the choice is made at
+// start-up from a saved setting so a user can try the other without a rebuild — so all that is left
+// here is the default, and renderBackendMetal.m is excluded only by being on a platform without
+// Metal.
 //
-// So each backend file wraps itself in one #if on RENDER_BACKEND, at file scope, and compiles to
-// nothing when it is not the chosen one. That is the ONLY conditional compilation in the drawing
-// code — there are no #ifdefs inside any function, and none at all in utilsGraphics.c, which is
-// the point of the split. Adding a backend is: write the file, add a constant here.
-//
-// Define RENDER_BACKEND in the build (e.g. -DRENDER_BACKEND=RENDER_BACKEND_METAL) to override.
+// OPENGL IS THE DEFAULT and should stay that way until Metal has had real use. It is the path that
+// has been in a host, it is the one that runs unchanged on Windows and Linux, and every call it
+// makes is OpenGL 1.1 or earlier.
 
-#define RENDER_BACKEND_GL       1
-#define RENDER_BACKEND_METAL    2
-
-#ifndef RENDER_BACKEND
-
-// OpenGL everywhere, still. It is deprecated on macOS but present, and on Windows and Linux it is
-// simply the native answer — every GL call the backend makes is OpenGL 1.1 or earlier, which no
-// driver on any of the three platforms has ever not had. Metal takes over as the macOS default
-// when renderBackendMetal.m exists and has been diffed against this one.
-#define RENDER_BACKEND    RENDER_BACKEND_GL
-
+#ifndef RENDER_BACKEND_DEFAULT
+ #define RENDER_BACKEND_DEFAULT    eRenderBackendOpenGL
 #endif
 
 #endif // RENDER_BACKEND_SELECT_H

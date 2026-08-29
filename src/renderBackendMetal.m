@@ -19,7 +19,10 @@
 
 #include "renderBackendSelect.h"
 
-#if RENDER_BACKEND == RENDER_BACKEND_METAL
+// PLATFORM, NOT PREFERENCE. This used to be guarded on which backend was chosen at compile time;
+// the choice is made at start-up now, so both are always built and the only thing that can exclude
+// this file is being on a platform without Metal — which is every platform except Apple's.
+#ifdef __APPLE__
 
 // ── The Metal backend ───────────────────────────────────────────────────────────────────────────
 //
@@ -29,7 +32,7 @@
 // IT RENDERS OFFSCREEN, and that is deliberate rather than a stepping stone left half-built. The
 // frame is drawn into a texture this file owns; a window layer will later blit that texture to a
 // CAMetalLayer drawable and present it. Two reasons it is built this way round:
-//   - gfx_read_pixels_rgb() — the backdoor SCREENSHOT, which is how every rendering change in this
+//   - mtl_read_pixels_rgb() — the backdoor SCREENSHOT, which is how every rendering change in this
 //     project gets proved — cannot read a drawable back reliably once it has been presented. An
 //     offscreen target makes the read trivial and keeps the verification method intact.
 //   - it means the DRAWING can be proved correct against the OpenGL backend, on the same machine,
@@ -41,7 +44,7 @@
 //   - Metal's clip space has y going UP, tVertex has y going DOWN. The vertex shader flips it —
 //     the job glOrtho(0, w, h, 0, ...) was doing in the GL backend.
 //   - Metal's SCISSOR and viewport origin is the TOP LEFT, which is already the tVertex origin, so
-//     gfx_scissor() needs no flip here at all. The GL backend needs one. Getting both right at the
+//     mtl_scissor() needs no flip here at all. The GL backend needs one. Getting both right at the
 //     same time is the trap: they are opposite, in the same file position, in the two backends.
 //   - a scissor rect that leaves the render target is a Metal VALIDATION FAILURE, where GL quietly
 //     clamped it. So it is clamped here, explicitly.
@@ -115,11 +118,11 @@ static id<MTLSamplerState>        gSamplerLin  = nil;   // linear, for the super
 static id<MTLTexture>             gWhite       = nil;   // 1x1 opaque white, for untextured draws
 static id<MTLTexture>             gTarget      = nil;   // the offscreen frame, resolved, readable
 static id<MTLTexture>             gMsaaTarget  = nil;   // what is actually rendered into, when > 1x
-static CAMetalLayer *             gLayer       = nil;   // nil until gfx_attach_window()
+static CAMetalLayer *             gLayer       = nil;   // nil until mtl_attach_window()
 
 // Whether presentation goes through the Core Animation transaction. YES when the layer is a
 // SUBLAYER of a view AppKit draws — the plug-in — and NO when we own the frame loop, which is the
-// application. See gfx_present().
+// application. See mtl_present().
 static bool                       gPresentInTransaction = false;
 static id<MTLCommandBuffer>       gCommands    = nil;
 static id<MTLRenderCommandEncoder> gEncoder    = nil;
@@ -145,6 +148,10 @@ static id<MTLTexture>  gTextures[MAX_TEXTURES]      = {nil};
 // remembered and turned into a sampler choice at draw time. Two samplers cover it; there is no
 // per-texture sampler object to keep.
 static tTextureFilter  gTextureFilter[MAX_TEXTURES] = {eTextureNearest};
+
+// Forward declaration: mtl_texture_alloc() fills a new texture through this, and now that the
+// entry points are file-local there is no header declaring them.
+static void mtl_texture_write(uint32_t texture, int x, int y, int width, int height, const uint8_t * rgba);
 
 static void metal_end_pass(void) {
     if (gEncoder != nil) {
@@ -197,7 +204,7 @@ static void metal_apply_scissor(void) {
 }
 
 // Opens a render pass if none is open. `clearColour` non-NULL clears, otherwise the existing
-// contents are kept — which is what makes gfx_submit() able to add to a frame gfx_clear() started.
+// contents are kept — which is what makes mtl_submit() able to add to a frame mtl_clear() started.
 static void metal_begin_pass(const tRgb * clearColour) {
     if (gEncoder != nil) {
         return;
@@ -240,7 +247,7 @@ static void metal_begin_pass(const tRgb * clearColour) {
     metal_apply_scissor();
 }
 
-void gfx_init(void) {
+static void mtl_init(void) {
     if (gDevice != nil) {
         return;
     }
@@ -274,7 +281,7 @@ void gfx_init(void) {
     desc.rasterSampleCount                               = GFX_MSAA_SAMPLES;
 #endif
 
-    // The session-wide blend that gfx_init() promises: straight (non-premultiplied) source alpha,
+    // The session-wide blend that mtl_init() promises: straight (non-premultiplied) source alpha,
     // exactly GL's glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA). There is no depth attachment
     // at all, which is this backend's way of saying what glDisable(GL_DEPTH_TEST) said.
     desc.colorAttachments[0].blendingEnabled             = YES;
@@ -319,8 +326,8 @@ void gfx_init(void) {
     [gWhite replaceRegion:MTLRegionMake2D(0, 0, 1, 1) mipmapLevel:0 withBytes:white bytesPerRow:4];
 }
 
-void gfx_set_surface(int width, int height) {
-    gfx_init();
+static void mtl_set_surface(int width, int height) {
+    mtl_init();
 
     if ((gDevice == nil) || (width <= 0) || (height <= 0)) {
         return;
@@ -351,8 +358,8 @@ void gfx_set_surface(int width, int height) {
 
 #if GFX_MSAA_SAMPLES > 1
     // A SECOND TARGET, because a multisampled texture is not readable and not presentable: it is
-    // rendered into and then RESOLVED down into gTarget, which is the one gfx_read_pixels_rgb()
-    // reads and gfx_present() blits. Private storage — nothing on the CPU ever touches it.
+    // rendered into and then RESOLVED down into gTarget, which is the one mtl_read_pixels_rgb()
+    // reads and mtl_present() blits. Private storage — nothing on the CPU ever touches it.
     MTLTextureDescriptor * msaa =
         [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
                                                            width:(NSUInteger)width
@@ -366,7 +373,7 @@ void gfx_set_surface(int width, int height) {
     gMsaaTarget      = [gDevice newTextureWithDescriptor:msaa];
 #endif
 
-    // The drawable has to match the target exactly, because gfx_present() blits one to the other
+    // The drawable has to match the target exactly, because mtl_present() blits one to the other
     // and a size mismatch is a validation failure rather than a scaled copy.
     if (gLayer != nil) {
         gLayer.drawableSize = CGSizeMake((CGFloat)width, (CGFloat)height);
@@ -393,9 +400,9 @@ void gfx_set_surface(int width, int height) {
     // the mapping itself, so this is the whole of what glViewport + glOrtho did.
 }
 
-void gfx_clear(tRgb colour) {
+static void mtl_clear(tRgb colour) {
     if (gDevice == nil) {
-        gfx_init();
+        mtl_init();
     }
     // A clear starts a frame, so the PREVIOUS frame is finished and can go to the GPU. Committing
     // here rather than waiting for a read-back is what keeps one command buffer per frame: without
@@ -412,7 +419,7 @@ void gfx_clear(tRgb colour) {
     metal_begin_pass(&colour);
 }
 
-void gfx_submit(const tVertex * verts, size_t count, uint32_t texture) {
+static void mtl_submit(const tVertex * verts, size_t count, uint32_t texture) {
     if ((verts == NULL) || (count == 0) || (gDevice == nil)) {
         return;
     }
@@ -454,7 +461,7 @@ void gfx_submit(const tVertex * verts, size_t count, uint32_t texture) {
     [gEncoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:count];
 }
 
-void gfx_scissor(int x, int y, int width, int height) {
+static void mtl_scissor(int x, int y, int width, int height) {
     if (width < 0) {
         gScissorOn = false;
     } else {
@@ -467,7 +474,7 @@ void gfx_scissor(int x, int y, int width, int height) {
     metal_apply_scissor();
 }
 
-bool gfx_read_pixels_rgb(int x, int y, int width, int height, uint8_t * out) {
+static bool mtl_read_pixels_rgb(int x, int y, int width, int height, uint8_t * out) {
     if ((width <= 0) || (height <= 0) || (out == NULL) || (gTarget == nil)) {
         return false;
     }
@@ -519,8 +526,8 @@ bool gfx_read_pixels_rgb(int x, int y, int width, int height, uint8_t * out) {
     return true;
 }
 
-uint32_t gfx_texture_alloc(int width, int height, const uint8_t * rgba, tTextureFilter filter) {
-    gfx_init();
+static uint32_t mtl_texture_alloc(int width, int height, const uint8_t * rgba, tTextureFilter filter) {
+    mtl_init();
 
     if ((gDevice == nil) || (width <= 0) || (height <= 0)) {
         return 0;
@@ -555,12 +562,12 @@ uint32_t gfx_texture_alloc(int width, int height, const uint8_t * rgba, tTexture
     gTextureFilter[slot] = filter;
 
     if (rgba != NULL) {
-        gfx_texture_write(slot, 0, 0, width, height, rgba);
+        mtl_texture_write(slot, 0, 0, width, height, rgba);
     }
     return slot;
 }
 
-void gfx_texture_write(uint32_t texture, int x, int y, int width, int height, const uint8_t * rgba) {
+static void mtl_texture_write(uint32_t texture, int x, int y, int width, int height, const uint8_t * rgba) {
     if ((texture == 0) || (texture >= MAX_TEXTURES) || (gTextures[texture] == nil)
        || (width <= 0) || (height <= 0) || (rgba == NULL)) {
         return;
@@ -590,8 +597,8 @@ void gfx_texture_write(uint32_t texture, int x, int y, int width, int height, co
     free(swapped);
 }
 
-void gfx_attach_window(void * nativeWindow) {
-    gfx_init();
+static void mtl_attach_window(void * nativeWindow) {
+    mtl_init();
 
     if ((gDevice == nil) || (nativeWindow == NULL)) {
         return;
@@ -619,7 +626,7 @@ void gfx_attach_window(void * nativeWindow) {
     gLayer.device           = gDevice;
     gLayer.pixelFormat      = MTLPixelFormatBGRA8Unorm;
 
-    // NOT framebuffer-only: gfx_present() blits INTO the drawable rather than rendering into it,
+    // NOT framebuffer-only: mtl_present() blits INTO the drawable rather than rendering into it,
     // and a framebuffer-only drawable cannot be a blit destination.
     gLayer.framebufferOnly   = NO;
 
@@ -694,7 +701,7 @@ void gfx_attach_window(void * nativeWindow) {
                                : [[NSScreen mainScreen] backingScaleFactor];
 
     // The layer fills the view. A layer-HOSTING view does not lay its layer out for you, and a
-    // plug-in view is resized by its host, so this is set again from gfx_set_surface().
+    // plug-in view is resized by its host, so this is set again from mtl_set_surface().
     gLayer.frame             = [view bounds];
 
     if ((gSurfaceWidth > 0) && (gSurfaceHeight > 0)) {
@@ -702,7 +709,7 @@ void gfx_attach_window(void * nativeWindow) {
     }
 }
 
-void gfx_present(void) {
+static void mtl_present(void) {
     if ((gLayer == nil) || (gTarget == nil)) {
         return;    // Offscreen-only build, or before the window exists: the frame simply stays put.
     }
@@ -719,7 +726,7 @@ void gfx_present(void) {
     }
     // A BLIT, not a second render pass. The frame already exists in gTarget — rendering it again
     // into the drawable would mean a full-screen quad, another pipeline and a sampler, to copy
-    // pixels that are already correct. The offscreen target is what makes gfx_read_pixels_rgb()
+    // pixels that are already correct. The offscreen target is what makes mtl_read_pixels_rgb()
     // work, so it earns its keep twice.
     id<MTLBlitCommandEncoder> blit = [gCommands blitCommandEncoder];
 
@@ -747,7 +754,7 @@ void gfx_present(void) {
     gCommands = nil;
 }
 
-void gfx_texture_free(uint32_t texture) {
+static void mtl_texture_free(uint32_t texture) {
     if ((texture == 0) || (texture >= MAX_TEXTURES)) {
         return;
     }
@@ -755,4 +762,24 @@ void gfx_texture_free(uint32_t texture) {
     gTextureFilter[texture] = eTextureNearest;
 }
 
-#endif // RENDER_BACKEND == RENDER_BACKEND_METAL
+// The table — the whole of what this file offers. Everything above it is static.
+static const tGfxBackend kMetalBackend = {
+    .name            = "Metal",
+    .init            = mtl_init,
+    .set_surface     = mtl_set_surface,
+    .clear           = mtl_clear,
+    .submit          = mtl_submit,
+    .scissor         = mtl_scissor,
+    .read_pixels_rgb = mtl_read_pixels_rgb,
+    .texture_alloc   = mtl_texture_alloc,
+    .texture_write   = mtl_texture_write,
+    .texture_free    = mtl_texture_free,
+    .attach_window   = mtl_attach_window,
+    .present         = mtl_present,
+};
+
+const tGfxBackend * gfx_backend_metal_table(void) {
+    return &kMetalBackend;
+}
+
+#endif // __APPLE__

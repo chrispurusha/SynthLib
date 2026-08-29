@@ -19,8 +19,6 @@
 
 #include "renderBackendSelect.h"
 
-#if RENDER_BACKEND == RENDER_BACKEND_GL
-
 // ── The OpenGL backend ──────────────────────────────────────────────────────────────────────────
 //
 // The nine functions of renderBackend.h, and THE ONLY FILE IN SYNTHLIB OR IN ANY OF THE THREE
@@ -52,14 +50,14 @@ extern "C" {
 #include "synthlibDefs.h"
 #include "renderBackend.h"
 
-// The surface height, remembered because gfx_scissor() needs it: GL's scissor origin is the
-// BOTTOM left where every coordinate handed to this file is top-left. gfx_set_surface() is always
+// The surface height, remembered because gl_scissor() needs it: GL's scissor origin is the
+// BOTTOM left where every coordinate handed to this file is top-left. gl_set_surface() is always
 // called with the same height as set_render_height() — both from synthlibScale.c in the
 // applications and from g2_gl_draw_frame() in the plug-in — but this file keeps its own rather
 // than reaching for that global, so the flip cannot silently disagree with the projection.
 static int gSurfaceHeight = 0;
 
-void gfx_init(void) {
+static void gl_init(void) {
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
@@ -78,7 +76,7 @@ void gfx_init(void) {
     glDisable(GL_DEPTH_TEST);
 }
 
-void gfx_set_surface(int width, int height) {
+static void gl_set_surface(int width, int height) {
     gSurfaceHeight = height;
 
     glViewport(0, 0, width, height);
@@ -92,12 +90,12 @@ void gfx_set_surface(int width, int height) {
     glLoadIdentity();
 }
 
-void gfx_clear(tRgb colour) {
+static void gl_clear(tRgb colour) {
     glClearColor((GLfloat)colour.red, (GLfloat)colour.green, (GLfloat)colour.blue, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
 }
 
-void gfx_submit(const tVertex * verts, size_t count, uint32_t texture) {
+static void gl_submit(const tVertex * verts, size_t count, uint32_t texture) {
     if ((verts == NULL) || (count == 0)) {
         return;
     }
@@ -130,7 +128,7 @@ void gfx_submit(const tVertex * verts, size_t count, uint32_t texture) {
     }
 }
 
-void gfx_scissor(int x, int y, int width, int height) {
+static void gl_scissor(int x, int y, int width, int height) {
     if (width < 0) {
         glDisable(GL_SCISSOR_TEST);
         return;
@@ -145,7 +143,7 @@ void gfx_scissor(int x, int y, int width, int height) {
     glScissor(x, gSurfaceHeight - (y + height), width, height);
 }
 
-bool gfx_read_pixels_rgb(int x, int y, int width, int height, uint8_t * out) {
+static bool gl_read_pixels_rgb(int x, int y, int width, int height, uint8_t * out) {
     if ((width <= 0) || (height <= 0) || (out == NULL)) {
         return false;
     }
@@ -159,7 +157,7 @@ bool gfx_read_pixels_rgb(int x, int y, int width, int height, uint8_t * out) {
     return true;
 }
 
-uint32_t gfx_texture_alloc(int width, int height, const uint8_t * rgba, tTextureFilter filter) {
+static uint32_t gl_texture_alloc(int width, int height, const uint8_t * rgba, tTextureFilter filter) {
     GLuint texture = 0;
 
     if ((width <= 0) || (height <= 0)) {
@@ -177,13 +175,13 @@ uint32_t gfx_texture_alloc(int width, int height, const uint8_t * rgba, tTexture
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
-    // Left unbound. gfx_submit() binds what it needs, so nothing depends on what happens to be
+    // Left unbound. gl_submit() binds what it needs, so nothing depends on what happens to be
     // bound when this returns.
     glBindTexture(GL_TEXTURE_2D, 0);
     return (uint32_t)texture;
 }
 
-void gfx_texture_write(uint32_t texture, int x, int y, int width, int height, const uint8_t * rgba) {
+static void gl_texture_write(uint32_t texture, int x, int y, int width, int height, const uint8_t * rgba) {
     if ((texture == 0) || (width <= 0) || (height <= 0) || (rgba == NULL)) {
         return;
     }
@@ -192,13 +190,13 @@ void gfx_texture_write(uint32_t texture, int x, int y, int width, int height, co
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
-void gfx_attach_window(void * nativeWindow) {
+static void gl_attach_window(void * nativeWindow) {
     // Nothing to do: GLFW created a context alongside the window and made it current before this
     // is reached, so the surface is already the one being drawn into. Metal has to be told.
     (void)nativeWindow;
 }
 
-void gfx_present(void) {
+static void gl_present(void) {
 #ifdef G2_VST3_BUILD
     // THE PLUG-IN HAS NO GLFW — not just no window, no library. It includes this file for the
     // drawing and gets its GL headers through glfw3.h, but nothing links libglfw, so naming
@@ -219,7 +217,7 @@ void gfx_present(void) {
 #endif
 }
 
-void gfx_texture_free(uint32_t texture) {
+static void gl_texture_free(uint32_t texture) {
     GLuint name = (GLuint)texture;
 
     if (texture == 0) {
@@ -228,8 +226,27 @@ void gfx_texture_free(uint32_t texture) {
     glDeleteTextures(1, &name);
 }
 
+// The table. These eleven are the whole of what this file offers; everything above is static, so
+// there is no way to reach OpenGL from anywhere else even by accident.
+static const tGfxBackend kGlBackend = {
+    .name            = "OpenGL",
+    .init            = gl_init,
+    .set_surface     = gl_set_surface,
+    .clear           = gl_clear,
+    .submit          = gl_submit,
+    .scissor         = gl_scissor,
+    .read_pixels_rgb = gl_read_pixels_rgb,
+    .texture_alloc   = gl_texture_alloc,
+    .texture_write   = gl_texture_write,
+    .texture_free    = gl_texture_free,
+    .attach_window   = gl_attach_window,
+    .present         = gl_present,
+};
+
+const tGfxBackend * gfx_backend_gl_table(void) {
+    return &kGlBackend;
+}
+
 #ifdef __cplusplus
 }
 #endif
-
-#endif // RENDER_BACKEND == RENDER_BACKEND_GL

@@ -32,6 +32,7 @@ extern "C" {
 #include "synthlibWindow.h"
 #include "synthlibDefs.h"
 #include "synthlibPersistence.h"
+#include "prefs.h"
 #include "inputState.h"
 #include "synthlibScale.h"
 #include "synthlibGlobals.h"
@@ -41,17 +42,29 @@ extern "C" {
 #include "utilsGraphics.h"
 
 // THE ONE PLACE A BACKEND CHANGES WHAT THE WINDOW IS, and it is a window concern rather than a
-// drawing one, which is why the #if lives here and not in the renderer. OpenGL wants GLFW to
-// create a context alongside the window and make it current. Metal wants GLFW to create no
-// context at all — GLFW_NO_API, the same hint a Vulkan application uses — and then takes the
-// NSWindow and puts a CAMetalLayer on it.
-#if RENDER_BACKEND != RENDER_BACKEND_GL
+// drawing one. OpenGL wants GLFW to create a context alongside the window and make it current.
+// Metal wants GLFW to create NO context at all — GLFW_NO_API, the same hint a Vulkan application
+// uses — and then takes the NSWindow and puts a CAMetalLayer on it.
+//
+// The tests below are RUNTIME, not #ifs, because both backends are in the binary and the choice
+// comes from a saved setting. This function being the difference between them is also why the
+// choice must be made before the window is created and cannot change while running.
+#ifdef __APPLE__
 #define GLFW_EXPOSE_NATIVE_COCOA    1
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Weverything"
 #include <GLFW/glfw3native.h>
 #pragma clang diagnostic pop
 #endif
+
+// The saved setting, read once at window creation. It lives in SynthLib rather than in each
+// application so all three get it from one place; an application only supplies the menu item that
+// writes it.
+#define PREFS_KEY_RENDER_BACKEND    "renderBackend"
+
+static bool backend_is_opengl(void) {
+    return gfx_backend_current() == eRenderBackendOpenGL;
+}
 
 // The window minimum, as a divisor of the design size. 640x360 for a 2560x1440 target, and still
 // exactly the locked 16:9. The old TARGET/8 allowed a 320pt window, which on a 1x display is a 320px
@@ -259,18 +272,27 @@ void * synthlib_window_create(const tSynthLibWindowConfig * config, const tSynth
     glfwWindowHint(GLFW_COCOA_RETINA_FRAMEBUFFER, GLFW_TRUE);
     glfwWindowHint(GLFW_COCOA_GRAPHICS_SWITCHING, GLFW_TRUE);  // Needed for Intel systems with discrete graphics
 
-#if (RENDER_BACKEND == RENDER_BACKEND_GL) && (GFX_MSAA_SAMPLES > 1)
-    // Under OpenGL the multisample buffer belongs to the PIXEL FORMAT, so it has to be asked for
-    // before the context exists — there is no enabling it later. Metal has no equivalent here: its
-    // sample count is a property of the render pass and the pipeline, set in the backend.
-    glfwWindowHint(GLFW_SAMPLES, GFX_MSAA_SAMPLES);
-#endif
+    // THE CHOICE, made before anything is created. An unavailable saved value leaves the default
+    // standing rather than failing — a preference file is not a thing to refuse to start over.
+    long savedBackend = prefs_get_int(PREFS_KEY_RENDER_BACKEND, (long)RENDER_BACKEND_DEFAULT);
 
-#if RENDER_BACKEND != RENDER_BACKEND_GL
-    // No context, no drawable, no swap chain — GLFW is reduced to a window and an event source,
-    // which is exactly what is wanted. Everything below that touches a context is skipped.
-    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    if (!gfx_backend_choose((tRenderBackendId)savedBackend)) {
+        LOG_ERROR("Saved render backend %ld unavailable; using %s\n",
+                  savedBackend, gfx_backend_name(gfx_backend_current()));
+    }
+
+    if (backend_is_opengl()) {
+#if GFX_MSAA_SAMPLES > 1
+        // Under OpenGL the multisample buffer belongs to the PIXEL FORMAT, so it has to be asked
+        // for before the context exists — there is no enabling it later. Metal has no equivalent
+        // here: its sample count is a property of the render pass and the pipeline.
+        glfwWindowHint(GLFW_SAMPLES, GFX_MSAA_SAMPLES);
 #endif
+    } else {
+        // No context, no drawable, no swap chain — GLFW is reduced to a window and an event
+        // source, which is exactly what is wanted.
+        glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    }
 
     window = glfwCreateWindow(config->targetWidth / minDivisor, config->targetHeight / minDivisor,
                               config->title, NULL, NULL);
@@ -284,9 +306,9 @@ void * synthlib_window_create(const tSynthLibWindowConfig * config, const tSynth
                             GLFW_DONT_CARE, GLFW_DONT_CARE);
     glfwSetWindowAspectRatio(window, config->targetWidth, config->targetHeight);
 
-#if RENDER_BACKEND == RENDER_BACKEND_GL
-    glfwMakeContextCurrent(window);
-#endif
+    if (backend_is_opengl()) {
+        glfwMakeContextCurrent(window);
+    }
 
     // Real initial scale for whichever display the window opens on, not the 2.0 (Retina-only)
     // assumption this used to hardcode — see content_scale_callback() above.
@@ -300,11 +322,11 @@ void * synthlib_window_create(const tSynthLibWindowConfig * config, const tSynth
     glfwSetWindowSizeCallback(window, window_size_callback);
     glfwSetWindowPosCallback(window, window_pos_callback);
     glfwSetWindowCloseCallback(window, window_close_callback);
-#if RENDER_BACKEND == RENDER_BACKEND_GL
-    // Vsync. There is no context to set it on under any other backend; a CAMetalLayer is
-    // synchronised to the display by default instead.
-    glfwSwapInterval(1);
-#endif
+    if (backend_is_opengl()) {
+        // Vsync. There is no context to set it on under any other backend; a CAMetalLayer says the
+        // same thing with displaySyncEnabled, which renderBackendMetal.m sets explicitly.
+        glfwSwapInterval(1);
+    }
 
     if (gCallbacks.key != NULL) {
         glfwSetKeyCallback(window, gCallbacks.key);
@@ -338,11 +360,15 @@ void * synthlib_window_create(const tSynthLibWindowConfig * config, const tSynth
     // layer no longer names a graphics API of its own.
     render_backend_init();
 
-#if RENDER_BACKEND != RENDER_BACKEND_GL
-    // The backend gets the NSWindow to present into. AFTER render_backend_init(), so the device
-    // the layer is given is the one the frames are rendered with, and after the framebuffer size
-    // is known, so the drawable is sized correctly on the first frame rather than the second.
-    gfx_attach_window(glfwGetCocoaWindow(window));
+#ifdef __APPLE__
+
+    if (!backend_is_opengl()) {
+        // The backend gets the NSWindow to present into. AFTER render_backend_init(), so the
+        // device the layer is given is the one the frames are rendered with, and after the
+        // framebuffer size is known, so the drawable is sized on the first frame not the second.
+        gfx_attach_window(glfwGetCocoaWindow(window));
+    }
+
 #endif
 
     return (void *)window;

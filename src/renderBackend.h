@@ -82,6 +82,63 @@ typedef struct {
     float r, g, b, a;  // per-vertex colour; render_bezier_curve() genuinely varies it along a strip
 } tVertex;
 
+// How a texture is sampled. Declared here, above the backend table that names it — see the
+// Textures section below for why there is a choice at all.
+typedef enum {
+    eTextureNearest = 0,   // one texel per pixel — the glyph atlas at normal sizes, and the LCD
+    eTextureLinear  = 1,   // sampled at a scale that is not 1:1 — the supersampled small-text atlas
+} tTextureFilter;
+
+// ── Choosing one ────────────────────────────────────────────────────────────
+//
+// BOTH BACKENDS ARE COMPILED IN and one is chosen at start-up, so a user can try the other without
+// a rebuild. That is why each backend's entry points are file-local and reached only through this
+// table: two files defining gfx_init() would not link, and the alternative — a compile-time #if
+// picking one — is what this replaced.
+//
+// The indirection costs one call through a pointer PER BATCH SUBMISSION, not per primitive. A
+// frame makes a few dozen of those, so it is free in any sense that matters.
+//
+// IT CANNOT CHANGE WHILE RUNNING. The window itself is built differently for each: OpenGL needs
+// GLFW to create a context alongside it, Metal needs GLFW to create none (GLFW_NO_API) and then
+// takes the NSWindow. Switching means destroying and recreating the window, and with it the
+// context, every glyph atlas and texture, and all the callbacks established around it. So the
+// choice is read once, before the window is made, and a change takes effect on the next launch.
+
+typedef enum {
+    eRenderBackendOpenGL = 0,
+    eRenderBackendMetal  = 1,
+} tRenderBackendId;
+
+typedef struct {
+    const char * name;
+    void     (*init)(void);
+    void     (*set_surface)(int width, int height);
+    void     (*clear)(tRgb colour);
+    void     (*submit)(const tVertex * verts, size_t count, uint32_t texture);
+    void     (*scissor)(int x, int y, int width, int height);
+    bool     (*read_pixels_rgb)(int x, int y, int width, int height, uint8_t * out);
+    uint32_t (*texture_alloc)(int width, int height, const uint8_t * rgba, tTextureFilter filter);
+    void     (*texture_write)(uint32_t texture, int x, int y, int width, int height, const uint8_t * rgba);
+    void     (*texture_free)(uint32_t texture);
+    void     (*attach_window)(void * nativeWindow);
+    void     (*present)(void);
+} tGfxBackend;
+
+// True if this build can actually run that backend — Metal is macOS only, and nothing else exists
+// on Windows or Linux, where renderBackendMetal.m compiles to nothing.
+bool             gfx_backend_available(tRenderBackendId which);
+
+// Selects it. MUST be called before the window is created, because the window layer asks which
+// backend is in force to decide whether to make a context at all. False if unavailable, leaving
+// the previous choice standing.
+bool             gfx_backend_choose(tRenderBackendId which);
+
+tRenderBackendId gfx_backend_current(void);
+const char *     gfx_backend_name(tRenderBackendId which);
+
+// ── The calls themselves ────────────────────────────────────────────────────
+
 // Session-wide drawing state. Called once, after a surface is current and before anything is
 // drawn. BLENDING IS ON FOR THE WHOLE SESSION and no drawing code ever turns it off: an opaque
 // draw resolves to the source colour either way, so the invariant costs opaque drawing nothing
@@ -136,11 +193,6 @@ bool gfx_read_pixels_rgb(int x, int y, int width, int height, uint8_t * out);
 // for one "because both callers blit one texel per pixel" and that a filter should be added "then,
 // with the case in front of you". The case arrived: small text is now rasterized at twice its
 // drawn size and scaled down, which point sampling would simply throw half the texels away.
-typedef enum {
-    eTextureNearest = 0,   // one texel per pixel — the glyph atlas at normal sizes, and the LCD
-    eTextureLinear  = 1,   // sampled at a scale that is not 1:1 — the supersampled small-text atlas
-} tTextureFilter;
-
 uint32_t gfx_texture_alloc(int width, int height, const uint8_t * rgba, tTextureFilter filter);  // rgba may be NULL
 void gfx_texture_write(uint32_t texture, int x, int y, int width, int height, const uint8_t * rgba);
 void gfx_texture_free(uint32_t texture);
