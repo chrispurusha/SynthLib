@@ -112,30 +112,30 @@ typedef enum {
 
 typedef struct {
     const char * name;
-    void     (*init)(void);
-    void     (*set_surface)(int width, int height);
-    void     (*clear)(tRgb colour);
-    void     (*submit)(const tVertex * verts, size_t count, uint32_t texture);
-    void     (*scissor)(int x, int y, int width, int height);
-    bool     (*read_pixels_rgb)(int x, int y, int width, int height, uint8_t * out);
+    void (*init)(void);
+    void (*set_surface)(int width, int height);
+    void (*clear)(tRgb colour);
+    void (*submit)(const tVertex * verts, size_t count, uint32_t texture);
+    void (*scissor)(int x, int y, int width, int height);
+    bool (*read_pixels_rgb)(int x, int y, int width, int height, uint8_t * out);
     uint32_t (*texture_alloc)(int width, int height, const uint8_t * rgba, tTextureFilter filter);
-    void     (*texture_write)(uint32_t texture, int x, int y, int width, int height, const uint8_t * rgba);
-    void     (*texture_free)(uint32_t texture);
-    void     (*attach_window)(void * nativeWindow);
-    void     (*present)(void);
+    void (*texture_write)(uint32_t texture, int x, int y, int width, int height, const uint8_t * rgba);
+    void (*texture_free)(uint32_t texture);
+    void (*attach_window)(void * nativeWindow);
+    void (*present)(void);
 } tGfxBackend;
 
 // True if this build can actually run that backend — Metal is macOS only, and nothing else exists
 // on Windows or Linux, where renderBackendMetal.m compiles to nothing.
-bool             gfx_backend_available(tRenderBackendId which);
+bool gfx_backend_available(tRenderBackendId which);
 
 // Selects it. MUST be called before the window is created, because the window layer asks which
 // backend is in force to decide whether to make a context at all. False if unavailable, leaving
 // the previous choice standing.
-bool             gfx_backend_choose(tRenderBackendId which);
+bool gfx_backend_choose(tRenderBackendId which);
 
 tRenderBackendId gfx_backend_current(void);
-const char *     gfx_backend_name(tRenderBackendId which);
+const char * gfx_backend_name(tRenderBackendId which);
 
 // ── The calls themselves ────────────────────────────────────────────────────
 

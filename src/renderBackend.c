@@ -60,13 +60,10 @@ bool gfx_backend_available(tRenderBackendId which) {
     if (which == eRenderBackendOpenGL) {
         return true;    // renderBackendGL.c is OpenGL 1.1 and builds everywhere
     }
-
 #ifdef __APPLE__
-
     if (which == eRenderBackendMetal) {
         return true;
     }
-
 #endif
     return false;
 }

@@ -293,7 +293,6 @@ void * synthlib_window_create(const tSynthLibWindowConfig * config, const tSynth
         // source, which is exactly what is wanted.
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     }
-
     window = glfwCreateWindow(config->targetWidth / minDivisor, config->targetHeight / minDivisor,
                               config->title, NULL, NULL);
     synthlib_set_window((void *)window);
@@ -309,7 +308,6 @@ void * synthlib_window_create(const tSynthLibWindowConfig * config, const tSynth
     if (backend_is_opengl()) {
         glfwMakeContextCurrent(window);
     }
-
     // Real initial scale for whichever display the window opens on, not the 2.0 (Retina-only)
     // assumption this used to hardcode — see content_scale_callback() above.
     synthlib_scale_query_initial(window);
@@ -322,6 +320,7 @@ void * synthlib_window_create(const tSynthLibWindowConfig * config, const tSynth
     glfwSetWindowSizeCallback(window, window_size_callback);
     glfwSetWindowPosCallback(window, window_pos_callback);
     glfwSetWindowCloseCallback(window, window_close_callback);
+
     if (backend_is_opengl()) {
         // Vsync. There is no context to set it on under any other backend; a CAMetalLayer says the
         // same thing with displaySyncEnabled, which renderBackendMetal.m sets explicitly.
@@ -361,14 +360,12 @@ void * synthlib_window_create(const tSynthLibWindowConfig * config, const tSynth
     render_backend_init();
 
 #ifdef __APPLE__
-
     if (!backend_is_opengl()) {
         // The backend gets the NSWindow to present into. AFTER render_backend_init(), so the
         // device the layer is given is the one the frames are rendered with, and after the
         // framebuffer size is known, so the drawable is sized on the first frame not the second.
         gfx_attach_window(glfwGetCocoaWindow(window));
     }
-
 #endif
 
     return (void *)window;

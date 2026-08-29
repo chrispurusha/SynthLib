@@ -33,7 +33,7 @@
 // makes is OpenGL 1.1 or earlier.
 
 #ifndef RENDER_BACKEND_DEFAULT
- #define RENDER_BACKEND_DEFAULT    eRenderBackendOpenGL
+#define RENDER_BACKEND_DEFAULT    eRenderBackendOpenGL
 #endif
 
 #endif // RENDER_BACKEND_SELECT_H
