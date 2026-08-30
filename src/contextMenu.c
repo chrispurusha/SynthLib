@@ -400,7 +400,10 @@ static void render_menu_frame(const tMenuFrame * frameData, tCoord mouseCoord) {
             }
         };
 
-        if (within_rectangle(mouseCoord, menuItem)) {
+        // Not while the pointer is captured for a drag - the coordinate is a relative-delta
+        // accumulator then, not a place on screen. Same reason as menuBar.c; unlikely to be reached
+        // (a drag and an open menu rarely coexist) but the defect is identical.
+        if (!synthlib_host_pointer_captured() && within_rectangle(mouseCoord, menuItem)) {
             set_rgb_colour((tRgb)RGB_BLACK);
             render_line(mainArea, (tCoord){menuItem.coord.x, menuItem.coord.y}, (tCoord){menuItem.coord.x + menuItem.size.w, menuItem.coord.y}, 1);
             render_line(mainArea, (tCoord){menuItem.coord.x + menuItem.size.w, menuItem.coord.y}, (tCoord){menuItem.coord.x + menuItem.size.w, menuItem.coord.y + menuItem.size.h}, 1);

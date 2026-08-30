@@ -80,13 +80,14 @@ typedef struct {
 } tSynthLibInputHandlers;
 
 typedef struct {
-    const char *          title;       // the whole title, composed by the app: it owns __DATE__/__TIME__
-    int                   targetWidth; // design-space framebuffer size, and the locked aspect ratio
-    int                   targetHeight;
-    int                   minDivisor;  // window minimum is target/this; 0 means the shared default of 4
-    tDialMode             dialMode;    // G2-Edit is rotary, the other two vertical
-    tSynthLibTheme        theme;       // built from the app's own colour/metric macros
-    tSynthLibMouseCoordFn mouseCoord;  // synthlib_host_init's injection point, see synthlibHost.h
+    const char *               title;           // the whole title, composed by the app: it owns __DATE__/__TIME__
+    int                        targetWidth;     // design-space framebuffer size, and the locked aspect ratio
+    int                        targetHeight;
+    int                        minDivisor;      // window minimum is target/this; 0 means the shared default of 4
+    tDialMode                  dialMode;        // G2-Edit is rotary, the other two vertical
+    tSynthLibTheme             theme;           // built from the app's own colour/metric macros
+    tSynthLibMouseCoordFn      mouseCoord;      // synthlib_host_init's injection point, see synthlibHost.h
+    tSynthLibPointerCapturedFn pointerCaptured; // ditto: true while a drag has the pointer hidden
 
     // Normalised handlers. When non-NULL, SynthLib installs its own GLFW shims for the events these
     // cover, and the matching raw callbacks are ignored — see tSynthLibInputHandlers above.

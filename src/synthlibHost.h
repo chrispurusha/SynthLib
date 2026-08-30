@@ -36,8 +36,16 @@ extern "C" {
 // retired; only the mouse-coord half remains app-specific.
 typedef void (*tSynthLibMouseCoordFn)(tCoord * coord);
 
+// True while the host has the pointer CAPTURED for a drag - hidden, and reporting a relative-delta
+// accumulator rather than a real on-screen point. During such a drag the reported coordinate drifts
+// wherever the accumulated deltas take it, so ANY hover highlight computed from it lights the wrong
+// thing: drag a dial far enough and the menu bar lights up under a cursor that is not there.
+// Optional - a host that never hides the pointer leaves it NULL and nothing changes.
+typedef bool (*tSynthLibPointerCapturedFn)(void);
+
 typedef struct {
-    tSynthLibMouseCoordFn mouseCoord; // NULL if the app never opens a mechanism that needs it
+    tSynthLibMouseCoordFn      mouseCoord;      // NULL if the app never opens a mechanism that needs it
+    tSynthLibPointerCapturedFn pointerCaptured; // NULL if the app never hides the pointer
 } tSynthLibHost;
 
 // Call once, before any SynthLib UI mechanism (contextMenu, menuBar, alertDialog, bankBrowser,
@@ -48,6 +56,10 @@ void synthlib_host_init(tSynthLibHost host);
 // Writes {0, 0} into *coord if synthlib_host_init() was never called, or was called with
 // mouseCoord == NULL, rather than leaving it uninitialised.
 void synthlib_host_mouse_coord(tCoord * coord);
+
+// Whether the pointer is currently captured for a drag. False when the host supplied no predicate,
+// so a caller can use it unconditionally. Hover highlighting must consult this - see the note above.
+bool synthlib_host_pointer_captured(void);
 
 #ifdef __cplusplus
 }

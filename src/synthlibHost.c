@@ -45,6 +45,10 @@ void synthlib_host_mouse_coord(tCoord * coord) {
     }
 }
 
+bool synthlib_host_pointer_captured(void) {
+    return (sHost.pointerCaptured != NULL) ? sHost.pointerCaptured() : false;
+}
+
 #ifdef __cplusplus
 }
 #endif

@@ -260,7 +260,8 @@ void * synthlib_window_create(const tSynthLibWindowConfig * config, const tSynth
     // Injection point for the mouse-coord query every SynthLib popup/panel file (contextMenu.c,
     // menuBar.c, alertDialog.c, bankBrowser.cpp, fileBrowser.cpp) needs — see synthlibHost.h.
     synthlib_host_init((tSynthLibHost){
-        .mouseCoord = config->mouseCoord,
+        .mouseCoord      = config->mouseCoord,
+        .pointerCaptured = config->pointerCaptured,
     });
     synthlib_scale_init(config->targetWidth);
 
