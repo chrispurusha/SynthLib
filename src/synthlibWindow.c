@@ -269,7 +269,13 @@ void * synthlib_window_create(const tSynthLibWindowConfig * config, const tSynth
     if (!glfwInit()) {
         exit(EXIT_FAILURE);
     }
-    glfwWindowHint(GLFW_COCOA_RETINA_FRAMEBUFFER, GLFW_TRUE);
+    // GLFW_SCALE_FRAMEBUFFER, not GLFW_COCOA_RETINA_FRAMEBUFFER. The old name is a LEGACY ALIAS,
+    // not a deprecated behaviour: glfwWindowHint() falls both through to the same
+    // _glfw.hints.window.scaleFramebuffer (glfw/src/window.c), so this is a rename and nothing more.
+    // The new name is the honest one — the hint stopped being macOS-specific in GLFW 3.4, and a
+    // Windows or Linux build wants it too, which is the point at which the Cocoa name would have
+    // started to mislead. Needs GLFW >= 3.4; the bundled copy is 3.5.1.
+    glfwWindowHint(GLFW_SCALE_FRAMEBUFFER, GLFW_TRUE);
     glfwWindowHint(GLFW_COCOA_GRAPHICS_SWITCHING, GLFW_TRUE);  // Needed for Intel systems with discrete graphics
 
     // THE CHOICE, made before anything is created. An unavailable saved value leaves the default
