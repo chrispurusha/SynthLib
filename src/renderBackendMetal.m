@@ -110,43 +110,72 @@ static NSString * const kShaderSource =
 
 // ── State ───────────────────────────────────────────────────────────────────
 
+// ── Per GPU, shared by every window ─────────────────────────────────────────
+//
+// These are properties of the Metal device, not of any surface, so several windows share one set.
+// The texture table is deliberately among them: the glyph atlas is the largest thing in it and
+// there is no sense in every open editor building its own.
 static id<MTLDevice>              gDevice      = nil;
 static id<MTLCommandQueue>        gQueue       = nil;
 static id<MTLRenderPipelineState> gPipeline    = nil;
 static id<MTLSamplerState>        gSampler     = nil;   // nearest
 static id<MTLSamplerState>        gSamplerLin  = nil;   // linear, for the supersampled text atlas
 static id<MTLTexture>             gWhite       = nil;   // 1x1 opaque white, for untextured draws
-static id<MTLTexture>             gTarget      = nil;   // the offscreen frame, resolved, readable
-static id<MTLTexture>             gMsaaTarget  = nil;   // what is actually rendered into, when > 1x
-static CAMetalLayer *             gLayer       = nil;   // nil until mtl_attach_window()
 
-// Whether presentation goes through the Core Animation transaction. YES when the layer is a
-// SUBLAYER of a view AppKit draws — the plug-in — and NO when we own the frame loop, which is the
-// application. See mtl_present().
-static bool                       gPresentInTransaction = false;
-static id<MTLCommandBuffer>       gCommands    = nil;
-static id<MTLRenderCommandEncoder> gEncoder    = nil;
-
-static int    gSurfaceWidth  = 0;
-static int    gSurfaceHeight = 0;
-
-// The scissor, remembered because it can be set while no encoder is open (module_pane_clip_begin()
-// flushes first, which ends the pass) and has to be reapplied when the next one opens.
-static bool gScissorOn = false;
-static int  gScissorX  = 0;
-static int  gScissorY  = 0;
-static int  gScissorW  = 0;
-static int  gScissorH  = 0;
-
-// The texture table. A handle is an INDEX, not a pointer: renderBackend.h promises callers a
-// uint32_t, and an id<MTLTexture> does not fit in one. Slot 0 is never handed out so that 0 can
-// keep meaning "no texture". Freed slots go back to nil and are reused.
 #define MAX_TEXTURES    (64)
 static id<MTLTexture>  gTextures[MAX_TEXTURES]      = {nil};
 
-// Metal separates the sampler from the texture, so the filter a texture was created with has to be
-// remembered and turned into a sampler choice at draw time. Two samplers cover it; there is no
-// per-texture sampler object to keep.
+// ── Per window ──────────────────────────────────────────────────────────────
+//
+// EVERY ONE OF THESE USED TO BE A GLOBAL, which quietly limited the process to a single window.
+// That was true of an application and false of a plug-in: a host may open two editors, and the
+// second attach simply overwrote the first's layer, leaving the first drawing nowhere. It did not
+// crash, which made it harder to notice, not easier.
+//
+// The surface, its render targets, the in-flight command buffer and the scissor all belong to one
+// window. The body of this file is unchanged: the names below are macros onto whichever context is
+// current, so the several hundred lines of drawing code neither know nor care that there is more
+// than one.
+#define MAX_METAL_WINDOWS    (8)
+
+typedef struct {
+    void *                             native;   // the NSView or NSWindow this belongs to
+    CAMetalLayer *                     layer;
+    id<MTLTexture>                     target;
+    id<MTLTexture>                     msaaTarget;
+    int                                surfaceWidth;
+    int                                surfaceHeight;
+    bool                               presentInTransaction;
+    id<MTLCommandBuffer>               commands;
+    id<MTLRenderCommandEncoder>        encoder;
+    bool                               scissorOn;
+    int                                scissorX;
+    int                                scissorY;
+    int                                scissorW;
+    int                                scissorH;
+} tMetalWindow;
+
+static tMetalWindow   gWindows[MAX_METAL_WINDOWS];
+
+// ALWAYS VALID, never NULL. It starts pointing at an empty slot whose layer is nil, so every
+// existing "if (gLayer == nil) return;" guard in this file keeps working untouched before anything
+// has been attached.
+static tMetalWindow * gW = &gWindows[0];
+
+#define gLayer                  (gW->layer)
+#define gTarget                 (gW->target)
+#define gMsaaTarget             (gW->msaaTarget)
+#define gSurfaceWidth           (gW->surfaceWidth)
+#define gSurfaceHeight          (gW->surfaceHeight)
+#define gPresentInTransaction   (gW->presentInTransaction)
+#define gCommands               (gW->commands)
+#define gEncoder                (gW->encoder)
+#define gScissorOn              (gW->scissorOn)
+#define gScissorX               (gW->scissorX)
+#define gScissorY               (gW->scissorY)
+#define gScissorW               (gW->scissorW)
+#define gScissorH               (gW->scissorH)
+
 static tTextureFilter  gTextureFilter[MAX_TEXTURES] = {eTextureNearest};
 
 // Forward declaration: mtl_texture_alloc() fills a new texture through this, and now that the
@@ -597,12 +626,76 @@ static void mtl_texture_write(uint32_t texture, int x, int y, int width, int hei
     free(swapped);
 }
 
+// Find the context for a native window, or NULL. Slots are matched on the native pointer, which is
+// the only stable identity a window has here.
+static tMetalWindow * metal_window_for(void * nativeWindow) {
+    for (int i = 0; i < MAX_METAL_WINDOWS; i++) {
+        if (gWindows[i].native == nativeWindow) {
+            return &gWindows[i];
+        }
+    }
+
+    return NULL;
+}
+
+// Release everything a window owns. Called when its view goes away - without it a host that opens
+// and closes editors would exhaust the slots, since each new view is a different pointer.
+static void mtl_detach_window(void * nativeWindow) {
+    tMetalWindow * window = metal_window_for(nativeWindow);
+
+    if ((window == NULL) || (nativeWindow == NULL)) {
+        return;
+    }
+
+    window->layer      = nil;
+    window->target     = nil;
+    window->msaaTarget = nil;
+    window->commands   = nil;
+    window->encoder    = nil;
+    window->native     = NULL;
+
+    window->surfaceWidth  = 0;
+    window->surfaceHeight = 0;
+
+    // If the window being torn down was the current one, fall back to any other attached window,
+    // and to the empty slot 0 if there is none. gW must never dangle.
+    if (gW == window) {
+        gW = &gWindows[0];
+
+        for (int i = 0; i < MAX_METAL_WINDOWS; i++) {
+            if (gWindows[i].native != NULL) {
+                gW = &gWindows[i];
+                break;
+            }
+        }
+    }
+}
+
 static void mtl_attach_window(void * nativeWindow) {
     mtl_init();
 
     if ((gDevice == nil) || (nativeWindow == NULL)) {
         return;
     }
+
+    // ALREADY KNOWN MEANS SELECT IT, NOT REBUILD IT. Each open editor calls this before it draws,
+    // so this is the hot path for switching between two of them; making a fresh CAMetalLayer every
+    // time would be both wasteful and wrong, since the old one is still on screen.
+    tMetalWindow * existing = metal_window_for(nativeWindow);
+
+    if (existing != NULL) {
+        gW = existing;
+        return;
+    }
+
+    tMetalWindow * slot = metal_window_for(NULL);
+
+    if (slot == NULL) {
+        return;         // more windows than MAX_METAL_WINDOWS; nothing sensible to do
+    }
+
+    gW         = slot;
+    gW->native = nativeWindow;
     // EITHER AN NSWindow OR AN NSView, and it has to be both because the two callers differ. The
     // application hands over the NSWindow it got from glfwGetCocoaWindow() — GLFW made that window
     // with GLFW_CLIENT_API = GLFW_NO_API, so it has no context and no drawable of its own, which is
@@ -775,6 +868,7 @@ static const tGfxBackend kMetalBackend = {
     .texture_write   = mtl_texture_write,
     .texture_free    = mtl_texture_free,
     .attach_window   = mtl_attach_window,
+    .detach_window   = mtl_detach_window,
     .present         = mtl_present,
 };
 

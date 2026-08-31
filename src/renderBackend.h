@@ -122,6 +122,7 @@ typedef struct {
     void (*texture_write)(uint32_t texture, int x, int y, int width, int height, const uint8_t * rgba);
     void (*texture_free)(uint32_t texture);
     void (*attach_window)(void * nativeWindow);
+    void (*detach_window)(void * nativeWindow);      // may be NULL for backends with one window
     void (*present)(void);
 } tGfxBackend;
 
@@ -204,6 +205,10 @@ void gfx_texture_free(uint32_t texture);
 // OpenGL one, where GLFW has already created a context and made it current before this is reached
 // — ignores it.
 void gfx_attach_window(void * nativeWindow);
+
+// Releases whatever a window owned. Call it when the surface goes away - a plug-in editor being
+// closed, say. Backends that only ever have one window may leave this unimplemented.
+void gfx_detach_window(void * nativeWindow);
 
 // Puts the finished frame on screen. Called once per frame by render_present(), which submits the
 // batch first. NOT called by the VST3 plug-in: a plug-in draws into a view the HOST presents, so

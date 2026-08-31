@@ -127,6 +127,12 @@ void gfx_attach_window(void * nativeWindow) {
     backend()->attach_window(nativeWindow);
 }
 
+void gfx_detach_window(void * nativeWindow) {
+    if (backend()->detach_window != NULL) {
+        backend()->detach_window(nativeWindow);
+    }
+}
+
 void gfx_present(void) {
     backend()->present();
 }
