@@ -71,7 +71,7 @@ void write_uint16(uint8_t * buff, uint16_t val) {
 
 // Called from both threads — re-entrant (no shared state).
 uint32_t read_bit_stream(uint8_t * buff, uint32_t * bitPos, uint32_t numBits) {
-    int      i   = 0;
+    uint32_t i   = 0;
     uint32_t val = 0;
 
     if ((buff == NULL) || (bitPos == NULL) || (numBits == 0)) {
