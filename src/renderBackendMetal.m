@@ -51,6 +51,7 @@
 
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
+#import <QuartzCore/CATransaction.h>    // implicit layer animations are turned off around geometry
 #import <AppKit/AppKit.h>
 
 #include <stdlib.h>
@@ -405,6 +406,18 @@ static void mtl_set_surface(int width, int height) {
     // The drawable has to match the target exactly, because mtl_present() blits one to the other
     // and a size mismatch is a validation failure rather than a scaled copy.
     if (gLayer != nil) {
+        // NO IMPLICIT ANIMATION ON LAYER GEOMETRY. frame and drawableSize are animatable CALayer
+        // properties, so a bare assignment enrols them in the default 0.25s action - and during a
+        // live window resize that is a new animation every frame, each one starting from where the
+        // last had got to. The window edge moves at once and the contents crawl after it, arriving
+        // only once the drag stops, which is exactly what it looked like: "the components only seem
+        // to be resized after the window resize completes".
+        //
+        // A layer inside a plug-in is a SUBLAYER of the host view's layer - see mtl_attach_window -
+        // so nothing lays it out for us and there is no free ride from the view's own resizing.
+        [CATransaction begin];
+        [CATransaction setDisableActions:YES];
+
         gLayer.drawableSize = CGSizeMake((CGFloat)width, (CGFloat)height);
 
         // THE LAYER'S SIZE IS DERIVED FROM THE DRAWABLE, not from the view, and that is the whole
@@ -423,6 +436,7 @@ static void mtl_set_surface(int width, int height) {
                                       (CGFloat)width / gLayer.contentsScale,
                                       (CGFloat)height / gLayer.contentsScale);
         }
+        [CATransaction commit];
     }
 
     // There is no projection matrix to set: the vertex shader is handed the surface size and does
@@ -790,6 +804,9 @@ static void mtl_attach_window(void * nativeWindow) {
     // at half resolution on a Retina display. A plug-in view may not be in a window yet when the
     // host attaches it, so fall back to the main screen rather than to 1.0 — being wrong by a
     // factor of two is far more visible than being wrong about which display.
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];    // as in mtl_set_surface: geometry must not animate
+
     gLayer.contentsScale     = (window != nil) ? [window backingScaleFactor]
                                : [[NSScreen mainScreen] backingScaleFactor];
 
@@ -800,6 +817,7 @@ static void mtl_attach_window(void * nativeWindow) {
     if ((gSurfaceWidth > 0) && (gSurfaceHeight > 0)) {
         gLayer.drawableSize = CGSizeMake((CGFloat)gSurfaceWidth, (CGFloat)gSurfaceHeight);
     }
+    [CATransaction commit];
 }
 
 static void mtl_present(void) {
