@@ -135,10 +135,17 @@ typedef struct _struct_menuItem {
 // One visible level of the menu — the top-level menu plus zero or more
 // submenu flyouts opened beneath it (see push_menu_frame() in contextMenu.c).
 typedef struct {
-    tCoord      coord;      // Position of this level (may be clamped to stay on screen)
-    tMenuItem * items;      // Pointer to a NULL-terminated array of menu items
-    uint32_t    columns;    // 0 or 1 = single column; >1 = multi-column grid
-    double      cellWidth;  // Override cell width when non-zero
+    tCoord      coord;       // Position of this level (may be clamped to stay on screen)
+    tMenuItem * items;       // Pointer to a NULL-terminated array of menu items
+    uint32_t    columns;     // 0 or 1 = single column; >1 = multi-column grid
+    double      cellWidth;   // Override cell width when non-zero
+
+    // SCROLLING, for a list too long to fit the window. visibleRows is the number of rows this
+    // frame may actually show - equal to its total rows whenever everything fits, in which case
+    // nothing about the frame scrolls and scrollRow stays 0. Both are worked out by contextMenu.c
+    // when the frame is pushed and re-checked as the window resizes; an app never sets them.
+    int32_t     visibleRows; // Rows that fit; < total means the frame scrolls
+    double      scrollRow;   // Index of the first visible row
 } tMenuFrame;
 
 typedef struct {

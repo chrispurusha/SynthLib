@@ -42,6 +42,12 @@ tContextMenu gContextMenu = {0};
 // frame[0] is the original top-level menu, frame[depth-1] the deepest open
 // flyout. Every level stays visible and clickable while a deeper one is open.
 
+// Forward declarations: the scroll strips are consulted by handle_context_menu_click(), which sits
+// above the scrolling block that defines them - and moving that block up would put the geometry
+// helpers it depends on further from the geometry they belong with.
+static int  menu_edge_zone(const tMenuFrame * frame, tCoord coord);
+static void context_menu_scroll_frame(tMenuFrame * frame, double rows);
+
 static double menu_cell_width(const tMenuFrame * frame) {
     if (frame->cellWidth > 0.0) {
         return frame->cellWidth;
@@ -64,6 +70,41 @@ static uint32_t menu_columns(const tMenuFrame * frame) {
     return (frame->columns > 1) ? frame->columns : 1;
 }
 
+// HOW MANY ROWS THIS FRAME HAS, and how many of them fit below where it opens.
+//
+// A menu that will not fit used to be MOVED up until it did, and once it was taller than the window
+// that failed silently: it landed at the top and the surplus ran off the bottom, drawn nowhere and
+// clickable never. That is fine while every list is short and becomes a correctness bug the moment
+// one is not - a device list is as long as the machine says it is.
+static int32_t menu_total_rows(const tMenuFrame * frame) {
+    int      count   = 0;
+    uint32_t columns = menu_columns(frame);
+
+    while (frame->items[count].label != NULL) {
+        count++;
+    }
+
+    return (int32_t)(((uint32_t)count + columns - 1) / columns);
+}
+
+static double menu_cell_height(void) {
+    return STANDARD_TEXT_HEIGHT + (5 * 2);
+}
+
+// The rows that fit between where the frame sits and the bottom of the window. Never less than one -
+// a frame opened right at the bottom edge is moved up by clamp_menu_to_screen() rather than being
+// given zero rows to draw.
+static int32_t menu_rows_that_fit(double topY) {
+    double available = (get_render_height() / gGlobalGuiScale) - SCROLLBAR_WIDTH - topY;
+    int32_t rows     = (int32_t)(available / menu_cell_height());
+
+    return (rows < 1) ? 1 : rows;
+}
+
+static bool menu_scrolls(const tMenuFrame * frame) {
+    return (frame->visibleRows > 0) && (frame->visibleRows < menu_total_rows(frame));
+}
+
 static tRectangle menu_item_rect(const tMenuFrame * frame, int index) {
     double   cellW   = menu_cell_width(frame);
     double   cellH   = STANDARD_TEXT_HEIGHT + (5 * 2);
@@ -73,7 +114,8 @@ static tRectangle menu_item_rect(const tMenuFrame * frame, int index) {
 
     return (tRectangle){
         {
-            frame->coord.x + col * cellW, frame->coord.y + row * cellH
+            frame->coord.x + col * cellW,
+            frame->coord.y + ((double)row - frame->scrollRow) * cellH
         },
         {
             cellW, cellH
@@ -81,10 +123,23 @@ static tRectangle menu_item_rect(const tMenuFrame * frame, int index) {
     };
 }
 
+// Is this item within the scrolled view? Everything outside is neither drawn nor hit - without the
+// second half a click could land on an item that is not on screen.
+static bool menu_row_visible(const tMenuFrame * frame, int index) {
+    int32_t row = index / (int)menu_columns(frame);
+
+    if (frame->visibleRows <= 0) {
+        return true;
+    }
+
+    return ((double)row >= frame->scrollRow)
+           && ((double)row < (frame->scrollRow + (double)frame->visibleRows));
+}
+
 // Returns the index of the item in frame that contains coord, or -1.
 static int32_t menu_hit_test(const tMenuFrame * frame, tCoord coord) {
     for (int i = 0; frame->items[i].label != NULL; i++) {
-        if (within_rectangle(coord, menu_item_rect(frame, i))) {
+        if (menu_row_visible(frame, i) && within_rectangle(coord, menu_item_rect(frame, i))) {
             return i;
         }
     }
@@ -105,12 +160,32 @@ static void clamp_menu_to_screen(tMenuFrame * frame) {
     int      rows         = (count + (int)cols - 1) / (int)cols;
     double   menuHeight   = rows * cellH;
 
+    // MOVE IT UP FIRST, and only scroll what still will not fit. Sliding a menu up costs the user
+    // nothing, while scrolling costs them a gesture - so a list that fits anywhere on screen is
+    // never made to scroll merely because it opened low down.
     if (frame->coord.y + menuHeight > (renderHeight - SCROLLBAR_WIDTH)) {
         frame->coord.y = (renderHeight - SCROLLBAR_WIDTH) - menuHeight;
     }
 
     if (frame->coord.y < 0.0) {
         frame->coord.y = 0.0;
+    }
+    frame->visibleRows = menu_rows_that_fit(frame->coord.y);
+
+    if (frame->visibleRows > rows) {
+        frame->visibleRows = rows;      // everything fits; nothing about this frame scrolls
+    }
+
+    // Keep the offset inside the list, which also matters on a RESIZE: a window made shorter while
+    // a menu is open reduces visibleRows under a scrollRow that was valid a frame ago.
+    double maxScroll = (double)(rows - frame->visibleRows);
+
+    if (frame->scrollRow > maxScroll) {
+        frame->scrollRow = maxScroll;
+    }
+
+    if (frame->scrollRow < 0.0) {
+        frame->scrollRow = 0.0;
     }
     double   menuWidth    = menu_cell_width(frame) * (double)cols;
 
@@ -139,7 +214,7 @@ static void cancel_pending_collapse(void) {
 void open_context_menu(tCoord coord, tMenuItem * items, uint32_t columns, double cellWidth) {
     cancel_pending_collapse();
     gContextMenu.frame[0]       = (tMenuFrame){
-        coord, items, columns, cellWidth
+        coord, items, columns, cellWidth, 0, 0.0
     };
     gContextMenu.depth          = 1;
     gContextMenu.active         = true;
@@ -177,7 +252,7 @@ static void push_menu_frame(tCoord coord, tMenuItem * items, uint32_t columns, d
         return;
     }
     gContextMenu.frame[gContextMenu.depth] = (tMenuFrame){
-        coord, items, columns, cellWidth
+        coord, items, columns, cellWidth, 0, 0.0
     };
     gContextMenu.depth++;
     clamp_menu_to_screen(&gContextMenu.frame[gContextMenu.depth - 1]);
@@ -204,6 +279,18 @@ bool handle_context_menu_click(tCoord coord) {
 
     for (int f = (int)gContextMenu.depth - 1; f >= 0; f--) {
         tMenuFrame * frame = &gContextMenu.frame[f];
+
+        // A CLICK IN A SCROLL STRIP SCROLLS RATHER THAN CHOOSING, which is what a menu does
+        // everywhere else and is also the only way the strips are usable with a trackpad: a tap
+        // reports a position and no motion, so without this the tap would pick whatever item happens
+        // to sit under the strip. A page at a time, less one row of overlap so nothing is stepped
+        // over between pages.
+        int zone = menu_edge_zone(frame, coord);
+
+        if (zone != 0) {
+            context_menu_scroll_frame(frame, (double)zone * (double)(frame->visibleRows - 1));
+            return true;
+        }
         int32_t      index = menu_hit_test(frame, coord);
 
         if (index < 0) {
@@ -242,6 +329,107 @@ bool handle_context_menu_click(tCoord coord) {
 // exactly as a click would. Hovering a different item at a still-visible
 // ancestor level collapses whatever flyout was open beneath it, same as real
 // menus.
+// HOW A MENU TOO LONG TO FIT IS SCROLLED.
+//
+// Hovering the top or bottom edge of a scrolling frame scrolls it, continuously, while the pointer
+// stays there. That is what a macOS menu does when it outgrows the screen, and it is the right shape
+// for this code for a second reason: it needs nothing but the pointer position, which
+// update_context_menu_hover() is already given every frame. A dragged scrollbar - SynthLib's own
+// idiom for the file and bank browsers - would need mouse-up delivered to the menu, and no app
+// routes that here today.
+//
+// The strip is one cell tall, so it is exactly as big as the thing it scrolls by, and it is only
+// live on a frame that actually scrolls: a menu that fits has no edge behaviour at all.
+#define MENU_SCROLL_ROWS_PER_SEC    (12.0)
+
+// Which scroll strip a point is in: -1 top, +1 bottom, 0 neither. Only ever non-zero on a frame that
+// scrolls AND in the direction there is more to see, so the bottom strip stops being live once the
+// end of the list is reached and the last row becomes an ordinary item again.
+static int menu_edge_zone(const tMenuFrame * frame, tCoord coord) {
+    if (!menu_scrolls(frame)) {
+        return 0;
+    }
+    double cellH   = menu_cell_height();
+    double width   = menu_cell_width(frame) * (double)menu_columns(frame);
+    double top     = frame->coord.y;
+    double bottom  = top + ((double)frame->visibleRows * cellH);
+    double maximum = (double)(menu_total_rows(frame) - frame->visibleRows);
+
+    if ((coord.x < frame->coord.x) || (coord.x > (frame->coord.x + width))) {
+        return 0;
+    }
+
+    if ((coord.y >= top) && (coord.y < (top + cellH)) && (frame->scrollRow > 0.0)) {
+        return -1;
+    }
+
+    if ((coord.y <= bottom) && (coord.y > (bottom - cellH)) && (frame->scrollRow < maximum)) {
+        return 1;
+    }
+
+    return 0;
+}
+
+static double sLastScrollTime = 0.0;
+
+static void update_menu_edge_scroll(tCoord mouseCoord) {
+    double now     = get_time_ms() / 1000.0;
+    double elapsed = now - sLastScrollTime;
+
+    sLastScrollTime = now;
+
+    // A frame that has just opened, or a stalled render loop, must not jump the list.
+    if ((elapsed <= 0.0) || (elapsed > 0.25)) {
+        return;
+    }
+
+    for (uint32_t f = 0; f < gContextMenu.depth; f++) {
+        tMenuFrame * frame = &gContextMenu.frame[f];
+
+        if (!menu_scrolls(frame)) {
+            continue;
+        }
+        int    zone    = menu_edge_zone(frame, mouseCoord);
+        double maximum = (double)(menu_total_rows(frame) - frame->visibleRows);
+
+        if (zone == 0) {
+            continue;
+        }
+        frame->scrollRow += (double)zone * MENU_SCROLL_ROWS_PER_SEC * elapsed;
+
+        if (frame->scrollRow < 0.0) {
+            frame->scrollRow = 0.0;
+        } else if (frame->scrollRow > maximum) {
+            frame->scrollRow = maximum;
+        }
+        synthlib_request_redraw();
+    }
+}
+
+static void context_menu_scroll_frame(tMenuFrame * frame, double rows) {
+    if (!menu_scrolls(frame)) {
+        return;
+    }
+    double maximum = (double)(menu_total_rows(frame) - frame->visibleRows);
+
+    frame->scrollRow += rows;
+
+    if (frame->scrollRow < 0.0) {
+        frame->scrollRow = 0.0;
+    } else if (frame->scrollRow > maximum) {
+        frame->scrollRow = maximum;
+    }
+    synthlib_request_redraw();
+}
+
+void context_menu_scroll(double rows) {
+    if (!gContextMenu.active || (gContextMenu.depth == 0)) {
+        return;
+    }
+    // The deepest frame, which is the one the pointer is working in.
+    context_menu_scroll_frame(&gContextMenu.frame[gContextMenu.depth - 1], rows);
+}
+
 void update_context_menu_hover(void) {
     if (gContextMenu.active == false) {
         return;
@@ -249,6 +437,12 @@ void update_context_menu_hover(void) {
     tCoord  mouseCoord   = {0};
 
     synthlib_host_mouse_coord(&mouseCoord);
+
+    // BEFORE the hit test below, so the item reported as hovered is the one under the pointer AFTER
+    // this frame's scroll rather than the one that was there before it.
+    if (!synthlib_host_pointer_captured()) {
+        update_menu_edge_scroll(mouseCoord);
+    }
 
     int32_t hitFrame     = -1;
     int32_t hitIndex     = -1;
@@ -353,17 +547,17 @@ static void render_menu_frame(const tMenuFrame * frameData, tCoord mouseCoord) {
     double     cellH       = itemHeight + (5 * 2);
 
     for (int i = 0; frameData->items[i].label != NULL; i++) {
-        int    col = (int)(i % columns);
-        int    row = (int)(i / columns);
-        double x   = frameData->coord.x + col * cellW;
-        double y   = frameData->coord.y + row * cellH;
-        menuItem = (tRectangle){
-            {
-                x, y
-            }, {
-                cellW, cellH
-            }
-        };
+        // ONE GEOMETRY FUNCTION. Both passes below used to recompute the cell rectangle inline,
+        // which was a second and a third copy of menu_item_rect() - and the moment a frame could
+        // scroll, three copies would have had to learn about it together or the menu would draw in
+        // one place and be clickable in another.
+        if (!menu_row_visible(frameData, i)) {
+            continue;
+        }
+        menuItem = menu_item_rect(frameData, i);
+
+        double x = menuItem.coord.x;
+        double y = menuItem.coord.y;
 
         set_rgb_colour(frameData->items[i].colour);
         render_rectangle(mainArea, menuItem);
@@ -388,17 +582,10 @@ static void render_menu_frame(const tMenuFrame * frameData, tCoord mouseCoord) {
     }
 
     for (int i = 0; frameData->items[i].label != NULL; i++) {
-        int    col = (int)(i % columns);
-        int    row = (int)(i / columns);
-        double x   = frameData->coord.x + col * cellW;
-        double y   = frameData->coord.y + row * cellH;
-        menuItem = (tRectangle){
-            {
-                x, y
-            }, {
-                cellW, cellH
-            }
-        };
+        if (!menu_row_visible(frameData, i)) {
+            continue;
+        }
+        menuItem = menu_item_rect(frameData, i);
 
         // Not while the pointer is captured for a drag - the coordinate is a relative-delta
         // accumulator then, not a place on screen. Same reason as menuBar.c; unlikely to be reached
@@ -418,6 +605,48 @@ static void render_menu_frame(const tMenuFrame * frameData, tCoord mouseCoord) {
     }
 }
 
+// THE STANDARD AFFORDANCE FOR A MENU THAT DOES NOT FIT: a strip at the edge with a chevron in it,
+// exactly where a macOS menu puts its scroll arrow, drawn OVER the first or last visible row.
+//
+// Overdrawing a row is not a loss, because a strip is only live while there is more in that
+// direction - reach the end of the list and the bottom strip goes inactive, the row beneath it stops
+// being swallowed, and the last item is clickable again. So every item is still reachable, which is
+// the whole reason the scrolling exists.
+static void render_menu_scroll_strips(const tMenuFrame * frame) {
+    if (!menu_scrolls(frame)) {
+        return;
+    }
+    double cellH   = menu_cell_height();
+    double width   = menu_cell_width(frame) * (double)menu_columns(frame);
+    double top     = frame->coord.y;
+    double bottom  = top + ((double)frame->visibleRows * cellH);
+    double maximum = (double)(menu_total_rows(frame) - frame->visibleRows);
+    double midX    = frame->coord.x + (width / 2.0);
+    double arm     = 6.0;
+
+    for (int edge = 0; edge < 2; edge++) {
+        bool   isTop = (edge == 0);
+        bool   live  = isTop ? (frame->scrollRow > 0.0) : (frame->scrollRow < maximum);
+
+        if (!live) {
+            continue;
+        }
+        double stripY = isTop ? top : (bottom - cellH);
+
+        set_rgb_colour((tRgb)RGB_GREY_2);
+        render_rectangle(mainArea, (tRectangle){ { frame->coord.x, stripY }, { width, cellH } });
+
+        // A chevron rather than a glyph: the atlas is ASCII, and "^"/"v" read as punctuation at this
+        // size rather than as a direction.
+        double  tipY  = isTop ? (stripY + (cellH * 0.35)) : (stripY + (cellH * 0.65));
+        double  baseY = isTop ? (stripY + (cellH * 0.65)) : (stripY + (cellH * 0.35));
+
+        set_rgb_colour((tRgb)RGB_WHITE);
+        render_line(mainArea, (tCoord){ midX - arm, baseY }, (tCoord){ midX, tipY }, 1.5);
+        render_line(mainArea, (tCoord){ midX, tipY }, (tCoord){ midX + arm, baseY }, 1.5);
+    }
+}
+
 void render_context_menu(void) {
     tCoord mouseCoord = {0};
 
@@ -428,6 +657,7 @@ void render_context_menu(void) {
 
     for (uint32_t f = 0; f < gContextMenu.depth; f++) {
         render_menu_frame(&gContextMenu.frame[f], mouseCoord);
+        render_menu_scroll_strips(&gContextMenu.frame[f]);
     }
 }
 

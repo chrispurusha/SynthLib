@@ -64,6 +64,11 @@ bool handle_context_menu_click(tCoord coord);
 bool context_menu_contains(tCoord coord);
 
 void update_context_menu_hover(void);
+
+// Scroll the open menu by a number of ROWS, positive = further down the list. For an app that routes
+// a scroll wheel; hovering the top or bottom edge of a menu that does not fit already scrolls it
+// without this, so an app that never calls it still reaches every item.
+void context_menu_scroll(double rows);
 void render_context_menu(void);
 
 tCoord below_rect(tRectangle r);
