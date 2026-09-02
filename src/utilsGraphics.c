@@ -645,6 +645,75 @@ static void internal_render_circle_line_part_angle(tCoord coord, double radius, 
     }
 }
 
+// ── UTF-8, reduced to the glyph table ────────────────────────────────────────
+//
+// THE ATLAS HOLDS ASCII ONLY (see MAX_GLYPH_CHAR), and every byte above it used to be replaced by
+// '?' one byte at a time. A single em dash is three bytes of UTF-8, so a perfectly ordinary status
+// line — "Sent — the connected device's live edit buffer..." — reached the screen as "Sent ??? the
+// connected...". Owner-reported on SynthEdit's restore alert, but nothing about it was specific to
+// that string: the source of all three apps carries around ninety em dashes inside string literals,
+// and any of them that reaches a drawn string does the same thing.
+//
+// So a whole UTF-8 sequence is consumed at once and turned into ONE glyph. The handful of
+// codepoints that actually occur in these apps' strings get a sensible ASCII stand-in; anything
+// else still becomes a single '?', which is a fair report of "this font has no such character"
+// rather than a count of how many bytes it took to encode.
+//
+// Not a general Unicode layer, and deliberately not: the fix needed is that non-ASCII punctuation
+// stops multiplying, and a transliteration table does that in one place. Real non-Latin text would
+// need a real font atlas, which is a different job.
+typedef struct {
+    unsigned char glyph;    // what to draw from the ASCII atlas
+    uint32_t      bytes;    // how many bytes of the input this consumed; never 0
+} tGlyphStep;
+
+static tGlyphStep next_glyph(const char * ch) {
+    unsigned char first = (unsigned char)ch[0];
+
+    if (first < MAX_GLYPH_CHAR) {
+        return (tGlyphStep){first, 1};
+    }
+    // Decode one UTF-8 sequence. A truncated or malformed one consumes its lead byte only, so a
+    // corrupt string still terminates rather than walking off the end.
+    uint32_t codePoint = 0;
+    uint32_t length    = 0;
+
+    if ((first & 0xE0) == 0xC0) {
+        codePoint = first & 0x1Fu;
+        length    = 2;
+    } else if ((first & 0xF0) == 0xE0) {
+        codePoint = first & 0x0Fu;
+        length    = 3;
+    } else if ((first & 0xF8) == 0xF0) {
+        codePoint = first & 0x07u;
+        length    = 4;
+    } else {
+        return (tGlyphStep){'?', 1};
+    }
+
+    for (uint32_t i = 1; i < length; i++) {
+        if ((ch[i] & 0xC0) != 0x80) {
+            return (tGlyphStep){'?', 1};
+        }
+        codePoint = (codePoint << 6) | ((unsigned char)ch[i] & 0x3Fu);
+    }
+
+    switch (codePoint) {
+        case 0x2013:            // en dash
+        case 0x2014: return (tGlyphStep){'-', length};   // em dash — by far the common one here
+        case 0x2018:
+        case 0x2019: return (tGlyphStep){'\'', length};  // curly single quotes
+        case 0x201C:
+        case 0x201D: return (tGlyphStep){'"', length};   // curly double quotes
+        case 0x2022: return (tGlyphStep){'*', length};   // bullet
+        case 0x00B0: return (tGlyphStep){'o', length};   // degree
+        case 0x00D7: return (tGlyphStep){'x', length};   // multiplication sign
+        case 0x2192: return (tGlyphStep){'>', length};   // rightwards arrow
+        case 0x00A0: return (tGlyphStep){' ', length};   // non-breaking space
+        default:     return (tGlyphStep){'?', length};
+    }
+}
+
 static void internal_render_text(tRectangle rectangle, const char * text) {
     double        scaleFactor = 0.0;
     const char *  ch          = NULL;
@@ -705,12 +774,9 @@ static void internal_render_text(tRectangle rectangle, const char * text) {
     ch = text;
 
     while (*ch) {
-        // char is signed here, so anything above 127 would index the glyph table negatively
-        unsigned char character = (unsigned char)*ch;
-
-        if (character >= MAX_GLYPH_CHAR) {
-            character = '?';
-        }
+        // A whole UTF-8 sequence at a time, not a byte — see next_glyph().
+        tGlyphStep    step      = next_glyph(ch);
+        unsigned char character = step.glyph;
         GlyphInfo *   glyph     = &atlas->info[character];
 
         // Texture coordinates for the glyph
@@ -739,7 +805,7 @@ static void internal_render_text(tRectangle rectangle, const char * text) {
         }
         xCharOffset += gCanonInfo[character].advance_x * scaleFactor;
 
-        ch++;
+        ch         += step.bytes;
     }
 }
 
@@ -1879,9 +1945,14 @@ double get_text_width(const char * text, double targetHeight, tCache useCache) {
     double       width = 0.0;
     const char * ch    = text;
 
+    // Walked with next_glyph(), exactly as render_text() walks it. If these two ever disagree about
+    // how many glyphs a string is, every centred label and every width-fitted box is wrong by the
+    // difference — so the decode lives in one function and both callers use it.
     while (*ch) {
-        width += get_char_width(*ch, targetHeight);
-        ch++;
+        tGlyphStep step = next_glyph(ch);
+
+        width += get_char_width((char)step.glyph, targetHeight);
+        ch    += step.bytes;
     }
 
     if ((useCache == eCache) && (gTextWidthCacheCount < TEXT_WIDTH_CACHE_SIZE)) {
