@@ -668,15 +668,17 @@ typedef struct {
 } tGlyphStep;
 
 static tGlyphStep next_glyph(const char * ch) {
-    unsigned char first = (unsigned char)ch[0];
+    unsigned char first     = (unsigned char)ch[0];
 
     if (first < MAX_GLYPH_CHAR) {
-        return (tGlyphStep){first, 1};
+        return (tGlyphStep){
+            first, 1
+        };
     }
     // Decode one UTF-8 sequence. A truncated or malformed one consumes its lead byte only, so a
     // corrupt string still terminates rather than walking off the end.
-    uint32_t codePoint = 0;
-    uint32_t length    = 0;
+    uint32_t      codePoint = 0;
+    uint32_t      length    = 0;
 
     if ((first & 0xE0) == 0xC0) {
         codePoint = first & 0x1Fu;
@@ -688,29 +690,59 @@ static tGlyphStep next_glyph(const char * ch) {
         codePoint = first & 0x07u;
         length    = 4;
     } else {
-        return (tGlyphStep){'?', 1};
+        return (tGlyphStep){
+            '?', 1
+        };
     }
 
     for (uint32_t i = 1; i < length; i++) {
         if ((ch[i] & 0xC0) != 0x80) {
-            return (tGlyphStep){'?', 1};
+            return (tGlyphStep){
+                '?', 1
+            };
         }
         codePoint = (codePoint << 6) | ((unsigned char)ch[i] & 0x3Fu);
     }
 
     switch (codePoint) {
         case 0x2013:            // en dash
-        case 0x2014: return (tGlyphStep){'-', length};   // em dash — by far the common one here
+        case 0x2014: return (tGlyphStep){
+                '-', length
+            };                                           // em dash — by far the common one here
+
         case 0x2018:
-        case 0x2019: return (tGlyphStep){'\'', length};  // curly single quotes
+        case 0x2019: return (tGlyphStep){
+                '\'', length
+            };                                           // curly single quotes
+
         case 0x201C:
-        case 0x201D: return (tGlyphStep){'"', length};   // curly double quotes
-        case 0x2022: return (tGlyphStep){'*', length};   // bullet
-        case 0x00B0: return (tGlyphStep){'o', length};   // degree
-        case 0x00D7: return (tGlyphStep){'x', length};   // multiplication sign
-        case 0x2192: return (tGlyphStep){'>', length};   // rightwards arrow
-        case 0x00A0: return (tGlyphStep){' ', length};   // non-breaking space
-        default:     return (tGlyphStep){'?', length};
+        case 0x201D: return (tGlyphStep){
+                '"', length
+            };                                           // curly double quotes
+
+        case 0x2022: return (tGlyphStep){
+                '*', length
+            };                                           // bullet
+
+        case 0x00B0: return (tGlyphStep){
+                'o', length
+            };                                           // degree
+
+        case 0x00D7: return (tGlyphStep){
+                'x', length
+            };                                           // multiplication sign
+
+        case 0x2192: return (tGlyphStep){
+                '>', length
+            };                                           // rightwards arrow
+
+        case 0x00A0: return (tGlyphStep){
+                ' ', length
+            };                                           // non-breaking space
+
+        default:     return (tGlyphStep){
+                '?', length
+            };
     }
 }
 
@@ -805,7 +837,7 @@ static void internal_render_text(tRectangle rectangle, const char * text) {
         }
         xCharOffset += gCanonInfo[character].advance_x * scaleFactor;
 
-        ch         += step.bytes;
+        ch          += step.bytes;
     }
 }
 

@@ -144,8 +144,8 @@ typedef struct {
     // frame may actually show - equal to its total rows whenever everything fits, in which case
     // nothing about the frame scrolls and scrollRow stays 0. Both are worked out by contextMenu.c
     // when the frame is pushed and re-checked as the window resizes; an app never sets them.
-    int32_t     visibleRows; // Rows that fit; < total means the frame scrolls
-    double      scrollRow;   // Index of the first visible row
+    int32_t visibleRows;     // Rows that fit; < total means the frame scrolls
+    double  scrollRow;       // Index of the first visible row
 } tMenuFrame;
 
 typedef struct {

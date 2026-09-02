@@ -45,7 +45,7 @@ tContextMenu gContextMenu = {0};
 // Forward declarations: the scroll strips are consulted by handle_context_menu_click(), which sits
 // above the scrolling block that defines them - and moving that block up would put the geometry
 // helpers it depends on further from the geometry they belong with.
-static int  menu_edge_zone(const tMenuFrame * frame, tCoord coord);
+static int menu_edge_zone(const tMenuFrame * frame, tCoord coord);
 static void context_menu_scroll_frame(tMenuFrame * frame, double rows);
 
 static double menu_cell_width(const tMenuFrame * frame) {
@@ -83,7 +83,6 @@ static int32_t menu_total_rows(const tMenuFrame * frame) {
     while (frame->items[count].label != NULL) {
         count++;
     }
-
     return (int32_t)(((uint32_t)count + columns - 1) / columns);
 }
 
@@ -95,8 +94,8 @@ static double menu_cell_height(void) {
 // a frame opened right at the bottom edge is moved up by clamp_menu_to_screen() rather than being
 // given zero rows to draw.
 static int32_t menu_rows_that_fit(double topY) {
-    double available = (get_render_height() / gGlobalGuiScale) - SCROLLBAR_WIDTH - topY;
-    int32_t rows     = (int32_t)(available / menu_cell_height());
+    double  available = (get_render_height() / gGlobalGuiScale) - SCROLLBAR_WIDTH - topY;
+    int32_t rows      = (int32_t)(available / menu_cell_height());
 
     return (rows < 1) ? 1 : rows;
 }
@@ -131,7 +130,6 @@ static bool menu_row_visible(const tMenuFrame * frame, int index) {
     if (frame->visibleRows <= 0) {
         return true;
     }
-
     return ((double)row >= frame->scrollRow)
            && ((double)row < (frame->scrollRow + (double)frame->visibleRows));
 }
@@ -175,10 +173,9 @@ static void clamp_menu_to_screen(tMenuFrame * frame) {
     if (frame->visibleRows > rows) {
         frame->visibleRows = rows;      // everything fits; nothing about this frame scrolls
     }
-
     // Keep the offset inside the list, which also matters on a RESIZE: a window made shorter while
     // a menu is open reduces visibleRows under a scrollRow that was valid a frame ago.
-    double maxScroll = (double)(rows - frame->visibleRows);
+    double   maxScroll    = (double)(rows - frame->visibleRows);
 
     if (frame->scrollRow > maxScroll) {
         frame->scrollRow = maxScroll;
@@ -285,7 +282,7 @@ bool handle_context_menu_click(tCoord coord) {
         // reports a position and no motion, so without this the tap would pick whatever item happens
         // to sit under the strip. A page at a time, less one row of overlap so nothing is stepped
         // over between pages.
-        int zone = menu_edge_zone(frame, coord);
+        int          zone  = menu_edge_zone(frame, coord);
 
         if (zone != 0) {
             context_menu_scroll_frame(frame, (double)zone * (double)(frame->visibleRows - 1));
@@ -366,7 +363,6 @@ static int menu_edge_zone(const tMenuFrame * frame, tCoord coord) {
     if ((coord.y <= bottom) && (coord.y > (bottom - cellH)) && (frame->scrollRow < maximum)) {
         return 1;
     }
-
     return 0;
 }
 
@@ -384,13 +380,13 @@ static void update_menu_edge_scroll(tCoord mouseCoord) {
     }
 
     for (uint32_t f = 0; f < gContextMenu.depth; f++) {
-        tMenuFrame * frame = &gContextMenu.frame[f];
+        tMenuFrame * frame   = &gContextMenu.frame[f];
 
         if (!menu_scrolls(frame)) {
             continue;
         }
-        int    zone    = menu_edge_zone(frame, mouseCoord);
-        double maximum = (double)(menu_total_rows(frame) - frame->visibleRows);
+        int          zone    = menu_edge_zone(frame, mouseCoord);
+        double       maximum = (double)(menu_total_rows(frame) - frame->visibleRows);
 
         if (zone == 0) {
             continue;
@@ -443,7 +439,6 @@ void update_context_menu_hover(void) {
     if (!synthlib_host_pointer_captured()) {
         update_menu_edge_scroll(mouseCoord);
     }
-
     int32_t hitFrame     = -1;
     int32_t hitIndex     = -1;
 
@@ -625,8 +620,8 @@ static void render_menu_scroll_strips(const tMenuFrame * frame) {
     double arm     = 6.0;
 
     for (int edge = 0; edge < 2; edge++) {
-        bool   isTop = (edge == 0);
-        bool   live  = isTop ? (frame->scrollRow > 0.0) : (frame->scrollRow < maximum);
+        bool   isTop  = (edge == 0);
+        bool   live   = isTop ? (frame->scrollRow > 0.0) : (frame->scrollRow < maximum);
 
         if (!live) {
             continue;
@@ -634,16 +629,16 @@ static void render_menu_scroll_strips(const tMenuFrame * frame) {
         double stripY = isTop ? top : (bottom - cellH);
 
         set_rgb_colour((tRgb)RGB_GREY_2);
-        render_rectangle(mainArea, (tRectangle){ { frame->coord.x, stripY }, { width, cellH } });
+        render_rectangle(mainArea, (tRectangle){{frame->coord.x, stripY}, {width, cellH}});
 
         // A chevron rather than a glyph: the atlas is ASCII, and "^"/"v" read as punctuation at this
         // size rather than as a direction.
-        double  tipY  = isTop ? (stripY + (cellH * 0.35)) : (stripY + (cellH * 0.65));
-        double  baseY = isTop ? (stripY + (cellH * 0.65)) : (stripY + (cellH * 0.35));
+        double tipY   = isTop ? (stripY + (cellH * 0.35)) : (stripY + (cellH * 0.65));
+        double baseY  = isTop ? (stripY + (cellH * 0.65)) : (stripY + (cellH * 0.35));
 
         set_rgb_colour((tRgb)RGB_WHITE);
-        render_line(mainArea, (tCoord){ midX - arm, baseY }, (tCoord){ midX, tipY }, 1.5);
-        render_line(mainArea, (tCoord){ midX, tipY }, (tCoord){ midX + arm, baseY }, 1.5);
+        render_line(mainArea, (tCoord){midX - arm, baseY}, (tCoord){midX, tipY}, 1.5);
+        render_line(mainArea, (tCoord){midX, tipY}, (tCoord){midX + arm, baseY}, 1.5);
     }
 }
 
