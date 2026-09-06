@@ -652,6 +652,27 @@ static tMetalWindow * metal_window_for(void * nativeWindow) {
     return NULL;
 }
 
+// Is this slot still describing the window it was built for? Compares the LAYER rather than the
+// address, because the address is what cannot be trusted — see the call site in mtl_attach_window().
+static bool metal_slot_still_live(tMetalWindow * slot, void * nativeWindow) {
+    if ((slot == NULL) || (slot->layer == nil)) {
+        return false;
+    }
+    id object = (__bridge id)nativeWindow;
+
+    if ([object isKindOfClass:[NSWindow class]]) {
+        NSView * content = [(NSWindow *)object contentView];
+
+        return (content != nil) && (content.layer == slot->layer);
+    }
+
+    if ([object isKindOfClass:[NSView class]]) {
+        return (slot->layer.superlayer != nil) && (slot->layer.superlayer == ((NSView *)object).layer);
+    }
+
+    return false;
+}
+
 // Release everything a window owns. Called when its view goes away - without it a host that opens
 // and closes editors would exhaust the slots, since each new view is a different pointer.
 static void mtl_detach_window(void * nativeWindow) {
@@ -698,14 +719,32 @@ static void mtl_attach_window(void * nativeWindow) {
     tMetalWindow * existing = metal_window_for(nativeWindow);
 
     if (existing != NULL) {
-        gW = existing;
-        return;
+        // A MATCH ON THE POINTER IS NOT PROOF IT IS THE SAME WINDOW. The slot is keyed on the raw
+        // address, and an address is reused: a host that closes an editor and opens another gets a
+        // fresh NSView from the allocator at the same place often enough to rely on it. If the
+        // caller failed to detach, this lookup then hands the new view the DEAD one's layer, and the
+        // first present crashes in -nextDrawable on a layer that is in no live layer tree.
+        //
+        // So check the layer is still where this slot put it. For a view the layer is a sublayer of
+        // the view's own; for a window it IS the content view's layer. Either way a stale slot fails
+        // the test and is rebuilt from scratch rather than trusted.
+        if (metal_slot_still_live(existing, nativeWindow)) {
+            gW = existing;
+            return;
+        }
+
+        mtl_detach_window(nativeWindow);
     }
 
     tMetalWindow * slot = metal_window_for(NULL);
 
     if (slot == NULL) {
-        return;         // more windows than MAX_METAL_WINDOWS; nothing sensible to do
+        // NO SLOT MEANS DRAW NOWHERE, NOT DRAW INTO SOMEONE ELSE'S WINDOW. Returning with gW left
+        // pointing at whichever window was last current means this view's frames are presented to
+        // that one's layer. Slot 0 is the empty sentinel and every guard in this file already
+        // handles it, so parking there degrades to drawing nothing.
+        gW = &gWindows[0];
+        return;
     }
 
     gW         = slot;
