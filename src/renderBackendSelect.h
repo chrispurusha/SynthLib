@@ -44,8 +44,24 @@
 // A BUILD WITH NO OpenGL IN IT HAS ONLY ONE ANSWER. G2-Edit's plug-in defines
 // SYNTHLIB_NO_GL_BACKEND, and a default of OpenGL there would name a backend that is not linked -
 // see the note at the top of renderBackend.c.
+// macOS IS METAL ONLY, and this is where that is decided for every target - the three applications
+// and the three plug-ins alike. SYNTHLIB_NO_GL_BACKEND leaves the OpenGL backend out of the build
+// entirely: renderBackendGL.c compiles to nothing, renderBackend.c does not declare its table, and
+// gfx_backend_available() answers false for it.
+//
+// THE A/B IS STILL AVAILABLE, and that matters because renderBackendGL.c's own header argues for
+// keeping it alive on macOS: running the two backends against each other on one machine is the cheap
+// way to prove the Metal port moved no pixel. Build with SYNTHLIB_ALLOW_GL_ON_APPLE to get it back -
+// and the same switch is the way back if Metal ever misbehaves on a particular Mac, since the
+// prefs.txt route cannot help once the backend is not linked.
+#if defined(__APPLE__) && !defined(SYNTHLIB_ALLOW_GL_ON_APPLE)
+ #ifndef SYNTHLIB_NO_GL_BACKEND
+  #define SYNTHLIB_NO_GL_BACKEND    1
+ #endif
+#endif
+
 #ifndef RENDER_BACKEND_DEFAULT
- #if defined(SYNTHLIB_NO_GL_BACKEND) || defined(__APPLE__)
+ #ifdef SYNTHLIB_NO_GL_BACKEND
   #define RENDER_BACKEND_DEFAULT    eRenderBackendMetal
  #else
   #define RENDER_BACKEND_DEFAULT    eRenderBackendOpenGL

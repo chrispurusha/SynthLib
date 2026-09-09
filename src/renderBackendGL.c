@@ -19,6 +19,17 @@
 
 #include "renderBackendSelect.h"
 
+// COMPILED TO NOTHING WHERE OpenGL IS NOT WANTED. On macOS that is now every target - see
+// renderBackendSelect.h - and the guard is here rather than in a build script because SynthLib/src
+// is a synchronized folder in the Xcode projects: a file in it is compiled whether the target wants
+// it or not, so the only place to say "not this one" is inside the file.
+//
+// NOTHING BELOW HAS BEEN DELETED, and it must not be. This is the whole renderer for Windows and
+// Linux, where Metal does not exist, and it is the A/B reference on macOS when built with
+// SYNTHLIB_ALLOW_GL_ON_APPLE.
+#ifndef SYNTHLIB_NO_GL_BACKEND
+
+
 // ── The OpenGL backend ──────────────────────────────────────────────────────────────────────────
 //
 // The nine functions of renderBackend.h, and THE ONLY FILE IN SYNTHLIB OR IN ANY OF THE THREE
@@ -250,3 +261,5 @@ const tGfxBackend * gfx_backend_gl_table(void) {
 #ifdef __cplusplus
 }
 #endif
+
+#endif // SYNTHLIB_NO_GL_BACKEND
