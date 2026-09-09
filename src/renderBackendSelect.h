@@ -54,18 +54,18 @@
 // way to prove the Metal port moved no pixel. Build with SYNTHLIB_ALLOW_GL_ON_APPLE to get it back -
 // and the same switch is the way back if Metal ever misbehaves on a particular Mac, since the
 // prefs.txt route cannot help once the backend is not linked.
-#if defined(__APPLE__) && !defined(SYNTHLIB_ALLOW_GL_ON_APPLE)
- #ifndef SYNTHLIB_NO_GL_BACKEND
-  #define SYNTHLIB_NO_GL_BACKEND    1
- #endif
+#if defined (__APPLE__) && !defined (SYNTHLIB_ALLOW_GL_ON_APPLE)
+#ifndef SYNTHLIB_NO_GL_BACKEND
+#define SYNTHLIB_NO_GL_BACKEND    1
+#endif
 #endif
 
 #ifndef RENDER_BACKEND_DEFAULT
- #ifdef SYNTHLIB_NO_GL_BACKEND
-  #define RENDER_BACKEND_DEFAULT    eRenderBackendMetal
- #else
-  #define RENDER_BACKEND_DEFAULT    eRenderBackendOpenGL
- #endif
+#ifdef SYNTHLIB_NO_GL_BACKEND
+#define RENDER_BACKEND_DEFAULT    eRenderBackendMetal
+#else
+#define RENDER_BACKEND_DEFAULT    eRenderBackendOpenGL
+#endif
 #endif
 
 #endif // RENDER_BACKEND_SELECT_H

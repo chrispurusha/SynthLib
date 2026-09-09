@@ -45,8 +45,8 @@ const tGfxBackend * gfx_backend_gl_table(void);
 const tGfxBackend * gfx_backend_metal_table(void);
 #endif
 
-#if defined(SYNTHLIB_NO_GL_BACKEND) && !defined(__APPLE__)
- #error "SYNTHLIB_NO_GL_BACKEND leaves no backend at all on this platform"
+#if defined (SYNTHLIB_NO_GL_BACKEND) && !defined (__APPLE__)
+#error "SYNTHLIB_NO_GL_BACKEND leaves no backend at all on this platform"
 #endif
 
 static tRenderBackendId    gCurrent = RENDER_BACKEND_DEFAULT;
@@ -58,10 +58,10 @@ static const tGfxBackend * table_for(tRenderBackendId which) {
     return gfx_backend_metal_table();
 #else
     switch (which) {
- #ifdef __APPLE__
+#ifdef __APPLE__
         case eRenderBackendMetal:
             return gfx_backend_metal_table();
- #endif
+#endif
         case eRenderBackendOpenGL:
         default:
             return gfx_backend_gl_table();
