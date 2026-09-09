@@ -76,13 +76,27 @@ bool synthlib_state_read(const tSynthLibPluginDesc * desc, const void * data, si
 bool synthlib_param_text(const tSynthLibPluginDesc * desc, void * inst, uint32_t id,
                          double normalized, char * out, size_t len);
 
-// The parameter table, looked up by id, or NULL. Shared so the two wrappers cannot disagree about
-// what an out-of-range id means.
-const tSynthLibParam * synthlib_param_at(const tSynthLibPluginDesc * desc, uint32_t id);
+// The units string VST3 puts after a number; an Audio Unit uses an enum instead and reads the unit
+// field directly. Shared so the two cannot disagree about what a percentage is called.
+const char * synthlib_param_units(tSynthLibParamUnit unit);
+
+// HOW MANY PARAMETERS THIS PLUG-IN HAS, from whichever of the two sources it uses.
+uint32_t synthlib_param_count(const tSynthLibPluginDesc * desc, void * inst);
+
+// ONE PARAMETER, RESOLVED, whether it came from the static table or from the plug-in's own callback.
+// Both wrappers go through this and nothing else, so neither has to know which source it was.
+// Returns false for an index the plug-in does not have.
+bool synthlib_param_describe(const tSynthLibPluginDesc * desc, void * inst, uint32_t index,
+                             tSynthLibParamDesc * out);
+
+// The parameter with this ID, which for a static table is the index and for a dynamic list is
+// whatever the plug-in put in the id field. Returns false when there is no such parameter.
+bool synthlib_param_by_id(const tSynthLibPluginDesc * desc, void * inst, uint32_t id,
+                          tSynthLibParamDesc * out);
 
 // 0..1 against the parameter's own displayed range, and back.
-double synthlib_param_to_plain(const tSynthLibPluginDesc * desc, uint32_t id, double normalized);
-double synthlib_param_to_normalized(const tSynthLibPluginDesc * desc, uint32_t id, double plain);
+double synthlib_param_to_plain(const tSynthLibParamDesc * param, double normalized);
+double synthlib_param_to_normalized(const tSynthLibParamDesc * param, double plain);
 
 #ifdef __cplusplus
 }

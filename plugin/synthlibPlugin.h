@@ -50,6 +50,9 @@
 extern "C" {
 #endif
 
+// Named ahead of the callbacks, which take one - see create().
+typedef struct tSynthLibPluginDesc tSynthLibPluginDesc;
+
 // ------------------------------------------------------------------------------------------------
 // Parameters
 // ------------------------------------------------------------------------------------------------
@@ -87,6 +90,8 @@ typedef enum {
 #define SYNTHLIB_MIDI_AFTERTOUCH    (128)      // channel pressure, 0xD0 - not a controller number
 #define SYNTHLIB_MIDI_PITCH_BEND    (129)      // 0xE0
 
+// ONE PARAMETER, RESOLVED. Both wrappers work from this and only this, whether it came from a static
+// table or was computed at run time - see tSynthLibParamDesc below and synthlib_param_describe().
 typedef struct {
     uint32_t           id;              // what the host quotes back; also the index into the table
     const char *       title;           // "Output Level"
@@ -105,16 +110,95 @@ typedef struct {
     int16_t            midiControl;         // SYNTHLIB_MIDI_*, or SYNTHLIB_MIDI_NONE
 } tSynthLibParam;
 
+// THE SAME THING, BUT IT OWNS ITS STRINGS. A plug-in whose parameter LIST is not known until it is
+// running - GenBridge's device and MIDI-destination pickers are named after whatever hardware is
+// plugged in, and there are as many first-channel positions as the interface has inputs - cannot
+// answer with a pointer into a static table, because there is no static table for it to point into.
+//
+// So the callback form fills one of these, the table form is copied into one, and the two wrappers
+// only ever see this. Without that split each wrapper would have had to know about both sources.
+#define SYNTHLIB_PARAM_TITLE_MAX    (64)
+
+typedef struct {
+    uint32_t           id;
+    char               title[SYNTHLIB_PARAM_TITLE_MAX];
+    char               shortTitle[SYNTHLIB_PARAM_TITLE_MAX];
+    tSynthLibParamUnit unit;
+    double             plainMin;
+    double             plainMax;
+    double             defaultNormalized;
+    int32_t            stepCount;
+    int16_t            midiControl;
+} tSynthLibParamDesc;
+
 // ------------------------------------------------------------------------------------------------
 // What the wrapper asks of the plug-in
 // ------------------------------------------------------------------------------------------------
+
+// ------------------------------------------------------------------------------------------------
+// Buses
+// ------------------------------------------------------------------------------------------------
+
+// AN AUDIO BUS, described rather than counted. A count was enough while the only plug-in here was a
+// stereo instrument with no input; it is not enough for an effect with a SIDE-CHAIN, which is a
+// second input bus that must be declared, must be marked auxiliary, and must NOT be active by
+// default - a host asked to fill an input the plug-in does not need will connect something to it and
+// then wonder why nothing happens.
+typedef struct {
+    const char * name;              // "Input", "Side-chain" - a host shows this
+    uint32_t     channels;
+    bool         isAux;             // a side-chain rather than the main signal
+    bool         defaultActive;     // an aux bus normally wants false
+} tSynthLibBus;
+
+// ------------------------------------------------------------------------------------------------
+// What the host is doing, per block
+// ------------------------------------------------------------------------------------------------
+
+// THE HOST'S TRANSPORT, AS MUCH OF IT AS THE HOST WILL SAY. Every field has its own validity flag
+// rather than a sentinel, because "tempo 0" and "the host did not tell us the tempo" are different
+// facts and a plug-in that generates a clock has to be able to tell them apart.
+//
+// THE TWO FORMATS DO NOT OFFER THE SAME THING HERE, and the difference is not cosmetic. VST3 hands
+// a ProcessContext to every process() call, filled by the host, on the audio thread. An Audio Unit
+// offers HostCallbacks - function pointers the plug-in CALLS - and a host may install none of them,
+// may install some, and answers from whatever the host feels like rather than from the block being
+// rendered. So `valid` is false far more often on an Audio Unit, and a plug-in whose whole purpose
+// is timing accuracy should be measured on both before either is trusted.
+typedef struct {
+    bool     valid;                 // false: the host said nothing at all this block
+
+    bool     playing;
+    bool     recording;
+    bool     cycleActive;
+
+    bool     tempoValid;
+    double   tempo;                 // BPM
+
+    bool     musicTimeValid;
+    double   projectTimeMusic;      // in quarter notes from the project start
+
+    bool     barPositionValid;
+    double   barPositionMusic;      // quarter notes, of the last bar line
+
+    bool     systemTimeValid;
+    uint64_t systemTime;            // host nanoseconds
+
+    int64_t  projectTimeSamples;
+    double   sampleRate;
+} tSynthLibTransport;
 
 typedef struct {
     // ---- lifecycle -----------------------------------------------------------------------------
 
     // One instance per copy in the host. May return NULL, which the wrapper reports as a failure to
     // instantiate rather than handing the host a half-built plug-in.
-    void * (* create)(void);
+    //
+    // GIVEN ITS OWN DESCRIPTOR, because one binary may register several VARIANTS of itself and a
+    // shared implementation has to know which one it is being made as - GenBridge registers the same
+    // code twice, as an effect and as an instrument, and the two differ in their bus layout and in
+    // how many parameters they own.
+    void * (* create)(const tSynthLibPluginDesc * desc);
     void   (* destroy)(void * inst);
 
     // The host has finished connecting things up. Load whatever a fresh instance should play.
@@ -138,7 +222,15 @@ typedef struct {
     // DE-INTERLEAVED, because that is what both formats hand over - a VST3 channelBuffers32 and an
     // AudioBufferList of one-channel buffers are the same shape, and an engine rendering interleaved
     // frames (G2-Edit's does) de-interleaves once, here, instead of once per wrapper.
-    void   (* render)(void * inst, float ** out, uint32_t numChannels, uint32_t frames);
+    //
+    // `in` is the first input bus, or NULL for a plug-in that declared none - and also NULL when the
+    // host has not connected one, which is a thing a host may legitimately do to a bus the plug-in
+    // said was auxiliary. `transport` is never NULL, but its `valid` is often false; see above.
+    void   (* process)(void * inst,
+                       const float * const * in, uint32_t numIn,
+                       float ** out, uint32_t numOut,
+                       uint32_t frames,
+                       const tSynthLibTransport * transport);
 
     // ---- events --------------------------------------------------------------------------------
     //
@@ -156,6 +248,16 @@ typedef struct {
     // NORMALIZED 0..1 THROUGHOUT. Plain units exist only where a host insists on them, and the
     // wrapper converts using plainMin/plainMax so the plug-in never has to hold both.
 
+    // THE DYNAMIC ALTERNATIVE TO THE STATIC TABLE. A plug-in leaves the descriptor's `params` NULL
+    // and fills these in instead; anything with a fixed parameter list should use the table, which
+    // is checkable at compile time and needs no instance to exist before it can be read.
+    //
+    // A HOST WALKS 0..paramCount()-1 AND EXPECTS EVERY ONE OF THEM TO EXIST. Returning false for an
+    // index below the count is not a way to hide a parameter - GenBridge shipped a variant that
+    // advertised seven and had six, and what a host does with the refusal is its own business.
+    uint32_t (* paramCount)(void * inst);
+    bool     (* paramInfo)(void * inst, uint32_t index, tSynthLibParamDesc * out);
+
     void   (* setParam)(void * inst, uint32_t id, double normalized);
     double (* getParam)(void * inst, uint32_t id);
 
@@ -171,6 +273,17 @@ typedef struct {
 
     size_t (* getState)(void * inst, void * out, size_t len);
     void   (* setState)(void * inst, const void * data, size_t len);
+
+    // ---- the other half of itself ----------------------------------------------------------------
+
+    // A SMALL MESSAGE FROM THE PROCESSOR TO THE CONTROLLER, OR BACK. VST3 splits a plug-in in two
+    // and IConnectionPoint is the only channel between them; an Audio Unit is one object and needs
+    // no channel at all, so this is delivered straight through there.
+    //
+    // It carries an id and an integer and nothing else, on purpose: the one thing that has ever
+    // needed to travel this way is "which status slot am I", and a channel that can carry a block of
+    // bytes invites a per-frame stream that belongs in shared memory instead. May be NULL.
+    void   (* message)(void * inst, const char * id, int64_t value);
 
     // ---- editor --------------------------------------------------------------------------------
 
@@ -195,17 +308,36 @@ typedef struct {
 // The plug-in itself
 // ------------------------------------------------------------------------------------------------
 
-typedef struct {
+struct tSynthLibPluginDesc {
     const char * name;                  // "G2 Alike" - what a host lists
     const char * vendor;
     const char * url;
     const char * email;
     const char * version;               // "0.1.0", for display
 
-    bool         isInstrument;          // false == an effect with audio in
-    uint32_t     numInputChannels;      // 0 for an instrument
-    uint32_t     numOutputChannels;
-    bool         wantsMidi;             // an effect can want MIDI too
+    bool         isInstrument;          // false == an effect
+
+    // AN OVERRIDE, NOT A REQUIREMENT. NULL takes "Instrument|Synth" or "Fx" from isInstrument, which
+    // is right for most things. GenBridge wants "Fx|NoOfflineProcess|Tools", and NoOfflineProcess is
+    // not decoration there: a live capture has nothing to give a faster-than-realtime render, so a
+    // host bouncing offline must not call it at all - without the flag it bounces silence and looks
+    // like a plug-in bug.
+    const char * vst3SubCategory;
+
+    const tSynthLibBus * inputs;
+    uint32_t     numInputs;
+    const tSynthLibBus * outputs;
+    uint32_t     numOutputs;
+
+    // An effect can want MIDI IN too. There is deliberately no "MIDI out": both plug-ins here that
+    // send MIDI open their own CoreMIDI port, because VST3 cannot express a system-realtime byte -
+    // a MIDI clock generator has no way to emit a 0xF8 through its host at all.
+    bool         wantsMidiIn;
+
+    // Whether the host's transport is worth asking for. VST3 turns this into
+    // IProcessContextRequirements, which is how a host knows it need not fill in a ProcessContext
+    // nobody reads; an Audio Unit installs its HostCallbacks on the strength of it.
+    bool         wantsTransport;
 
     // ---- identity, per format ------------------------------------------------------------------
     //
@@ -244,13 +376,30 @@ typedef struct {
     long         (* editorWidthLoad)(void);
     void         (* editorWidthSave)(long width);
 
+    // Free for the plug-in's own use, and the reason a shared implementation can tell its variants
+    // apart without comparing names - see create().
+    const void * userData;
+
     tSynthLibPluginCallbacks cb;
-} tSynthLibPluginDesc;
+};
+
+// ------------------------------------------------------------------------------------------------
+// What a plug-in project provides
+// ------------------------------------------------------------------------------------------------
+
+// ONE BINARY MAY REGISTER SEVERAL PLUG-INS. Usually it is one and this is a list of length 1, but
+// GenBridge registers the same code twice - once as an effect and once as an instrument - because
+// VST3 instruments live on instrument tracks and effects do not, and a user needs whichever their
+// host will let them put where they want it.
+typedef struct {
+    const tSynthLibPluginDesc * variants;
+    uint32_t                    count;
+} tSynthLibPluginSet;
 
 // THE ONE SYMBOL A PLUG-IN PROJECT HAS TO PROVIDE. Both wrappers call it, once, and hold on to what
 // comes back for the life of the process - so it must return a pointer that outlives every call,
 // which in practice means a file-scope constant.
-const tSynthLibPluginDesc * synthlib_plugin_descriptor(void);
+const tSynthLibPluginSet * synthlib_plugin_variants(void);
 
 // ------------------------------------------------------------------------------------------------
 // What the plug-in may ask of the wrapper
@@ -270,6 +419,11 @@ void synthlib_plugin_param_edited(uint32_t id, double normalized);
 // should be. Returns false if the host offers no such channel, which is common; the caller should
 // then leave the window alone rather than resizing its view inside a frame that did not move.
 bool synthlib_plugin_request_resize(double width, double height);
+
+// Send one small message to the other half of the plug-in - see the `message` callback. Returns
+// false when there is nothing connected to send it to, which on VST3 is every moment before the
+// host has joined the two halves up.
+bool synthlib_plugin_send_message(void * inst, const char * id, int64_t value);
 
 #ifdef __cplusplus
 }

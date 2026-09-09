@@ -47,13 +47,11 @@
 
 #define SYNTHLIB_AU_CONTAINER_CLASS   SL_PASTE(SYNTHLIB_AU_VIEW_CLASS, Container)
 
-static const tSynthLibPluginDesc * plugin_desc(void) {
-    static const tSynthLibPluginDesc * d = NULL;
-
-    if (d == NULL) {
-        d = synthlib_plugin_descriptor();
-    }
-    return d;
+// Only for the things that are true of the whole BINARY rather than of one plug-in in it - the view
+// class name, and the description string. Anything per-plug-in comes from the handle the AudioUnit
+// hands back; see uiViewForAudioUnit:.
+static const tSynthLibPluginDesc * first_variant(void) {
+    return &synthlib_plugin_variants()->variants[0];
 }
 
 CFStringRef synthlib_au_view_class_name(void) {
@@ -76,6 +74,7 @@ CFStringRef synthlib_au_view_class_name(void) {
 // drawing larger - the very thing the application's own aspect lock prevents. Enforcing the ratio
 // here gives the Audio Unit editor the same behaviour the VST3 one gets from the host.
 @interface SYNTHLIB_AU_CONTAINER_CLASS : NSView
+@property (assign, nonatomic) const tSynthLibPluginDesc * pluginDesc;
 @property (assign, nonatomic) void * pluginInstance;
 @property (strong, nonatomic) NSView * editorView;
 @end
@@ -83,7 +82,12 @@ CFStringRef synthlib_au_view_class_name(void) {
 @implementation SYNTHLIB_AU_CONTAINER_CLASS
 
 - (void)setFrameSize:(NSSize)newSize {
-    const tSynthLibPluginDesc * d = plugin_desc();
+    const tSynthLibPluginDesc * d = self.pluginDesc;
+
+    if (d == NULL) {
+        [super setFrameSize:newSize];
+        return;
+    }
 
     if (newSize.width < d->editorMinWidth) {
         newSize.width = d->editorMinWidth;
@@ -112,9 +116,9 @@ CFStringRef synthlib_au_view_class_name(void) {
 
 // The host is taking the window away.
 - (void)viewWillMoveToSuperview:(NSView *)newSuperview {
-    const tSynthLibPluginDesc * d = plugin_desc();
+    const tSynthLibPluginDesc * d = self.pluginDesc;
 
-    if ((newSuperview == nil) && (self.editorView != nil)) {
+    if ((newSuperview == nil) && (self.editorView != nil) && (d != NULL)) {
         if (d->cb.destroyView != NULL) {
             d->cb.destroyView(self.pluginInstance, (__bridge void *)self.editorView);
         }
@@ -140,25 +144,25 @@ CFStringRef synthlib_au_view_class_name(void) {
 }
 
 - (NSString *)description {
-    return [NSString stringWithUTF8String:plugin_desc()->name];
+    return [NSString stringWithUTF8String:first_variant()->name];
 }
 
 - (NSView *)uiViewForAudioUnit:(AudioUnit)inAU withSize:(NSSize)inPreferredSize {
-    const tSynthLibPluginDesc * d = plugin_desc();
+    // BACK FROM AN AudioUnit TO OUR OWN INSTANCE. A Cocoa view factory is handed the AudioUnit and
+    // nothing else, so the wrapper publishes both the instance and WHICH PLUG-IN IT IS as a private
+    // property, and this is the only way across - see kSynthLibAuProperty_Instance.
+    tSynthLibAuHandle handle = { NULL, NULL };
+    UInt32            size   = (UInt32)sizeof(handle);
+    OSStatus          err    = AudioUnitGetProperty(inAU, kSynthLibAuProperty_Instance,
+                                                    kAudioUnitScope_Global, 0, &handle, &size);
 
-    if (d->cb.createView == NULL) {
+    if ((err != noErr) || (handle.desc == NULL) || (handle.inst == NULL)) {
         return nil;
     }
+    const tSynthLibPluginDesc * d    = handle.desc;
+    void *                      inst = handle.inst;
 
-    // BACK FROM AN AudioUnit TO OUR OWN INSTANCE. A Cocoa view factory is handed the AudioUnit and
-    // nothing else, so the wrapper publishes the instance as a private property and this is the
-    // only way across - see kSynthLibAuProperty_Instance.
-    void *   inst = NULL;
-    UInt32   size = (UInt32)sizeof(inst);
-    OSStatus err  = AudioUnitGetProperty(inAU, kSynthLibAuProperty_Instance,
-                                         kAudioUnitScope_Global, 0, &inst, &size);
-
-    if ((err != noErr) || (inst == NULL)) {
+    if (d->cb.createView == NULL) {
         return nil;
     }
     // The host's preferred size is usually zero, meaning "whatever you like". The remembered width
@@ -188,6 +192,7 @@ CFStringRef synthlib_au_view_class_name(void) {
     SYNTHLIB_AU_CONTAINER_CLASS * container =
         [[SYNTHLIB_AU_CONTAINER_CLASS alloc] initWithFrame:NSMakeRect(0.0, 0.0, width, height)];
 
+    container.pluginDesc     = d;
     container.pluginInstance = inst;
     container.editorView     = editor;
     [editor setFrame:NSMakeRect(0.0, 0.0, width, height)];

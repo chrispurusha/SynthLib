@@ -22,12 +22,14 @@
 
 #include "pluginterfaces/gui/iplugview.h"
 
+#include "synthlibPlugin.h"
+
 // Wraps the NSView the plug-in's own createView() builds in the IPlugView a VST3 host wants. Defined
 // in synthlibPluginVst3View.mm because it touches Cocoa; declared here so the wrapper itself needs
 // no Objective-C.
 //
 // The returned view is owned by the caller (refcount 1) and is handed straight back to the host.
 // May be NULL, which the caller reports to the host as "no editor".
-Steinberg::IPlugView * synthlib_vst3_create_view(void * inst);
+Steinberg::IPlugView * synthlib_vst3_create_view(const tSynthLibPluginDesc * desc, void * inst);
 
 #endif // __SYNTHLIB_PLUGIN_VST3_VIEW_H__

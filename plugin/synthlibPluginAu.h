@@ -22,6 +22,8 @@
 
 #include <CoreFoundation/CoreFoundation.h>
 
+#include "synthlibPlugin.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -40,8 +42,18 @@ extern "C" {
 CFStringRef synthlib_au_view_class_name(void);
 
 // THE PRIVATE PROPERTY THE EDITOR FETCHES ITS PLUG-IN THROUGH. A Cocoa view factory is handed an
-// AudioUnit and nothing else, so this is how it gets from that back to the instance the wrapper
-// created. Apple reserves property ids below 64000; this sits well above.
+// AudioUnit and nothing else, so this is how it gets from that back to what the wrapper created.
+// Apple reserves property ids below 64000; this sits well above.
+//
+// THE DESCRIPTOR TRAVELS WITH THE INSTANCE, because one binary may register several plug-ins and
+// they do not share editor geometry - an effect and an instrument variant are different sizes and
+// remember their widths separately. Reaching for variant 0 instead would open the wrong one's editor
+// for every variant after the first.
+typedef struct {
+    const tSynthLibPluginDesc * desc;
+    void *                      inst;
+} tSynthLibAuHandle;
+
 #define kSynthLibAuProperty_Instance    (64100)
 
 #ifdef __cplusplus

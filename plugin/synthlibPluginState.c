@@ -29,31 +29,95 @@
 
 #define HEADER_BYTES     (8)        // magic + parameter count
 
-const tSynthLibParam * synthlib_param_at(const tSynthLibPluginDesc * desc, uint32_t id) {
-    if ((desc == NULL) || (desc->params == NULL) || (id >= desc->numParams)) {
-        return NULL;
+uint32_t synthlib_param_count(const tSynthLibPluginDesc * desc, void * inst) {
+    if (desc == NULL) {
+        return 0u;
     }
-    // The id IS the index. Checked rather than assumed, because a project saved against a build
-    // with more parameters than this one has will quote back an id this table does not hold.
-    return &desc->params[id];
+
+    // The dynamic form wins when it is there. A descriptor should not fill in both, but if it does,
+    // the callback is the one that can answer for THIS instance and the table cannot.
+    if (desc->cb.paramCount != NULL) {
+        return desc->cb.paramCount(inst);
+    }
+    return desc->numParams;
 }
 
-double synthlib_param_to_plain(const tSynthLibPluginDesc * desc, uint32_t id, double normalized) {
-    const tSynthLibParam * p = synthlib_param_at(desc, id);
+bool synthlib_param_describe(const tSynthLibPluginDesc * desc, void * inst, uint32_t index,
+                             tSynthLibParamDesc * out) {
+    if ((desc == NULL) || (out == NULL)) {
+        return false;
+    }
+    memset(out, 0, sizeof(*out));
 
-    if (p == NULL) {
+    if (desc->cb.paramInfo != NULL) {
+        return desc->cb.paramInfo(inst, index, out);
+    }
+
+    if ((desc->params == NULL) || (index >= desc->numParams)) {
+        return false;
+    }
+    const tSynthLibParam * p = &desc->params[index];
+
+    out->id                = p->id;
+    out->unit              = p->unit;
+    out->plainMin          = p->plainMin;
+    out->plainMax          = p->plainMax;
+    out->defaultNormalized = p->defaultNormalized;
+    out->stepCount         = p->stepCount;
+    out->midiControl       = p->midiControl;
+
+    if (p->title != NULL) {
+        strncpy(out->title, p->title, sizeof(out->title) - 1u);
+    }
+    strncpy(out->shortTitle, (p->shortTitle != NULL) ? p->shortTitle : out->title,
+            sizeof(out->shortTitle) - 1u);
+    return true;
+}
+
+bool synthlib_param_by_id(const tSynthLibPluginDesc * desc, void * inst, uint32_t id,
+                          tSynthLibParamDesc * out) {
+    uint32_t count = synthlib_param_count(desc, inst);
+
+    // THE COMMON CASE FIRST, AND IT IS NOT AN ASSUMPTION. For a static table the id IS the index, so
+    // this hits immediately; the walk below exists for a dynamic list whose ids are its own, and for
+    // a project saved against a build with more parameters than this one has - which is where an id
+    // that indexes nothing comes from.
+    if ((id < count) && (synthlib_param_describe(desc, inst, id, out) == true) && (out->id == id)) {
+        return true;
+    }
+
+    for (uint32_t i = 0; i < count; i++) {
+        if ((synthlib_param_describe(desc, inst, i, out) == true) && (out->id == id)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+double synthlib_param_to_plain(const tSynthLibParamDesc * param, double normalized) {
+    if (param == NULL) {
         return normalized;
     }
-    return p->plainMin + (normalized * (p->plainMax - p->plainMin));
+    return param->plainMin + (normalized * (param->plainMax - param->plainMin));
 }
 
-double synthlib_param_to_normalized(const tSynthLibPluginDesc * desc, uint32_t id, double plain) {
-    const tSynthLibParam * p = synthlib_param_at(desc, id);
-
-    if ((p == NULL) || (p->plainMax == p->plainMin)) {
+double synthlib_param_to_normalized(const tSynthLibParamDesc * param, double plain) {
+    if ((param == NULL) || (param->plainMax == param->plainMin)) {
         return plain;
     }
-    return (plain - p->plainMin) / (p->plainMax - p->plainMin);
+    return (plain - param->plainMin) / (param->plainMax - param->plainMin);
+}
+
+const char * synthlib_param_units(tSynthLibParamUnit unit) {
+    switch (unit) {
+        case eSynthLibUnitPercent:      return "%";
+        case eSynthLibUnitDecibels:     return "dB";
+        case eSynthLibUnitHertz:        return "Hz";
+        case eSynthLibUnitSeconds:      return "s";
+        case eSynthLibUnitMilliseconds: return "ms";
+        case eSynthLibUnitSemitones:    return "semi";
+        default:                        return "";
+    }
 }
 
 static void write_u32(uint8_t * out, uint32_t value) {
@@ -72,7 +136,7 @@ size_t synthlib_state_write(const tSynthLibPluginDesc * desc, void * inst,
     if (desc == NULL) {
         return 0;
     }
-    uint32_t count = (params != NULL) ? desc->numParams : 0u;
+    uint32_t count = (params != NULL) ? synthlib_param_count(desc, inst) : 0u;
 
     // The plug-in's own blob is asked for its SIZE first and written straight into place after, so
     // it is never copied twice - it can be a whole patch.
@@ -156,7 +220,8 @@ bool synthlib_state_read(const tSynthLibPluginDesc * desc, const void * data, si
     if ((size_t)count > ((len - HEADER_BYTES) / sizeof(double))) {
         return false;
     }
-    uint32_t take = (count < desc->numParams) ? count : desc->numParams;
+    uint32_t have = synthlib_param_count(desc, NULL);
+    uint32_t take = (count < have) ? count : have;
 
     if ((paramsOut != NULL) && (take > 0u)) {
         memcpy(paramsOut, p + HEADER_BYTES, (size_t)take * sizeof(double));
@@ -194,23 +259,23 @@ bool synthlib_state_read(const tSynthLibPluginDesc * desc, const void * data, si
 
 bool synthlib_param_text(const tSynthLibPluginDesc * desc, void * inst, uint32_t id,
                          double normalized, char * out, size_t len) {
-    const tSynthLibParam * p = synthlib_param_at(desc, id);
+    tSynthLibParamDesc param;
 
     if ((out == NULL) || (len == 0u)) {
         return false;
     }
     out[0] = '\0';
 
-    if (p == NULL) {
+    if (synthlib_param_by_id(desc, inst, id, &param) == false) {
         return false;
     }
 
     if ((desc->cb.paramText != NULL) && (desc->cb.paramText(inst, id, normalized, out, len) == true)) {
         return true;
     }
-    double plain = synthlib_param_to_plain(desc, id, normalized);
+    double plain = synthlib_param_to_plain(&param, normalized);
 
-    switch (p->unit) {
+    switch (param.unit) {
         case eSynthLibUnitBoolean:
             snprintf(out, len, "%s", (plain >= 0.5) ? "On" : "Off");
             break;

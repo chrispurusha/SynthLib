@@ -41,16 +41,11 @@ using namespace Steinberg;
 static std::atomic<IPlugFrame *> gPlugFrame{nullptr};
 static std::atomic<IPlugView *>  gPlugView{nullptr};
 
-static const tSynthLibPluginDesc * desc(void) {
-    static const tSynthLibPluginDesc * d = synthlib_plugin_descriptor();
-
-    return d;
-}
-
 class SynthLibVst3View : public IPlugView {
 public:
-    explicit SynthLibVst3View(void * pluginInstance) : refCount(1), inst(pluginInstance) {
-        const tSynthLibPluginDesc * d = desc();
+    SynthLibVst3View(const tSynthLibPluginDesc * descriptor, void * pluginInstance)
+        : refCount(1), desc(descriptor), inst(pluginInstance) {
+        const tSynthLibPluginDesc * d = desc;
 
         // RESTORE THE SIZE IN THE CONSTRUCTOR, not in attached(). getSize() is asked BEFORE
         // attached(), so a width recovered any later opens the window at the default and then
@@ -110,7 +105,7 @@ public:
         if ((parent == nullptr) || (isPlatformTypeSupported(type) != kResultTrue)) {
             return kResultFalse;
         }
-        const tSynthLibPluginDesc * d = desc();
+        const tSynthLibPluginDesc * d = desc;
 
         if (d->cb.createView == nullptr) {
             return kResultFalse;
@@ -134,8 +129,8 @@ public:
         if (editorView != nil) {
             [editorView removeFromSuperview];
 
-            if (desc()->cb.destroyView != nullptr) {
-                desc()->cb.destroyView(inst, (__bridge void *)editorView);
+            if (desc->cb.destroyView != nullptr) {
+                desc->cb.destroyView(inst, (__bridge void *)editorView);
             }
             editorView = nil;
         }
@@ -189,15 +184,15 @@ public:
 
         // Remembered for next time. Written on every resize rather than on close, because a host is
         // under no obligation to tell a view it is going away in any particular order.
-        if (desc()->editorWidthSave != nullptr) {
-            desc()->editorWidthSave((long)currentWidth);
+        if (desc->editorWidthSave != nullptr) {
+            desc->editorWidthSave((long)currentWidth);
         }
 
         if (editorView != nil) {
             [editorView setFrame:NSMakeRect(0.0, 0.0, currentWidth, currentHeight)];
 
-            if (desc()->cb.viewResized != nullptr) {
-                desc()->cb.viewResized(inst, (__bridge void *)editorView, currentWidth, currentHeight);
+            if (desc->cb.viewResized != nullptr) {
+                desc->cb.viewResized(inst, (__bridge void *)editorView, currentWidth, currentHeight);
             }
         }
         return kResultOk;
@@ -215,7 +210,7 @@ public:
     }
 
     tresult PLUGIN_API canResize(void) SMTG_OVERRIDE {
-        return (desc()->editorMinWidth < desc()->editorDefaultWidth) ? kResultTrue : kResultFalse;
+        return (desc->editorMinWidth < desc->editorDefaultWidth) ? kResultTrue : kResultFalse;
     }
 
     // THE ASPECT RATIO IS LOCKED when the descriptor asks for it, as the canvas application locks
@@ -231,7 +226,7 @@ public:
         if (rect == nullptr) {
             return kInvalidArgument;
         }
-        const tSynthLibPluginDesc * d     = desc();
+        const tSynthLibPluginDesc * d     = desc;
         int32                       width = rect->right - rect->left;
 
         if (width < (int32)d->editorMinWidth) {
@@ -246,25 +241,24 @@ public:
     }
 
 private:
-    static double height_for(double width) {
-        const tSynthLibPluginDesc * d = desc();
-
-        if (d->editorAspect > 0.0) {
-            return width / d->editorAspect;
+    double height_for(double width) const {
+        if (desc->editorAspect > 0.0) {
+            return width / desc->editorAspect;
         }
         return width;       // free-resizing editors get a square default and the host's own frame after
     }
 
-    std::atomic<int32> refCount;
-    void *             inst;
+    std::atomic<int32>          refCount;
+    const tSynthLibPluginDesc * desc;
+    void *                      inst;
     NSView * __strong  editorView    = nil;
     double             currentWidth  = 0.0;
     double             currentHeight = 0.0;
     IPlugFrame *       plugFrame     = nullptr;
 };
 
-IPlugView * synthlib_vst3_create_view(void * inst) {
-    return new SynthLibVst3View(inst);
+IPlugView * synthlib_vst3_create_view(const tSynthLibPluginDesc * desc, void * inst) {
+    return new SynthLibVst3View(desc, inst);
 }
 
 // ------------------------------------------------------------------------------------------------
