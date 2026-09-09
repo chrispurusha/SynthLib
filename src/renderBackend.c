@@ -26,25 +26,47 @@
 #include "renderBackendSelect.h"
 #include "renderBackend.h"
 
+// EITHER BACKEND CAN BE LEFT OUT OF A BUILD, and the two exclusions are not the same kind.
+//
+// Metal is excluded by PLATFORM: there is no Metal off Apple, so renderBackendMetal.m is not
+// compiled and its table is not declared.
+//
+// OpenGL is excluded by CHOICE, and only where the target has something better. G2-Edit's PLUG-IN
+// defines SYNTHLIB_NO_GL_BACKEND: its view is a CAMetalLayer host, so the GL path could never be
+// selected in it, and carrying an unreachable renderer meant an OpenGL framework on the link line
+// and a second surface implementation to keep working. Nothing else defines it - the applications
+// still offer the runtime choice, and Windows and Linux will have OpenGL as their ONLY backend, so
+// renderBackendGL.c itself stays exactly where it is.
+#ifndef SYNTHLIB_NO_GL_BACKEND
 const tGfxBackend * gfx_backend_gl_table(void);
+#endif
 
 #ifdef __APPLE__
 const tGfxBackend * gfx_backend_metal_table(void);
+#endif
+
+#if defined(SYNTHLIB_NO_GL_BACKEND) && !defined(__APPLE__)
+ #error "SYNTHLIB_NO_GL_BACKEND leaves no backend at all on this platform"
 #endif
 
 static tRenderBackendId    gCurrent = RENDER_BACKEND_DEFAULT;
 static const tGfxBackend * gBackend = NULL;
 
 static const tGfxBackend * table_for(tRenderBackendId which) {
+#ifdef SYNTHLIB_NO_GL_BACKEND
+    (void)which;                        // there is one backend; asking for the other cannot happen
+    return gfx_backend_metal_table();
+#else
     switch (which) {
-#ifdef __APPLE__
+ #ifdef __APPLE__
         case eRenderBackendMetal:
             return gfx_backend_metal_table();
-#endif
+ #endif
         case eRenderBackendOpenGL:
         default:
             return gfx_backend_gl_table();
     }
+#endif
 }
 
 // Resolved on first use as well as on an explicit choice, so that a caller who never selects one
@@ -58,7 +80,11 @@ static const tGfxBackend * backend(void) {
 
 bool gfx_backend_available(tRenderBackendId which) {
     if (which == eRenderBackendOpenGL) {
+#ifdef SYNTHLIB_NO_GL_BACKEND
+        return false;   // left out of this build on purpose - see the note at the top
+#else
         return true;    // renderBackendGL.c is OpenGL 1.1 and builds everywhere
+#endif
     }
 #ifdef __APPLE__
     if (which == eRenderBackendMetal) {

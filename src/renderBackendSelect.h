@@ -32,8 +32,15 @@
 // has been in a host, it is the one that runs unchanged on Windows and Linux, and every call it
 // makes is OpenGL 1.1 or earlier.
 
+// A BUILD WITH NO OpenGL IN IT HAS ONLY ONE ANSWER. G2-Edit's plug-in defines
+// SYNTHLIB_NO_GL_BACKEND, and a default of OpenGL there would name a backend that is not linked -
+// see the note at the top of renderBackend.c.
 #ifndef RENDER_BACKEND_DEFAULT
-#define RENDER_BACKEND_DEFAULT    eRenderBackendOpenGL
+ #ifdef SYNTHLIB_NO_GL_BACKEND
+  #define RENDER_BACKEND_DEFAULT    eRenderBackendMetal
+ #else
+  #define RENDER_BACKEND_DEFAULT    eRenderBackendOpenGL
+ #endif
 #endif
 
 #endif // RENDER_BACKEND_SELECT_H
