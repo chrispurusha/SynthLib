@@ -1,5 +1,51 @@
 # SynthLib TODO
 
+## The renderer position after 2026-09-09, and what the ports need
+
+**macOS is Metal; OpenGL is what Windows and Linux will run.** That is now the
+shape of it, rather than "OpenGL with Metal available":
+
+- `RENDER_BACKEND_DEFAULT` in `renderBackendSelect.h` follows the PLATFORM —
+  Metal on `__APPLE__`, OpenGL everywhere else. It was OpenGL unconditionally,
+  with a note saying that should hold "until Metal has had real use"; it has,
+  and this machine's own `prefs.txt` had already selected Metal by hand.
+- `SYNTHLIB_NO_GL_BACKEND` leaves the GL backend out of a build entirely:
+  `renderBackend.c` does not declare its table, `gfx_backend_available()`
+  answers false for it, and there is an `#error` for the combination that would
+  leave no backend at all. **G2-Edit's plug-in defines it** — that is what makes
+  it Metal *only* rather than Metal by default, and why `renderBackendGL.c` and
+  `-framework OpenGL` are off its build.
+- **`renderBackendGL.c` itself is untouched and must stay that way.** It is
+  OpenGL 1.1 with no platform in it, it is still what a saved `renderBackend=0`
+  selects, and it is the ONLY backend the ports will have. Nothing about the
+  Metal work should make it harder to build somewhere else.
+
+### The way back is a pref, not a menu
+
+`synthlibWindow.c` reads `renderBackend` from `prefs.txt` before it makes the
+window, so forcing OpenGL on a Mac that has trouble with Metal is one line in a
+text file. **G2-Edit's Settings menu no longer offers the switch** — it keeps
+only the "Renderer: <name>" readout — because a recovery route should look like
+one rather than being a setting to browse.
+
+**SynthEdit and EmuUtility still have their own menu item** (each has its own
+`src/appMenuBar.c`). They are on older pins; when they advance, decide whether
+to follow. Note SynthEdit's saved pref is `renderBackend=0`, so it stays on
+OpenGL whatever the default becomes, until someone changes it.
+
+### What the ports will actually need
+
+Not the renderer — that part is ready. What is macOS-only and has no equivalent
+yet:
+
+- `renderBackendMetal.m`, `plugin/pluginStubs.c`'s callers, and every `.m`/`.mm`
+  in the projects' `vst3/` folders: the plug-in view is an `NSView` and the
+  editor is an `IPlugView` handing one over. On Windows that is an `HWND` and on
+  Linux an X11 window, and none of the Cocoa code transfers.
+- `audio/device.c` is CoreAudio throughout. WASAPI/ASIO and ALSA/JACK are whole
+  implementations behind the same header, not ports of this one.
+- `synthlibWindow.c` is GLFW, which does carry across.
+
 ## audio/ and plugin/ — shared code that must NOT go in src/ (2026-09-09)
 
 Two new directories, and the reason they are not `src/` is concrete rather than
