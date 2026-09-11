@@ -30,6 +30,12 @@
 //
 // The returned view is owned by the caller (refcount 1) and is handed straight back to the host.
 // May be NULL, which the caller reports to the host as "no editor".
-Steinberg::IPlugView * synthlib_vst3_create_view(const tSynthLibPluginDesc * desc, void * inst);
+//
+// `owner` - the controller - is kept alive for as long as the view is, because `widthSink` points into
+// it: every width the host settles on is written there, which is how a project remembers its editor's
+// size. `initialWidth` is that remembered width, or 0 for "none yet".
+Steinberg::IPlugView * synthlib_vst3_create_view(const tSynthLibPluginDesc * desc, void * inst,
+                                                 Steinberg::FUnknown * owner, double initialWidth,
+                                                 double * widthSink);
 
 #endif // __SYNTHLIB_PLUGIN_VST3_VIEW_H__

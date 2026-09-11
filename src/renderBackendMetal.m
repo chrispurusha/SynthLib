@@ -116,6 +116,18 @@ static NSString * const kShaderSource =
 // These are properties of the Metal device, not of any surface, so several windows share one set.
 // The texture table is deliberately among them: the glyph atlas is the largest thing in it and
 // there is no sense in every open editor building its own.
+// THIS FILE ASSUMES ARC, and without it every frame leaks. -newBufferWithBytes: in mtl_submit()
+// returns an object the caller owns, and nothing here releases it by hand - ARC does, at the end of
+// the function. G2-Edit's do-plugin compiled this file with its plain C flags, which have no
+// -fobjc-arc, so G2 Alike kept every vertex buffer it ever drew with: its editor grew from 1.7 GB to
+// 12.7 GB in thirty seconds of pointer movement, and a frame went from 4 ms to 44 ms because creating
+// a Metal buffer slows as the pile of live ones grows. The applications build it in Xcode with ARC,
+// and GenBridge's and MidiSyncTool's scripts list it with their Objective-C sources, so none of them
+// showed it. A build without ARC is refused rather than trusted.
+#if !__has_feature(objc_arc)
+#error "renderBackendMetal.m must be compiled with -fobjc-arc"
+#endif
+
 static id<MTLDevice>              gDevice      = nil;
 static id<MTLCommandQueue>        gQueue       = nil;
 static id<MTLRenderPipelineState> gPipeline    = nil;

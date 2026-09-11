@@ -93,6 +93,10 @@ CFStringRef synthlib_au_view_class_name(void) {
         newSize.width = d->editorMinWidth;
     }
 
+    if ((d->editorMaxWidth > 0.0) && (newSize.width > d->editorMaxWidth)) {
+        newSize.width = d->editorMaxWidth;
+    }
+
     if (d->editorAspect > 0.0) {
         newSize.height = newSize.width / d->editorAspect;
     }
@@ -180,11 +184,15 @@ CFStringRef synthlib_au_view_class_name(void) {
     if (inPreferredSize.width >= d->editorMinWidth) {
         width = inPreferredSize.width;
     }
+
+    if ((d->editorMaxWidth > 0.0) && (width > d->editorMaxWidth)) {
+        width = d->editorMaxWidth;
+    }
     double height = (d->editorAspect > 0.0) ? (width / d->editorAspect) : width;
 
     // createView() hands its view back RETAINED - see the note in synthlibPlugin.h - so the bridge
     // that takes ownership is __bridge_transfer, and ARC releases it with the container.
-    NSView * editor = (__bridge_transfer NSView *)d->cb.createView(inst, width, height);
+    NSView * editor = (__bridge_transfer NSView *)d->cb.createView(d, inst, width, height);
 
     if (editor == nil) {
         return nil;

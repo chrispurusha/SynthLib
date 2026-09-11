@@ -208,10 +208,10 @@ static void gl_attach_window(void * nativeWindow) {
 }
 
 static void gl_present(void) {
-// SYNTHLIB_PLUGIN_BUILD is the name since there were two plug-in FORMATS to build; G2_VST3_BUILD is
-// the same switch under its old name, still passed by the two sibling plug-ins that have not moved
-// onto SynthLib's shared wrapper yet. The old spelling goes when they do.
-#if defined (SYNTHLIB_PLUGIN_BUILD) || defined (G2_VST3_BUILD)
+// SYNTHLIB_PLUGIN_BUILD is the name since there were two plug-in FORMATS to build. It was
+// G2_VST3_BUILD before that, and this accepted both until the last of the three plug-ins moved onto
+// SynthLib's shared wrappers on 2026-09-11; nothing passes the old spelling any more.
+#if defined (SYNTHLIB_PLUGIN_BUILD)
     // THE PLUG-IN HAS NO GLFW — not just no window, no library. It includes this file for the
     // drawing and gets its GL headers through glfw3.h, but nothing links libglfw, so naming
     // glfwSwapBuffers here is an undefined symbol at link time rather than a runtime no-op. It

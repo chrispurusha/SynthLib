@@ -54,10 +54,15 @@
 // ONE BINARY, SEVERAL PLUG-INS. synthlib_plugin_variants() may return more than one descriptor, and
 // then every class below is instantiated once per variant: the factory registers two classes for
 // each, and each object carries the descriptor it belongs to rather than reaching for a global.
+//
+// AND SEVERAL COPIES OF EACH. See "Which processor is mine" below: a controller finds its own
+// processor through the connection the host makes between the two, not through a global that could
+// only ever describe one of them.
 
 #include <atomic>
 #include <cstdio>
 #include <cstring>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -80,6 +85,21 @@
 
 using namespace Steinberg;
 using namespace Steinberg::Vst;
+
+// The one message the wrapper sends for itself - see "Which processor is mine". Ids with this prefix
+// are never handed to the plug-in's own message callback.
+#define BIND_MESSAGE         "synthlib.bind"
+#define WRAPPER_MESSAGE      "synthlib."
+
+// How many automation points of one parameter in one block are handed to paramPoints() at most. A
+// queue longer than this keeps its first points and its LAST, which is the one a level settles at.
+#define MAX_POINTS           (64)
+
+// The midiControl numbering in synthlibPlugin.h is VST3's own, written out because a C header cannot
+// include a C++ one. Asserted here, where both are visible, so the two cannot drift apart in silence.
+static_assert(SYNTHLIB_MIDI_AFTERTOUCH == kAfterTouch, "the SDK renumbered aftertouch");
+static_assert(SYNTHLIB_MIDI_PITCH_BEND == kPitchBend, "the SDK renumbered pitch bend");
+static_assert(SYNTHLIB_MIDI_CONTROLS == kCountCtrlNumber, "the SDK changed how many controls there are");
 
 // ------------------------------------------------------------------------------------------------
 // Shared helpers
@@ -129,86 +149,112 @@ static SpeakerArrangement arrangement_for(uint32_t channels) {
     }
 }
 
-// ------------------------------------------------------------------------------------------------
-// The instance registry, and why it is here
-// ------------------------------------------------------------------------------------------------
+// A whole IBStream, read into memory. A saved blob has no fixed length - G2 Alike's carries a patch
+// path, GenBridge's a table of devices - and a single fixed-size read would silently truncate a long
+// one into something that does not parse.
+static std::vector<uint8_t> read_stream(IBStream * state) {
+    std::vector<uint8_t> blob;
+    uint8_t              chunk[4096];
+    int32                got = 0;
 
-// VST3 SPLITS THE PLUG-IN IN TWO, AND ONLY ONE HALF HOLDS THE ENGINE.
-//
-// The processor owns the instance; the controller owns the parameters and the editor. In a correct
-// host that is fine - a move on the controller goes out through performEdit(), comes back to the
-// processor as an automation point, and is applied there. Not every host routes it that way, and a
-// bare test host does not route it at all, so the controller ALSO applies directly to the instance
-// when there is exactly one of its own VARIANT to apply to.
-//
-// PER VARIANT, because one binary may register several plug-ins and an effect's controller must not
-// find an instrument's processor. Exactly one of each is still the honest limit: the engines behind
-// these plug-ins keep state in process-wide globals, so a second instance of the same variant would
-// fight the first whatever this recorded. With two loaded the entry goes null and the controller
-// falls back to the host's own routing.
-#define MAX_VARIANTS    (8)
+    while ((state->read(chunk, (int32)sizeof(chunk), &got) == kResultOk) && (got > 0)) {
+        blob.insert(blob.end(), chunk, chunk + got);
 
-struct tRegistryEntry {
-    std::atomic<void *> instance{nullptr};
-    std::atomic<int>    count{0};
-};
-
-static tRegistryEntry gRegistry[MAX_VARIANTS];
-
-static int variant_index_of(const tSynthLibPluginDesc * d) {
-    const tSynthLibPluginSet * set = variants();
-
-    for (uint32_t i = 0; (i < set->count) && (i < MAX_VARIANTS); i++) {
-        if (&set->variants[i] == d) {
-            return (int)i;
+        if (got < (int32)sizeof(chunk)) {
+            break;
         }
     }
-    return -1;
+    return blob;
 }
 
-static void register_instance(const tSynthLibPluginDesc * d, void * inst) {
-    int slot = variant_index_of(d);
+// ------------------------------------------------------------------------------------------------
+// Which processor is mine
+// ------------------------------------------------------------------------------------------------
 
-    if (slot < 0) {
-        return;
-    }
+// VST3 SPLITS THE PLUG-IN IN TWO, AND ONLY ONE HALF HOLDS THE INSTANCE.
+//
+// The processor owns what create() returned; the controller owns the parameters the host shows and
+// the editor. In a correct host the two only ever talk through the IConnectionPoint the host wires
+// between them - and that is exactly how a controller finds out WHICH processor it belongs to: the
+// processor announces its serial number over the connection the moment it is made, and the
+// controller resolves the serial against the table below each time it needs the instance.
+//
+// A SERIAL, NOT A POINTER. The processor can be destroyed while its controller lives on - the host
+// decides the order - and a pointer handed across would then name freed memory, or, worse, a NEW
+// instance that happened to be allocated at the same address. A serial that is no longer in the
+// table simply resolves to nothing.
+//
+// THE FALLBACK IS "THE ONLY ONE". A bare test host never connects the two halves at all, and there,
+// with exactly one instance of a variant loaded, the controller takes that one. With two it takes
+// neither: guessing would have one track's panel drive the other's engine, which is the bug this
+// replaced - a single global per variant that went empty as soon as a second copy loaded and left
+// every editor blank.
 
-    if (gRegistry[slot].count.fetch_add(1) == 0) {
-        gRegistry[slot].instance.store(inst);
-    } else {
-        gRegistry[slot].instance.store(nullptr);
-    }
-}
-
-static void unregister_instance(const tSynthLibPluginDesc * d, void * inst) {
-    int slot = variant_index_of(d);
-
-    if (slot < 0) {
-        return;
-    }
-
-    if (gRegistry[slot].count.fetch_sub(1) == 1) {
-        gRegistry[slot].instance.store(nullptr);
-    } else if (gRegistry[slot].instance.load() == inst) {
-        gRegistry[slot].instance.store(nullptr);
-    }
-}
-
-static void * instance_of(const tSynthLibPluginDesc * d) {
-    int slot = variant_index_of(d);
-
-    return (slot >= 0) ? gRegistry[slot].instance.load() : nullptr;
-}
-
-// The controller the editor reports its own moves through - see synthlib_plugin_param_edited().
-static std::atomic<IComponentHandler *> gEditHandler{nullptr};
-static std::atomic<IEditController *>   gEditController{nullptr};
-
-// The processor that owns a given plug-in instance, for synthlib_plugin_send_message(). A plain
-// pointer pair rather than a map: there are at most MAX_VARIANTS of these and the lookup happens
-// when a message is sent, which is a handful of times in a session.
 class SynthLibProcessor;
-static std::atomic<SynthLibProcessor *> gProcessors[MAX_VARIANTS];
+class SynthLibController;
+
+struct tLiveInstance {
+    int64                       serial;
+    const tSynthLibPluginDesc * desc;
+    void *                      inst;
+    SynthLibProcessor *         processor;
+};
+
+static std::mutex                        gRegistryLock;
+static std::vector<tLiveInstance>        gInstances;
+static std::vector<SynthLibController *> gControllers;
+static int64                             gNextSerial = 1;
+
+static int64 register_instance(const tSynthLibPluginDesc * d, void * inst, SynthLibProcessor * p) {
+    std::lock_guard<std::mutex> lock(gRegistryLock);
+    int64                       serial = gNextSerial++;
+
+    gInstances.push_back({ serial, d, inst, p });
+    return serial;
+}
+
+static void unregister_instance(int64 serial) {
+    std::lock_guard<std::mutex> lock(gRegistryLock);
+
+    for (size_t i = 0; i < gInstances.size(); i++) {
+        if (gInstances[i].serial == serial) {
+            gInstances.erase(gInstances.begin() + (long)i);
+            return;
+        }
+    }
+}
+
+// The two lookups a controller makes, with the lock already held by the caller.
+static void * instance_for_serial_locked(int64 serial) {
+    for (const tLiveInstance & live : gInstances) {
+        if (live.serial == serial) {
+            return live.inst;
+        }
+    }
+    return nullptr;
+}
+
+static void * sole_instance_locked(const tSynthLibPluginDesc * d) {
+    void * found = nullptr;
+    int    count = 0;
+
+    for (const tLiveInstance & live : gInstances) {
+        if (live.desc == d) {
+            found = live.inst;
+            count++;
+        }
+    }
+    return (count == 1) ? found : nullptr;
+}
+
+static SynthLibProcessor * processor_for_locked(void * inst) {
+    for (const tLiveInstance & live : gInstances) {
+        if (live.inst == inst) {
+            return live.processor;
+        }
+    }
+    return nullptr;
+}
 
 // ------------------------------------------------------------------------------------------------
 // The processor
@@ -220,49 +266,31 @@ class SynthLibProcessor : public IComponent,
                           public IProcessContextRequirements {
 public:
     explicit SynthLibProcessor(const tSynthLibPluginDesc * descriptor)
-        : refCount(1), desc(descriptor), sampleRate(44100.0), active(false) {
+        : refCount(1), desc(descriptor), sampleRate(44100.0) {
         inst = (desc->cb.create != nullptr) ? desc->cb.create(desc) : nullptr;
 
-        if (inst != nullptr) {
-            register_instance(desc, inst);
-        }
         // The defaults, and they matter before anything has been played: a parameter left at zero
         // that means "full bend down" is a plug-in reporting a state it is not in. Nothing applies
         // them to the engine - the plug-in's own create() is responsible for starting in the state
         // it advertises - but a host asking is told the truth.
-        uint32_t count = synthlib_param_count(desc, inst);
+        synthlib_params_init(&params, desc, inst);
 
-        params.resize(count, 0.0);
-
-        for (uint32_t i = 0; i < count; i++) {
-            tSynthLibParamDesc p;
-
-            if (synthlib_param_describe(desc, inst, i, &p) == true) {
-                params[i] = p.defaultNormalized;
-            }
-        }
-        int slot = variant_index_of(desc);
-
-        if (slot >= 0) {
-            gProcessors[slot].store(this);
+        if (inst != nullptr) {
+            serial = register_instance(desc, inst, this);
         }
     }
 
     virtual ~SynthLibProcessor(void) {
-        int slot = variant_index_of(desc);
-
-        if ((slot >= 0) && (gProcessors[slot].load() == this)) {
-            gProcessors[slot].store(nullptr);
+        // OUT OF THE TABLE BEFORE IT IS DESTROYED, so nothing resolves an instance that is going.
+        if (serial != 0) {
+            unregister_instance(serial);
         }
 
-        if (inst != nullptr) {
-            unregister_instance(desc, inst);
-
-            if (desc->cb.destroy != nullptr) {
-                desc->cb.destroy(inst);
-            }
-            inst = nullptr;
+        if ((inst != nullptr) && (desc->cb.destroy != nullptr)) {
+            desc->cb.destroy(inst);
         }
+        inst = nullptr;
+        synthlib_params_free(&params);
 
         if (hostApp != nullptr) {
             hostApp->release();
@@ -270,8 +298,8 @@ public:
         }
     }
 
-    void * plugin_instance(void) const {
-        return inst;
+    double param_value(uint32_t id) const {
+        return synthlib_params_get(&params, id);
     }
 
     // Called from synthlib_plugin_send_message(), on whatever thread the plug-in chose. VST3's
@@ -339,16 +367,25 @@ public:
     uint32 PLUGIN_API getProcessContextRequirements(void) SMTG_OVERRIDE {
         // Everything tSynthLibTransport carries. Asking for more than is read costs a host a little
         // work per block; asking for less than is read gets a zero that looks like a real answer.
-        return IProcessContextRequirements::kNeedTempo |
-               IProcessContextRequirements::kNeedTransportState |
+        return IProcessContextRequirements::kNeedSystemTime |
+               IProcessContextRequirements::kNeedContinousTimeSamples |
                IProcessContextRequirements::kNeedProjectTimeMusic |
                IProcessContextRequirements::kNeedBarPositionMusic |
-               IProcessContextRequirements::kNeedSystemTime;
+               IProcessContextRequirements::kNeedCycleMusic |
+               IProcessContextRequirements::kNeedTempo |
+               IProcessContextRequirements::kNeedTimeSignature |
+               IProcessContextRequirements::kNeedTransportState;
     }
 
     // ---- IConnectionPoint ----------------------------------------------------------------------
+    //
+    // THE MOMENT THE HOST JOINS THE TWO HALVES is the moment the controller can learn which
+    // processor it has been joined to - so this is where the serial goes across. If the host
+    // connects before initialize() there is no host application yet to make the message with, and
+    // initialize() sends it instead.
     tresult PLUGIN_API connect(IConnectionPoint * other) SMTG_OVERRIDE {
         peer = other;
+        announce();
         return kResultOk;
     }
 
@@ -359,13 +396,12 @@ public:
     }
 
     tresult PLUGIN_API notify(IMessage * message) SMTG_OVERRIDE {
-        return deliver_message(desc, inst, message);
-    }
+        if ((message == nullptr) || (inst == nullptr) || (desc->cb.message == nullptr)) {
+            return kResultOk;
+        }
+        const char * id = message->getMessageID();
 
-    // The shape both halves use, so a message from the controller reaches the plug-in the same way
-    // one from the processor does.
-    static tresult deliver_message(const tSynthLibPluginDesc * d, void * inst, IMessage * message) {
-        if ((message == nullptr) || (d->cb.message == nullptr) || (inst == nullptr)) {
+        if ((id == nullptr) || (strncmp(id, WRAPPER_MESSAGE, strlen(WRAPPER_MESSAGE)) == 0)) {
             return kResultOk;
         }
         int64 value = 0;
@@ -373,7 +409,7 @@ public:
         if (message->getAttributes()->getInt("value", value) != kResultOk) {
             value = 0;
         }
-        d->cb.message(inst, message->getMessageID(), (int64_t)value);
+        desc->cb.message(inst, id, (int64_t)value);
         return kResultOk;
     }
 
@@ -384,13 +420,14 @@ public:
         }
 
         // KEPT, because IMessage can only be allocated through it - see post_message().
-        if (context != nullptr) {
+        if ((context != nullptr) && (hostApp == nullptr)) {
             context->queryInterface(IHostApplication::iid, (void **)&hostApp);
         }
 
         if (desc->cb.initialize != nullptr) {
             desc->cb.initialize(inst);
         }
+        announce();
         return kResultOk;
     }
 
@@ -455,9 +492,11 @@ public:
         }
 
         if ((type == kEvent) && (dir == kInput) && (desc->wantsMidiIn == true) && (index == 0)) {
+            // SIXTEEN CHANNELS, because a plug-in passing MIDI through to hardware plays it on the
+            // channel it arrived on - and a host that was told one routes everything to channel 1.
             bus.mediaType    = kEvent;
             bus.direction    = kInput;
-            bus.channelCount = 1;
+            bus.channelCount = 16;
             bus.busType      = kMain;
             bus.flags        = BusInfo::kDefaultActive;
             copy_name(bus.name, "MIDI In");
@@ -488,7 +527,6 @@ public:
         if (desc->cb.setActive != nullptr) {
             desc->cb.setActive(inst, (state != 0));
         }
-        active = (state != 0);
         return kResultOk;
     }
 
@@ -506,9 +544,9 @@ public:
         if (state == nullptr) {
             return kResultFalse;
         }
-        size_t               need = synthlib_state_write(desc, inst, params.data(), nullptr, 0);
+        size_t               need = synthlib_state_write(desc, inst, &params, nullptr, 0);
         std::vector<uint8_t> blob(need);
-        size_t               wrote = synthlib_state_write(desc, inst, params.data(),
+        size_t               wrote = synthlib_state_write(desc, inst, &params,
                                                           blob.empty() ? nullptr : blob.data(), need);
         int32                written = 0;
 
@@ -555,35 +593,73 @@ public:
         return (symbolicSampleSize == kSample32) ? kResultTrue : kResultFalse;
     }
 
+    // Asked when we activate, and cached until the controller tells the host to ask again - see
+    // synthlib_plugin_latency_changed().
     uint32 PLUGIN_API getLatencySamples(void) SMTG_OVERRIDE {
-        return 0;
+        if ((inst == nullptr) || (desc->cb.latencySamples == nullptr)) {
+            return 0;
+        }
+        return desc->cb.latencySamples(inst);
     }
 
     tresult PLUGIN_API setupProcessing(ProcessSetup & setup) SMTG_OVERRIDE {
         sampleRate = setup.sampleRate;
 
-        if ((inst != nullptr) && (desc->cb.setSampleRate != nullptr)) {
+        if (inst == nullptr) {
+            return kResultOk;
+        }
+
+        if (desc->cb.setSampleRate != nullptr) {
             desc->cb.setSampleRate(inst, sampleRate);
+        }
+
+        if (desc->cb.prepare != nullptr) {
+            tSynthLibSetup s;
+
+            s.sampleRate = setup.sampleRate;
+            s.maxFrames  = (setup.maxSamplesPerBlock > 0) ? (uint32_t)setup.maxSamplesPerBlock : 0u;
+            s.offline    = (setup.processMode == kOffline);
+            desc->cb.prepare(inst, &s);
         }
         return kResultOk;
     }
 
     tresult PLUGIN_API setProcessing(TBool state) SMTG_OVERRIDE {
-        // Going from stopped to running is where a host expects held notes to have gone. Reset on
-        // the way IN rather than on the way out, so a transport jump starts clean.
-        if ((state != 0) && (inst != nullptr) && (desc->cb.reset != nullptr)) {
+        if (inst == nullptr) {
+            return kResultOk;
+        }
+
+        if (desc->cb.setProcessing != nullptr) {
+            desc->cb.setProcessing(inst, (state != 0));
+        } else if ((state != 0) && (desc->cb.reset != nullptr)) {
+            // Going from stopped to running is where a host expects held notes to have gone. Reset
+            // on the way IN rather than on the way out, so a transport jump starts clean.
             desc->cb.reset(inst);
         }
         return kResultOk;
     }
 
     uint32 PLUGIN_API getTailSamples(void) SMTG_OVERRIDE {
-        return kInfiniteTail;       // reverbs and delays live in these
+        // INFINITE, for every plug-in here. kNoTail - which is what a plain 0 means - promises that
+        // nothing comes out once the input goes silent, and a host that believes it may stop
+        // processing a chain with nothing feeding it. The instruments have reverbs and delays in
+        // them; the two effects produce audio that has nothing to do with their input at all.
+        return kInfiniteTail;
     }
 
     tresult PLUGIN_API process(ProcessData & data) SMTG_OVERRIDE {
         if (inst == nullptr) {
             return kResultOk;
+        }
+        tSynthLibTransport transport;
+
+        fill_transport(data.processContext, transport);
+
+        // FIRST, so every parameter change and note below lands in a block the plug-in already knows
+        // the position of. numSamples may be 0 here: a host flushing parameter changes while stopped
+        // calls process() with no audio at all.
+        if (desc->cb.blockBegin != nullptr) {
+            desc->cb.blockBegin(inst, (data.numSamples > 0) ? (uint32_t)data.numSamples : 0u, &transport);
         }
         apply_automation(data);
         apply_events(data);
@@ -597,14 +673,24 @@ public:
         const float * const * in    = nullptr;
         uint32_t              numIn = 0;
 
-        if ((data.numInputs > 0) && (data.inputs[0].channelBuffers32 != nullptr)) {
+        if ((data.numInputs > 0) && (data.inputs != nullptr) &&
+            (data.inputs[0].channelBuffers32 != nullptr) && (data.inputs[0].numChannels > 0)) {
             in    = (const float * const *)data.inputs[0].channelBuffers32;
             numIn = (uint32_t)data.inputs[0].numChannels;
+
+            for (uint32_t c = 0; c < numIn; c++) {
+                if (in[c] == nullptr) {
+                    in    = nullptr;
+                    numIn = 0;
+                    break;
+                }
+            }
         }
         float ** out    = nullptr;
         uint32_t numOut = 0;
 
-        if ((data.numOutputs > 0) && (data.outputs[0].channelBuffers32 != nullptr)) {
+        if ((data.numOutputs > 0) && (data.outputs != nullptr) &&
+            (data.outputs[0].channelBuffers32 != nullptr)) {
             out    = data.outputs[0].channelBuffers32;
             numOut = (uint32_t)data.outputs[0].numChannels;
 
@@ -614,9 +700,6 @@ public:
                 }
             }
         }
-        tSynthLibTransport transport;
-
-        fill_transport(data.processContext, transport);
         desc->cb.process(inst, in, numIn, out, numOut, (uint32_t)data.numSamples, &transport);
 
         if (data.numOutputs > 0) {
@@ -630,6 +713,12 @@ public:
     }
 
 private:
+    void announce(void) {
+        if ((serial != 0) && (peer != nullptr)) {
+            post_message(BIND_MESSAGE, serial);
+        }
+    }
+
     void fill_transport(ProcessContext * ctx, tSynthLibTransport & out) {
         memset(&out, 0, sizeof(out));
         out.sampleRate = sampleRate;
@@ -637,19 +726,32 @@ private:
         if (ctx == nullptr) {
             return;         // valid stays false, which is the whole point of the flag
         }
-        out.valid              = true;
-        out.playing            = ((ctx->state & ProcessContext::kPlaying) != 0);
-        out.recording          = ((ctx->state & ProcessContext::kRecording) != 0);
-        out.cycleActive        = ((ctx->state & ProcessContext::kCycleActive) != 0);
-        out.tempoValid         = ((ctx->state & ProcessContext::kTempoValid) != 0);
-        out.tempo              = out.tempoValid ? ctx->tempo : 0.0;
-        out.musicTimeValid     = ((ctx->state & ProcessContext::kProjectTimeMusicValid) != 0);
-        out.projectTimeMusic   = out.musicTimeValid ? ctx->projectTimeMusic : 0.0;
-        out.barPositionValid   = ((ctx->state & ProcessContext::kBarPositionValid) != 0);
-        out.barPositionMusic   = out.barPositionValid ? ctx->barPositionMusic : 0.0;
-        out.systemTimeValid    = ((ctx->state & ProcessContext::kSystemTimeValid) != 0);
-        out.systemTime         = out.systemTimeValid ? (uint64_t)ctx->systemTime : 0u;
-        out.projectTimeSamples = (int64_t)ctx->projectTimeSamples;
+        // THE HOST'S VALUES AS IT GAVE THEM, WITH ITS FLAGS BESIDE THEM - not zeroed where a flag is
+        // clear. A host is not above filling a field it has not flagged, and MidiSyncTool's clock was
+        // built against Live's ProcessContext read exactly that way: blanking the loop ends when
+        // kCycleValid was clear would have handed it a loop of zero length at every wrap. A plug-in
+        // that wants to trust only flagged fields checks the flag, which is what the flags are for.
+        out.valid                 = true;
+        out.playing               = ((ctx->state & ProcessContext::kPlaying) != 0);
+        out.recording             = ((ctx->state & ProcessContext::kRecording) != 0);
+        out.cycleActive           = ((ctx->state & ProcessContext::kCycleActive) != 0);
+        out.tempoValid            = ((ctx->state & ProcessContext::kTempoValid) != 0);
+        out.tempo                 = ctx->tempo;
+        out.musicTimeValid        = ((ctx->state & ProcessContext::kProjectTimeMusicValid) != 0);
+        out.projectTimeMusic      = ctx->projectTimeMusic;
+        out.barPositionValid      = ((ctx->state & ProcessContext::kBarPositionValid) != 0);
+        out.barPositionMusic      = ctx->barPositionMusic;
+        out.cycleValid            = ((ctx->state & ProcessContext::kCycleValid) != 0);
+        out.cycleStartMusic       = ctx->cycleStartMusic;
+        out.cycleEndMusic         = ctx->cycleEndMusic;
+        out.timeSigValid          = ((ctx->state & ProcessContext::kTimeSigValid) != 0);
+        out.timeSigNumerator      = ctx->timeSigNumerator;
+        out.timeSigDenominator    = ctx->timeSigDenominator;
+        out.systemTimeValid       = ((ctx->state & ProcessContext::kSystemTimeValid) != 0);
+        out.systemTime            = (uint64_t)ctx->systemTime;
+        out.projectTimeSamples    = (int64_t)ctx->projectTimeSamples;
+        out.continuousTimeValid   = ((ctx->state & ProcessContext::kContTimeValid) != 0);
+        out.continuousTimeSamples = (int64_t)ctx->continousTimeSamples;
 
         if (ctx->sampleRate > 0.0) {
             out.sampleRate = ctx->sampleRate;
@@ -657,9 +759,6 @@ private:
     }
 
     void apply_automation(ProcessData & data) {
-        // Only the LAST point in each queue is taken: the engines have no notion of a parameter
-        // ramping within a block, so interpolating between points would be inventing a resolution
-        // they cannot use. Same block-granularity trade as the events below.
         if (data.inputParameterChanges == nullptr) {
             return;
         }
@@ -671,17 +770,50 @@ private:
             if (queue == nullptr) {
                 continue;
             }
-            int32 points = queue->getPointCount();
+            uint32_t id     = (uint32_t)queue->getParameterId();
+            int32    points = queue->getPointCount();
 
-            if (points <= 0) {
+            if ((points <= 0) || (synthlib_params_index(&params, id) < 0)) {
                 continue;
             }
-            int32      offset = 0;
-            ParamValue value  = 0.0;
 
-            if (queue->getPoint(points - 1, offset, value) == kResultOk) {
-                apply_param((uint32_t)queue->getParameterId(), value);
+            // WITHOUT paramPoints() ONLY THE LAST POINT IS TAKEN: an engine with no notion of a
+            // parameter moving within a block would only be handed a resolution it cannot use.
+            if (desc->cb.paramPoints == nullptr) {
+                int32      offset = 0;
+                ParamValue value  = 0.0;
+
+                if (queue->getPoint(points - 1, offset, value) == kResultOk) {
+                    apply_param(id, value);
+                }
+                continue;
             }
+            tSynthLibParamPoint list[MAX_POINTS];
+            uint32_t            count = 0;
+
+            for (int32 k = 0; k < points; k++) {
+                int32      offset = 0;
+                ParamValue value  = 0.0;
+
+                if (queue->getPoint(k, offset, value) != kResultOk) {
+                    continue;
+                }
+
+                // FULL: the last slot is overwritten by every later point, so it ends up holding the
+                // final one - which is the one a level settles at.
+                if (count == MAX_POINTS) {
+                    count = MAX_POINTS - 1;
+                }
+                list[count].sampleOffset = (offset > 0) ? (uint32_t)offset : 0u;
+                list[count].value        = synthlib_param_clamp(value);
+                count++;
+            }
+
+            if (count == 0u) {
+                continue;
+            }
+            synthlib_params_set(&params, id, list[count - 1].value);
+            desc->cb.paramPoints(inst, id, list, count);
         }
     }
 
@@ -697,60 +829,61 @@ private:
             if (data.inputEvents->getEvent(i, e) != kResultOk) {
                 continue;
             }
+            uint32_t offset = (e.sampleOffset > 0) ? (uint32_t)e.sampleOffset : 0u;
 
             if (e.type == Event::kNoteOnEvent) {
+                uint8_t channel = (uint8_t)(e.noteOn.channel & 0x0F);
+                uint8_t note    = (uint8_t)(e.noteOn.pitch & 0x7F);
+
                 // A note-on at zero velocity is a note-off, as it is over MIDI.
                 if ((e.noteOn.velocity > 0.0f) && (desc->cb.noteOn != nullptr)) {
-                    desc->cb.noteOn(inst, (uint8_t)e.noteOn.pitch, e.noteOn.velocity);
+                    desc->cb.noteOn(inst, channel, note, e.noteOn.velocity, offset);
                 } else if (desc->cb.noteOff != nullptr) {
-                    desc->cb.noteOff(inst, (uint8_t)e.noteOn.pitch);
+                    desc->cb.noteOff(inst, channel, note, 0.0f, offset);
                 }
             } else if (e.type == Event::kNoteOffEvent) {
                 if (desc->cb.noteOff != nullptr) {
-                    desc->cb.noteOff(inst, (uint8_t)e.noteOff.pitch);
+                    desc->cb.noteOff(inst, (uint8_t)(e.noteOff.channel & 0x0F),
+                                     (uint8_t)(e.noteOff.pitch & 0x7F), e.noteOff.velocity, offset);
                 }
             } else if (e.type == Event::kPolyPressureEvent) {
                 // POLYPHONIC key pressure, which arrives as an EVENT and not as a parameter change.
                 // IMidiMapping's kAfterTouch is CHANNEL pressure (0xD0) only, so a keyboard sending
                 // poly pressure (0xA0) - and plenty do - reaches a plug-in by this path or not at all.
                 if (desc->cb.polyPressure != nullptr) {
-                    desc->cb.polyPressure(inst, (uint8_t)e.polyPressure.pitch, e.polyPressure.pressure);
+                    desc->cb.polyPressure(inst, (uint8_t)(e.polyPressure.channel & 0x0F),
+                                          (uint8_t)(e.polyPressure.pitch & 0x7F),
+                                          e.polyPressure.pressure, offset);
                 }
             }
         }
     }
 
     void apply_param(uint32_t id, ParamValue value) {
-        if (id >= params.size()) {
+        double clamped = synthlib_param_clamp(value);
+
+        if (synthlib_params_set(&params, id, clamped) == false) {
             return;
         }
 
-        if (value < 0.0) {
-            value = 0.0;
-        } else if (value > 1.0) {
-            value = 1.0;
-        }
-        params[id] = value;
-
         if ((inst != nullptr) && (desc->cb.setParam != nullptr)) {
-            desc->cb.setParam(inst, id, value);
+            desc->cb.setParam(inst, id, clamped);
         }
     }
 
     void apply_state(const std::vector<uint8_t> & blob) {
-        std::vector<double> values(params.size(), 0.0);
-        uint32_t            count      = 0;
-        const void *        pluginData = nullptr;
-        size_t              pluginLen  = 0;
+        std::vector<tSynthLibParamValue> values((params.count > 0u) ? params.count : 1u);
+        uint32_t                         count      = 0;
+        const void *                     pluginData = nullptr;
+        size_t                           pluginLen  = 0;
 
-        if (synthlib_state_read(desc, blob.empty() ? nullptr : blob.data(), blob.size(),
-                                values.empty() ? nullptr : values.data(),
-                                &count, &pluginData, &pluginLen) == false) {
+        if (synthlib_state_read(&params, blob.empty() ? nullptr : blob.data(), blob.size(),
+                                values.data(), params.count, &count, &pluginData, &pluginLen) == false) {
             return;
         }
 
         for (uint32_t i = 0; i < count; i++) {
-            apply_param(i, values[i]);
+            apply_param(values[i].id, values[i].value);
         }
 
         // THE PLUG-IN'S OWN STATE LAST. For G2 Alike that is the patch path, and loading a patch
@@ -759,32 +892,23 @@ private:
         if ((inst != nullptr) && (desc->cb.setState != nullptr)) {
             desc->cb.setState(inst, pluginData, pluginLen);
         }
-    }
 
-    // Whole-stream read. The blob carries whatever the plug-in wanted to keep - for G2 Alike that is
-    // a patch path, which has no fixed length - and a single fixed-size read would silently truncate
-    // a long one into a path that does not exist.
-    static std::vector<uint8_t> read_stream(IBStream * state) {
-        std::vector<uint8_t> blob;
-        uint8_t              chunk[4096];
-        int32                got = 0;
-
-        while ((state->read(chunk, (int32)sizeof(chunk), &got) == kResultOk) && (got > 0)) {
-            blob.insert(blob.end(), chunk, chunk + got);
-
-            if (got < (int32)sizeof(chunk)) {
-                break;
+        // AND THEN READ BACK, because the plug-in's own bytes may have set parameters the wrapper
+        // never saved - every NO_SAVE one, and all of them in a project from before the wrapper
+        // saved any. Without this the stored copy goes on reporting defaults the plug-in is not at.
+        if ((inst != nullptr) && (desc->cb.getParam != nullptr)) {
+            for (uint32_t i = 0; i < params.count; i++) {
+                synthlib_params_set(&params, params.ids[i], desc->cb.getParam(inst, params.ids[i]));
             }
         }
-        return blob;
     }
 
     std::atomic<int32>          refCount;
     const tSynthLibPluginDesc * desc;
-    void *                      inst = nullptr;
-    std::vector<double>         params;
+    void *                      inst   = nullptr;
+    int64                       serial = 0;
+    tSynthLibParamStore         params;
     double                      sampleRate;
-    bool                        active;
     IConnectionPoint *          peer    = nullptr;
     IHostApplication *          hostApp = nullptr;
 };
@@ -797,27 +921,68 @@ class SynthLibController : public IEditController, public IMidiMapping, public I
 public:
     explicit SynthLibController(const tSynthLibPluginDesc * descriptor)
         : refCount(1), desc(descriptor) {
-        uint32_t count = synthlib_param_count(desc, instance_for_edits());
+        // WITH NO INSTANCE, deliberately: which processor this controller belongs to is not known
+        // until the host connects the two, and the parameter list cannot depend on it - see the
+        // note on paramCount() in synthlibPlugin.h.
+        synthlib_params_init(&params, desc, nullptr);
 
-        params.resize(count, 0.0);
+        std::lock_guard<std::mutex> lock(gRegistryLock);
 
-        for (uint32_t i = 0; i < count; i++) {
-            tSynthLibParamDesc p;
-
-            if (synthlib_param_describe(desc, instance_for_edits(), i, &p) == true) {
-                params[i] = p.defaultNormalized;
-            }
-        }
-        gEditController.store(this);
+        gControllers.push_back(this);
     }
 
     virtual ~SynthLibController(void) {
-        if (gEditController.load() == this) {
-            gEditController.store(nullptr);
-        }
+        {
+            std::lock_guard<std::mutex> lock(gRegistryLock);
 
-        if (gEditHandler.load() == componentHandler) {
-            gEditHandler.store(nullptr);
+            for (size_t i = 0; i < gControllers.size(); i++) {
+                if (gControllers[i] == this) {
+                    gControllers.erase(gControllers.begin() + (long)i);
+                    break;
+                }
+            }
+        }
+        synthlib_params_free(&params);
+    }
+
+    // THE PROCESSOR'S INSTANCE, if there is one this controller can be sure is its own. The caller
+    // holds gRegistryLock.
+    void * instance_locked(void) const {
+        int64 bound = boundSerial.load();
+
+        if (bound != 0) {
+            return instance_for_serial_locked(bound);
+        }
+        return sole_instance_locked(desc);
+    }
+
+    void * instance(void) const {
+        std::lock_guard<std::mutex> lock(gRegistryLock);
+
+        return instance_locked();
+    }
+
+    double param_value(uint32_t id) const {
+        return synthlib_params_get(&params, id);
+    }
+
+    // BEGIN, PERFORM, END, as one gesture. That is what lets a host record the move as automation
+    // and show the parameter as touched, rather than seeing a value appear from nowhere. Main thread.
+    void report_edit(uint32_t id, double normalized) {
+        if (componentHandler != nullptr) {
+            componentHandler->beginEdit((ParamID)id);
+            componentHandler->performEdit((ParamID)id, normalized);
+            componentHandler->endEdit((ParamID)id);
+        }
+        setParamNormalized((ParamID)id, normalized);
+    }
+
+    // ONLY THE CONTROLLER CAN SAY THIS. restartComponent() lives on IComponentHandler, which a
+    // processor never sees - which is why a latency worked out inside the processor has to come
+    // round to here before any host will hear of it. Main thread.
+    void report_latency_changed(void) {
+        if (componentHandler != nullptr) {
+            componentHandler->restartComponent(kLatencyChanged);
         }
     }
 
@@ -858,10 +1023,6 @@ public:
     }
 
     // ---- IConnectionPoint ----------------------------------------------------------------------
-    //
-    // The processor announces things the editor has no other way to learn. Without this a panel has
-    // no way to know WHICH processor it belongs to, which is how one showing a microphone came to
-    // report that it was capturing a Kronos - it was reading the other instance's figures.
     tresult PLUGIN_API connect(IConnectionPoint * other) SMTG_OVERRIDE {
         peer = other;
         return kResultOk;
@@ -870,29 +1031,70 @@ public:
     tresult PLUGIN_API disconnect(IConnectionPoint * other) SMTG_OVERRIDE {
         (void)other;
         peer = nullptr;
+        boundSerial.store(0);
         return kResultOk;
     }
 
+    // THE PROCESSOR TELLING US WHICH ONE IT IS, and otherwise the plug-in talking to itself across the
+    // split - both halves share one instance, so a message the plug-in sent from its processor side
+    // arrives here and is handed back to that same instance, now on this side of the connection.
     tresult PLUGIN_API notify(IMessage * message) SMTG_OVERRIDE {
-        return SynthLibProcessor::deliver_message(desc, instance_for_edits(), message);
+        if (message == nullptr) {
+            return kInvalidArgument;
+        }
+        const char * id    = message->getMessageID();
+        int64        value = 0;
+
+        if (id == nullptr) {
+            return kResultOk;
+        }
+
+        if (message->getAttributes()->getInt("value", value) != kResultOk) {
+            value = 0;
+        }
+
+        if (strcmp(id, BIND_MESSAGE) == 0) {
+            boundSerial.store(value);
+            return kResultOk;
+        }
+
+        if ((strncmp(id, WRAPPER_MESSAGE, strlen(WRAPPER_MESSAGE)) == 0) ||
+            (desc->cb.message == nullptr)) {
+            return kResultOk;
+        }
+        void * inst = instance();
+
+        if (inst != nullptr) {
+            desc->cb.message(inst, id, (int64_t)value);
+        }
+        return kResultOk;
     }
 
     // ---- IMidiMapping --------------------------------------------------------------------------
     //
-    // Straight out of the parameter table - see the note on midiControl in synthlibPlugin.h. Most of
-    // this maps a MIDI control onto a parameter that already exists rather than inventing one.
+    // The plug-in's own mapping when it has one, which can tell the channels apart; otherwise
+    // straight out of the parameter table, the same on every channel, as the applications' Omni is.
     tresult PLUGIN_API getMidiControllerAssignment(int32 busIndex, int16 channel,
                                                    CtrlNumber midiControllerNumber,
                                                    ParamID & id) SMTG_OVERRIDE {
-        (void)channel;      // one engine voice; all channels drive it, as the applications' Omni does
-
-        if (busIndex != 0) {
+        if ((busIndex != 0) || (midiControllerNumber < 0)) {
             return kResultFalse;
         }
-        void *   inst  = instance_for_edits();
-        uint32_t count = synthlib_param_count(desc, inst);
 
-        for (uint32_t i = 0; i < count; i++) {
+        if (desc->cb.midiMapping != nullptr) {
+            uint32_t mapped = 0;
+
+            if ((desc->cb.midiMapping(desc, instance(), (uint8_t)(channel & 0x0F),
+                                      (int16_t)midiControllerNumber, &mapped) == true) &&
+                (synthlib_params_index(&params, mapped) >= 0)) {
+                id = (ParamID)mapped;
+                return kResultTrue;
+            }
+            return kResultFalse;
+        }
+        void * inst = instance();
+
+        for (uint32_t i = 0; i < params.count; i++) {
             tSynthLibParamDesc p;
 
             if ((synthlib_param_describe(desc, inst, i, &p) == true) &&
@@ -906,63 +1108,106 @@ public:
 
     // ---- IEditController -----------------------------------------------------------------------
 
-    // The host hands the controller the processor's saved state so the two agree. Parameters are
-    // read back out of it; anything else in there is the processor's business.
+    // THE HOST HANDS THE CONTROLLER THE PROCESSOR'S SAVED STATE so the panel comes up showing what
+    // was loaded. The wrapper's own parameters are read straight out of it; anything the plug-in
+    // keeps in its own bytes, only the plug-in can read - see stateParams().
     tresult PLUGIN_API setComponentState(IBStream * state) SMTG_OVERRIDE {
         if (state == nullptr) {
             return kResultOk;
         }
-        std::vector<uint8_t> blob;
-        uint8_t              chunk[4096];
-        int32                got = 0;
+        std::vector<uint8_t>             blob = read_stream(state);
+        std::vector<tSynthLibParamValue> values((params.count > 0u) ? params.count : 1u);
+        uint32_t                         count      = 0;
+        const void *                     pluginData = nullptr;
+        size_t                           pluginLen  = 0;
 
-        while ((state->read(chunk, (int32)sizeof(chunk), &got) == kResultOk) && (got > 0)) {
-            blob.insert(blob.end(), chunk, chunk + got);
-
-            if (got < (int32)sizeof(chunk)) {
-                break;
-            }
+        if (synthlib_state_read(&params, blob.empty() ? nullptr : blob.data(), blob.size(),
+                                values.data(), params.count, &count, &pluginData, &pluginLen) == false) {
+            return kResultOk;
         }
-        std::vector<double> values(params.size(), 0.0);
-        uint32_t            count = 0;
 
-        if (synthlib_state_read(desc, blob.empty() ? nullptr : blob.data(), blob.size(),
-                                values.empty() ? nullptr : values.data(),
-                                &count, nullptr, nullptr) == true) {
-            for (uint32_t i = 0; i < count; i++) {
-                params[i] = values[i];
+        for (uint32_t i = 0; i < count; i++) {
+            synthlib_params_set(&params, values[i].id, values[i].value);
+        }
+
+        if ((desc->cb.stateParams != nullptr) && (pluginData != nullptr) && (pluginLen > 0u)) {
+            count = desc->cb.stateParams(desc, pluginData, pluginLen, values.data(), params.count);
+
+            for (uint32_t i = 0; (i < count) && (i < params.count); i++) {
+                synthlib_params_set(&params, values[i].id, values[i].value);
             }
         }
         return kResultOk;
     }
 
+    // THE CONTROLLER'S OWN STATE, which is a different thing from the processor's and exactly where
+    // an editor's size belongs: the processor has no business knowing how big a window is. Line based
+    // and keyed, so an older build skips a line it does not know rather than rejecting the lot - and
+    // so GenBridge's own "GENBRIDGEGUI1 / editor=w,h", written before it moved onto this wrapper,
+    // reads back as it is.
+    //
+    // THE HEIGHT IS WRITTEN BUT NEVER READ. With an aspect lock it is derived from the width, and a
+    // saved height is the aspect of the canvas AS IT WAS: GenBridge grew a row on 2026-09-09 and every
+    // project saved before then reopened too short until a resize put it right.
     tresult PLUGIN_API setState(IBStream * state) SMTG_OVERRIDE {
-        (void)state;
+        if (state == nullptr) {
+            return kResultFalse;
+        }
+        std::vector<uint8_t> blob = read_stream(state);
+        std::string          text(blob.begin(), blob.end());
+        size_t               at = text.find("editor=");
+        double               width = 0.0;
+
+        // SANITY-CHECKED, not trusted. This comes out of a project file, and a size the user cannot
+        // see or cannot fit on a screen would have no way back short of editing the project.
+        if ((at != std::string::npos) && (sscanf(text.c_str() + at, "editor=%lf", &width) == 1) &&
+            (width >= desc->editorMinWidth) &&
+            (width <= ((desc->editorMaxWidth > 0.0) ? desc->editorMaxWidth : 16384.0))) {
+            editorWidth = width;
+        }
         return kResultOk;
     }
 
     tresult PLUGIN_API getState(IBStream * state) SMTG_OVERRIDE {
-        (void)state;
-        return kResultOk;
+        if ((state == nullptr) || (desc->editorDefaultWidth <= 0.0)) {
+            return (state == nullptr) ? kResultFalse : kResultOk;
+        }
+        double width  = current_editor_width();
+        double height = (desc->editorAspect > 0.0) ? (width / desc->editorAspect) : width;
+        char   text[96];
+        int    len     = snprintf(text, sizeof(text), "SYNTHLIBGUI1\neditor=%.0f,%.0f\n", width, height);
+        int32  written = 0;
+
+        return (state->write(text, (int32)len, &written) == kResultOk) ? kResultOk : kResultFalse;
     }
 
     int32 PLUGIN_API getParameterCount(void) SMTG_OVERRIDE {
-        return (int32)synthlib_param_count(desc, instance_for_edits());
+        return (int32)params.count;
     }
 
     tresult PLUGIN_API getParameterInfo(int32 paramIndex, ParameterInfo & info) SMTG_OVERRIDE {
         tSynthLibParamDesc p;
 
-        if ((paramIndex < 0) ||
-            (synthlib_param_describe(desc, instance_for_edits(), (uint32_t)paramIndex, &p) == false)) {
+        // ZEROED FIRST, EVEN ON THE FAILING PATH. A caller has no business reading info after a
+        // refusal, and one that does should see nothing rather than the last parameter's details,
+        // which is what an untouched struct reused round a loop would show it.
+        memset(&info, 0, sizeof(info));
+
+        if ((paramIndex < 0) || ((uint32_t)paramIndex >= params.count) ||
+            (synthlib_param_describe(desc, instance(), (uint32_t)paramIndex, &p) == false)) {
             return kResultFalse;
         }
-        memset(&info, 0, sizeof(info));
         info.id                     = (ParamID)p.id;
         info.stepCount              = p.stepCount;
         info.unitId                 = 0;                    // kRootUnitId
-        info.flags                  = ParameterInfo::kCanAutomate;
         info.defaultNormalizedValue = p.defaultNormalized;
+
+        if ((p.flags & SYNTHLIB_PARAM_HIDDEN) != 0u) {
+            info.flags = ParameterInfo::kIsHidden;
+        } else {
+            info.flags = ParameterInfo::kCanAutomate |
+                         (((p.flags & SYNTHLIB_PARAM_LIST) != 0u) ? ParameterInfo::kIsList : 0);
+        }
         copy_name(info.title, p.title);
         copy_name(info.shortTitle, (p.shortTitle[0] != '\0') ? p.shortTitle : p.title);
         copy_name(info.units, synthlib_param_units(p.unit));
@@ -971,10 +1216,12 @@ public:
 
     tresult PLUGIN_API getParamStringByValue(ParamID id, ParamValue valueNormalized,
                                              String128 string) SMTG_OVERRIDE {
-        char text[64];
+        tSynthLibParamDesc p;
+        void *             inst = instance();
+        char               text[128];
 
-        if (synthlib_param_text(desc, instance_for_edits(), (uint32_t)id, valueNormalized,
-                                text, sizeof(text)) == false) {
+        if ((synthlib_params_describe(&params, desc, inst, (uint32_t)id, &p) == false) ||
+            (synthlib_param_text(desc, inst, &p, valueNormalized, text, sizeof(text)) == false)) {
             return kResultFalse;
         }
         copy_name(string, text);
@@ -992,7 +1239,7 @@ public:
     ParamValue PLUGIN_API normalizedParamToPlain(ParamID id, ParamValue valueNormalized) SMTG_OVERRIDE {
         tSynthLibParamDesc p;
 
-        if (synthlib_param_by_id(desc, instance_for_edits(), (uint32_t)id, &p) == false) {
+        if (synthlib_params_describe(&params, desc, instance(), (uint32_t)id, &p) == false) {
             return valueNormalized;
         }
         return synthlib_param_to_plain(&p, valueNormalized);
@@ -1001,43 +1248,38 @@ public:
     ParamValue PLUGIN_API plainParamToNormalized(ParamID id, ParamValue plainValue) SMTG_OVERRIDE {
         tSynthLibParamDesc p;
 
-        if (synthlib_param_by_id(desc, instance_for_edits(), (uint32_t)id, &p) == false) {
+        if (synthlib_params_describe(&params, desc, instance(), (uint32_t)id, &p) == false) {
             return plainValue;
         }
         return synthlib_param_to_normalized(&p, plainValue);
     }
 
     ParamValue PLUGIN_API getParamNormalized(ParamID id) SMTG_OVERRIDE {
-        return (id < (ParamID)params.size()) ? params[id] : 0.0;
+        return synthlib_params_get(&params, (uint32_t)id);
     }
 
     tresult PLUGIN_API setParamNormalized(ParamID id, ParamValue value) SMTG_OVERRIDE {
-        if (id >= (ParamID)params.size()) {
+        double clamped = synthlib_param_clamp(value);
+
+        if (synthlib_params_set(&params, (uint32_t)id, clamped) == false) {
             return kResultFalse;
         }
 
-        if (value < 0.0) {
-            value = 0.0;
-        } else if (value > 1.0) {
-            value = 1.0;
-        }
-        params[id] = value;
+        // AND STRAIGHT INTO THE INSTANCE TOO, for a plug-in that asked - see controllerAppliesParams.
+        // With a host that routes properly this is the same value the processor is about to be given
+        // anyway; with one that does not, it is the only way a move on the host's own panel is heard.
+        if ((desc->controllerAppliesParams == true) && (desc->cb.setParam != nullptr)) {
+            void * inst = instance();
 
-        // AND STRAIGHT INTO THE ENGINE TOO, when there is exactly one instance of this variant to
-        // put it into - see the registry note above. With a host that routes properly this is the
-        // same value the processor is about to be given anyway; with one that does not, it is the
-        // only way a move on the host's generic panel is heard at all.
-        void * inst = instance_for_edits();
-
-        if ((inst != nullptr) && (desc->cb.setParam != nullptr)) {
-            desc->cb.setParam(inst, (uint32_t)id, value);
+            if (inst != nullptr) {
+                desc->cb.setParam(inst, (uint32_t)id, clamped);
+            }
         }
         return kResultOk;
     }
 
     tresult PLUGIN_API setComponentHandler(IComponentHandler * handler) SMTG_OVERRIDE {
         componentHandler = handler;
-        gEditHandler.store(handler);
         return kResultOk;
     }
 
@@ -1049,7 +1291,8 @@ public:
         if ((desc->cb.createView == nullptr) || (desc->editorDefaultWidth <= 0.0)) {
             return nullptr;         // no editor; the host draws its own panel from the parameters
         }
-        return synthlib_vst3_create_view(desc, instance_for_edits());
+        return synthlib_vst3_create_view(desc, instance(), (IEditController *)this, editorWidth,
+                                         &editorWidth);
     }
 
     static FUnknown * createInstance(const tSynthLibPluginDesc * d) {
@@ -1057,48 +1300,120 @@ public:
     }
 
 private:
-    // The processor's instance for THIS variant, when there is exactly one to be sure about.
-    void * instance_for_edits(void) const {
-        return instance_of(desc);
+    // What this project's editor is, or would open at: its own restored width, else the machine's
+    // remembered one, else the default.
+    double current_editor_width(void) const {
+        if (editorWidth > 0.0) {
+            return editorWidth;
+        }
+
+        if (desc->editorWidthLoad != nullptr) {
+            double saved = (double)desc->editorWidthLoad();
+
+            if ((saved >= desc->editorMinWidth) &&
+                ((desc->editorMaxWidth <= 0.0) || (saved <= desc->editorMaxWidth))) {
+                return saved;
+            }
+        }
+        return desc->editorDefaultWidth;
     }
 
     std::atomic<int32>          refCount;
     const tSynthLibPluginDesc * desc;
+    tSynthLibParamStore         params;
     IComponentHandler *         componentHandler = nullptr;
     IConnectionPoint *          peer             = nullptr;
-    std::vector<double>         params;
+
+    // The serial the processor announced, or 0 before it has - see "Which processor is mine".
+    std::atomic<int64>          boundSerial{0};
+
+    // This project's editor width, restored by setState() and kept current by the open view; 0 until
+    // either has said anything. Main thread only, like both of them.
+    double                      editorWidth = 0.0;
 };
 
 // ------------------------------------------------------------------------------------------------
 // What the plug-in may ask of us
 // ------------------------------------------------------------------------------------------------
 
-void synthlib_plugin_param_edited(uint32_t id, double normalized) {
-    IComponentHandler * handler = gEditHandler.load();
-    IEditController *   ctrl    = gEditController.load();
+// Every controller that belongs to this instance - normally one, and none at all when the host has
+// not connected the two halves and there is more than one instance to choose between. Collected
+// under the lock and used outside it: everything that destroys a controller runs on the main thread,
+// which is also where every caller of this is.
+static std::vector<SynthLibController *> controllers_of(void * inst) {
+    std::vector<SynthLibController *> found;
+    std::lock_guard<std::mutex>       lock(gRegistryLock);
 
-    // BEGIN, PERFORM, END, as one gesture. That is what lets a host record the move as automation
-    // and show the parameter as touched, rather than seeing a value appear from nowhere.
-    if (handler != nullptr) {
-        handler->beginEdit((ParamID)id);
-        handler->performEdit((ParamID)id, normalized);
-        handler->endEdit((ParamID)id);
-    }
-
-    if (ctrl != nullptr) {
-        ctrl->setParamNormalized((ParamID)id, normalized);
-    }
-}
-
-bool synthlib_plugin_send_message(void * inst, const char * id, int64_t value) {
-    for (int i = 0; i < MAX_VARIANTS; i++) {
-        SynthLibProcessor * p = gProcessors[i].load();
-
-        if ((p != nullptr) && (p->plugin_instance() == inst)) {
-            return p->post_message(id, value);
+    for (SynthLibController * c : gControllers) {
+        if ((inst != nullptr) && (c->instance_locked() == inst)) {
+            found.push_back(c);
         }
     }
-    return false;
+    return found;
+}
+
+typedef struct {
+    void *   inst;
+    uint32_t id;
+    double   value;
+    bool     latency;
+} tHostPost;
+
+// ON THE MAIN THREAD, and possibly some time after the plug-in asked - so the instance is found
+// again here, from scratch. If it has gone in the meantime there is simply nobody left to tell.
+static void deliver_to_host(void * ctx) {
+    tHostPost * post = (tHostPost *)ctx;
+
+    for (SynthLibController * c : controllers_of(post->inst)) {
+        if (post->latency == true) {
+            c->report_latency_changed();
+        } else {
+            c->report_edit(post->id, post->value);
+        }
+    }
+    delete post;
+}
+
+void synthlib_plugin_param_edited(void * inst, uint32_t id, double normalized) {
+    if (inst == nullptr) {
+        return;
+    }
+    synthlib_run_on_main(deliver_to_host,
+                         new tHostPost{ inst, id, synthlib_param_clamp(normalized), false });
+}
+
+void synthlib_plugin_latency_changed(void * inst) {
+    if (inst == nullptr) {
+        return;
+    }
+    synthlib_run_on_main(deliver_to_host, new tHostPost{ inst, 0u, 0.0, true });
+}
+
+double synthlib_plugin_param_value(void * inst, uint32_t id) {
+    // THE CONTROLLER'S COPY when there is one, because that is the value the host's own panel shows;
+    // the processor's otherwise, which is what a host that never connected the halves still updates.
+    std::vector<SynthLibController *> owners = controllers_of(inst);
+
+    if (owners.empty() == false) {
+        return owners[0]->param_value(id);
+    }
+    std::lock_guard<std::mutex> lock(gRegistryLock);
+    SynthLibProcessor *         p = processor_for_locked(inst);
+
+    return (p != nullptr) ? p->param_value(id) : 0.0;
+}
+
+// NOT AFTER terminate(). The processor is looked up under the lock and used outside it, which is safe
+// because a plug-in stops everything that sends before the host is allowed to destroy it.
+bool synthlib_plugin_send_message(void * inst, const char * id, int64_t value) {
+    SynthLibProcessor * p = nullptr;
+
+    {
+        std::lock_guard<std::mutex> lock(gRegistryLock);
+
+        p = processor_for_locked(inst);
+    }
+    return (p != nullptr) ? p->post_message(id, value) : false;
 }
 
 // ------------------------------------------------------------------------------------------------

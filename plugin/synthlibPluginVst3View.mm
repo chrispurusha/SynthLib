@@ -26,6 +26,8 @@
 #import <Cocoa/Cocoa.h>
 
 #include <atomic>
+#include <cmath>
+#include <vector>
 
 #include "pluginterfaces/base/funknown.h"
 #include "pluginterfaces/gui/iplugview.h"
@@ -35,17 +37,28 @@
 
 using namespace Steinberg;
 
-// The frame of the sole open editor, for synthlib_plugin_request_resize(). One editor at a time is
-// the same limit the rest of this wrapper works under - see the instance registry in
-// synthlibPluginVst3.cpp.
-static std::atomic<IPlugFrame *> gPlugFrame{nullptr};
-static std::atomic<IPlugView *>  gPlugView{nullptr};
+class SynthLibVst3View;
+
+// EVERY OPEN EDITOR, for synthlib_plugin_request_resize() - which names an instance, and has to find
+// that instance's window among however many are open. This was one global frame, the last editor
+// opened, so with two tracks' editors open a resize asked for by one moved the other.
+//
+// MAIN THREAD ONLY, like everything that touches it: a host attaches, removes and destroys views
+// there, and request_resize() is documented as main-thread.
+static std::vector<SynthLibVst3View *> gOpenViews;
 
 class SynthLibVst3View : public IPlugView {
 public:
-    SynthLibVst3View(const tSynthLibPluginDesc * descriptor, void * pluginInstance)
-        : refCount(1), desc(descriptor), inst(pluginInstance) {
+    SynthLibVst3View(const tSynthLibPluginDesc * descriptor, void * pluginInstance, FUnknown * ownerIn,
+                     double initialWidth, double * widthSinkIn)
+        : refCount(1), desc(descriptor), inst(pluginInstance), owner(ownerIn), widthSink(widthSinkIn) {
         const tSynthLibPluginDesc * d = desc;
+
+        // THE OWNER OUTLIVES THE VIEW, which is what makes widthSink safe to write through: it points
+        // into the controller, and a host is free to release the controller before the view.
+        if (owner != nullptr) {
+            owner->addRef();
+        }
 
         // RESTORE THE SIZE IN THE CONSTRUCTOR, not in attached(). getSize() is asked BEFORE
         // attached(), so a width recovered any later opens the window at the default and then
@@ -53,24 +66,48 @@ public:
         //
         // WIDTH ONLY IS STORED: with an aspect lock the height is derived from it, so keeping both
         // would be storing the same fact twice and inviting them to disagree.
+        //
+        // THE PROJECT'S OWN WIDTH FIRST, when the controller restored one; then the machine-wide
+        // preference; then the default.
         double width = d->editorDefaultWidth;
 
-        if (d->editorWidthLoad != nullptr) {
+        if (initialWidth > 0.0) {
+            width = initialWidth;
+        } else if (d->editorWidthLoad != nullptr) {
             double saved = (double)d->editorWidthLoad();
 
             if (saved >= d->editorMinWidth) {
                 width = saved;
             }
         }
-        currentWidth  = width;
-        currentHeight = height_for(width);
+        currentWidth  = clamp_width(width);
+        currentHeight = height_for(currentWidth);
     }
 
     virtual ~SynthLibVst3View(void) {
-        if (gPlugView.load() == this) {
-            gPlugView.store(nullptr);
-            gPlugFrame.store(nullptr);
+        forget();
+
+        if (owner != nullptr) {
+            owner->release();
+            owner = nullptr;
         }
+    }
+
+    void * instance(void) const {
+        return inst;
+    }
+
+    bool request_resize(double width, double height) {
+        if (plugFrame == nullptr) {
+            return false;       // no channel to the host; the caller must leave the window alone
+        }
+        ViewRect rect = {};
+
+        rect.left   = 0;
+        rect.top    = 0;
+        rect.right  = (int32)width;
+        rect.bottom = (int32)height;
+        return (plugFrame->resizeView(this, &rect) == kResultOk);
     }
 
     tresult PLUGIN_API queryInterface(const TUID iid, void ** obj) SMTG_OVERRIDE {
@@ -112,13 +149,21 @@ public:
         }
         NSView * host = (__bridge NSView *)parent;
 
-        editorView = (__bridge_transfer NSView *)d->cb.createView(inst, currentWidth, currentHeight);
+        editorView = (__bridge_transfer NSView *)d->cb.createView(d, inst, currentWidth, currentHeight);
 
         if (editorView == nil) {
             return kResultFalse;    // better to fail than to show the host an empty window
         }
+
+        // RESIZED WITH ITS PARENT, ON EVERY FRAME OF A DRAG. A host calls onSize() when a drag ENDS,
+        // while AppKit resizes the parent throughout it - so without the mask the contents sat at
+        // their old size until the user let go, which is exactly what GenBridge's editor did until
+        // this was put back. The two do not fight: onSize() then asks for a frame the view already has.
+        [editorView setFrame:NSMakeRect(0.0, 0.0, currentWidth, currentHeight)];
+        [editorView setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
         [host addSubview:editorView];
-        gPlugView.store(this);
+        forget();
+        gOpenViews.push_back(this);
         return kResultOk;
     }
 
@@ -134,8 +179,7 @@ public:
             }
             editorView = nil;
         }
-        gPlugView.store(nullptr);
-        gPlugFrame.store(nullptr);
+        forget();
         return kResultOk;
     }
 
@@ -183,13 +227,25 @@ public:
         currentHeight = (double)(newSize->bottom - newSize->top);
 
         // Remembered for next time. Written on every resize rather than on close, because a host is
-        // under no obligation to tell a view it is going away in any particular order.
+        // under no obligation to tell a view it is going away in any particular order - to the
+        // project, through the controller, and to the machine-wide preference as the starting point
+        // for an instance that has never been opened.
+        if (widthSink != nullptr) {
+            *widthSink = currentWidth;
+        }
+
         if (desc->editorWidthSave != nullptr) {
             desc->editorWidthSave((long)currentWidth);
         }
 
-        if (editorView != nil) {
+        // ONLY WHEN IT DISAGREES. The autoresizing mask has usually put the view here already, and
+        // setting a frame it already has still runs a layout pass.
+        if ((editorView != nil) &&
+            (NSEqualRects([editorView frame], NSMakeRect(0.0, 0.0, currentWidth, currentHeight)) == NO)) {
             [editorView setFrame:NSMakeRect(0.0, 0.0, currentWidth, currentHeight)];
+        }
+
+        if (editorView != nil) {
 
             if (desc->cb.viewResized != nullptr) {
                 desc->cb.viewResized(inst, (__bridge void *)editorView, currentWidth, currentHeight);
@@ -205,7 +261,6 @@ public:
 
     tresult PLUGIN_API setFrame(IPlugFrame * frame) SMTG_OVERRIDE {
         plugFrame = frame;
-        gPlugFrame.store(frame);
         return kResultOk;
     }
 
@@ -220,27 +275,51 @@ public:
     // window, simply uncover more rows rather than drawing larger. The application never shows that
     // because its window cannot be made taller without also becoming wider.
     //
-    // Width is treated as the authority and height derived from it: a drag usually changes both, and
-    // following the width matches how the application's own resize feels.
+    // NEITHER EDGE IS THE AUTHORITY, AND THERE IS NO HISTORY. A host proposes the pointer's rect over
+    // and over through a drag and applies what comes back, and in that rect the dimension the user is
+    // NOT dragging still holds its old value. Following the width alone - this wrapper's first answer
+    // - ignored a drag of the bottom edge entirely. Deciding which edge moved by comparing against the
+    // size last answered - GenBridge's first two - made the reply to a rect depend on what had come
+    // before it, and the window jumped and snapped back mid-drag.
+    //
+    // Averaging the width the rect implies with the width its HEIGHT implies depends on nothing but
+    // the rect in hand. It is idempotent, so an answer fed back comes back unchanged, and continuous,
+    // so there is no branch to flip: dragging one edge moves the other at half rate for a step or two
+    // and converges on exactly the size asked for. tools/vst3check in GenBridge holds it to both.
+    //
+    // ROUNDED, NOT TRUNCATED. A host feeds each answer back in, so a truncation is not a one-off half
+    // pixel - it is a step taken every time.
     tresult PLUGIN_API checkSizeConstraint(ViewRect * rect) SMTG_OVERRIDE {
         if (rect == nullptr) {
             return kInvalidArgument;
         }
-        const tSynthLibPluginDesc * d     = desc;
-        int32                       width = rect->right - rect->left;
-
-        if (width < (int32)d->editorMinWidth) {
-            width = (int32)d->editorMinWidth;
-        }
-        rect->right = rect->left + width;
+        const tSynthLibPluginDesc * d      = desc;
+        double                      wanted = (double)(rect->right - rect->left);
 
         if (d->editorAspect > 0.0) {
-            rect->bottom = rect->top + (int32)((double)width / d->editorAspect);
+            double fromHeight = (double)(rect->bottom - rect->top) * d->editorAspect;
+
+            wanted = (wanted + fromHeight) * 0.5;
+        }
+        wanted      = clamp_width(wanted);
+        rect->right = rect->left + (int32)lround(wanted);
+
+        if (d->editorAspect > 0.0) {
+            rect->bottom = rect->top + (int32)lround(wanted / d->editorAspect);
         }
         return kResultTrue;
     }
 
 private:
+    void forget(void) {
+        for (size_t i = 0; i < gOpenViews.size(); i++) {
+            if (gOpenViews[i] == this) {
+                gOpenViews.erase(gOpenViews.begin() + (long)i);
+                return;
+            }
+        }
+    }
+
     double height_for(double width) const {
         if (desc->editorAspect > 0.0) {
             return width / desc->editorAspect;
@@ -248,33 +327,40 @@ private:
         return width;       // free-resizing editors get a square default and the host's own frame after
     }
 
+    double clamp_width(double width) const {
+        if (width < desc->editorMinWidth) {
+            width = desc->editorMinWidth;
+        }
+
+        if ((desc->editorMaxWidth > 0.0) && (width > desc->editorMaxWidth)) {
+            width = desc->editorMaxWidth;
+        }
+        return width;
+    }
+
     std::atomic<int32>          refCount;
     const tSynthLibPluginDesc * desc;
     void *                      inst;
+    FUnknown *                  owner;
+    double *                    widthSink;
     NSView * __strong  editorView    = nil;
     double             currentWidth  = 0.0;
     double             currentHeight = 0.0;
     IPlugFrame *       plugFrame     = nullptr;
 };
 
-IPlugView * synthlib_vst3_create_view(const tSynthLibPluginDesc * desc, void * inst) {
-    return new SynthLibVst3View(desc, inst);
+IPlugView * synthlib_vst3_create_view(const tSynthLibPluginDesc * desc, void * inst, FUnknown * owner,
+                                      double initialWidth, double * widthSink) {
+    return new SynthLibVst3View(desc, inst, owner, initialWidth, widthSink);
 }
 
 // ------------------------------------------------------------------------------------------------
 
-bool synthlib_plugin_request_resize(double width, double height) {
-    IPlugFrame * frame = gPlugFrame.load();
-    IPlugView *  view  = gPlugView.load();
-
-    if ((frame == nullptr) || (view == nullptr)) {
-        return false;       // no channel to the host; the caller must leave the window alone
+bool synthlib_plugin_request_resize(void * inst, double width, double height) {
+    for (SynthLibVst3View * view : gOpenViews) {
+        if (view->instance() == inst) {
+            return view->request_resize(width, height);
+        }
     }
-    ViewRect rect = {};
-
-    rect.left   = 0;
-    rect.top    = 0;
-    rect.right  = (int32)width;
-    rect.bottom = (int32)height;
-    return (frame->resizeView(view, &rect) == kResultOk);
+    return false;           // no editor of this instance's open; nothing to resize
 }

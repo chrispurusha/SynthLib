@@ -73,6 +73,43 @@ void synthlib_midi_set_out_port(MIDIPortRef port);
 
 bool synthlib_midi_send_to(const uint8_t * data, uint32_t length, MIDIEndpointRef dest);
 
+// ── WHICH PORTS THE USER CHOSE ──────────────────────────────────────────────────────────────────
+//
+// Both applications used to find their device only by broadcasting an identity request to every
+// output and taking whichever input answered, then GUESSING the output from the input's entity. That
+// is right on a single-cable rig and wrong on the owner's, where a synth is driven through one
+// interface and answers through another (see find_dest_for_source() and the destination probe). A
+// port the user picks settles it; the scan stays as the automatic choice.
+//
+// REMEMBERED BY NAME, because a MIDIEndpointRef does not survive a setup change or a relaunch and a
+// name is what the user picked. "" means automatic. A chosen port that is not present is WAITED FOR,
+// never swapped for another - the fall-through that sent GenBridge's notes to whatever came first.
+//
+// A SCOPE keeps separate choices for separate devices. SynthEdit plays a Z1 on one interface and a
+// Voyager on another, so one choice per application would be wrong the moment it switched; it scopes
+// by device configuration. EmuUtility has one device and uses the unscoped choice.
+#define SYNTHLIB_MIDI_PORT_NAME_MAX    (128)
+
+// UI thread. Loads the choice saved under `scope` (NULL or "" for the application-wide one) and makes
+// it the current one. Call it before the MIDI thread's first scan, and again whenever the device
+// the choice belongs to changes.
+void synthlib_midi_ports_set_scope(const char * scope);
+
+// UI thread. Records a new choice under the current scope and saves it. Either may be "" (automatic).
+void synthlib_midi_ports_choose(const char * input, const char * output);
+
+// Any thread: the MIDI thread consults it at every scan.
+void synthlib_midi_ports_chosen(char * input, size_t inputSize, char * output, size_t outputSize);
+
+// The ports present now, by name, in CoreMIDI's order. Returns how many were written.
+uint32_t synthlib_midi_port_names(bool inputs, char names[][SYNTHLIB_MIDI_PORT_NAME_MAX], uint32_t max);
+
+// The endpoint carrying exactly `name` now, or 0 if none does, i.e. the chosen port is unplugged.
+MIDIEndpointRef synthlib_midi_find_port(bool input, const char * name);
+
+// An endpoint's name as the lists show it: its display name, or its plain name if it has none.
+void synthlib_midi_port_name(MIDIEndpointRef endpoint, char * out, size_t size);
+
 #ifdef __cplusplus
 }
 #endif

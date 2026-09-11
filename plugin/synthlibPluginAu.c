@@ -18,7 +18,7 @@
  */
 
 // THE AUDIO UNIT SIDE, AND NOTHING ELSE. Everything specific to a particular plug-in arrives through
-// synthlib_plugin_descriptor(), exactly as it does for the VST3 wrapper beside this.
+// synthlib_plugin_variants(), exactly as it does for the VST3 wrapper beside this.
 //
 // AUv2, NOT AUv3, and the reason is distribution. An AUv3 is an app EXTENSION: it has to be embedded
 // in a containing .app, installed under /Applications and launched once so that pluginkit registers
@@ -34,17 +34,22 @@
 // selector into a method, and every method's first argument is the pointer the factory returned. All
 // of that is below, in the open.
 //
-// INSTRUMENTS ONLY, SO FAR. A plug-in with an audio INPUT needs two more things a host uses to feed
-// it - kAudioUnitProperty_SetRenderCallback and kAudioUnitProperty_MakeConnection, and an
-// AudioUnitRender() pull in au_render() - and they are deliberately absent rather than written
-// blind: nothing in these projects has an Audio Unit with an input yet, and untested plumbing that
-// only looks right is worse than a property that honestly answers "not supported". Add them when the
-// first effect arrives, against a real host.
+// AN EFFECT'S INPUT IS PULLED, not handed over: kAudioUnitProperty_SetRenderCallback or
+// kAudioUnitProperty_MakeConnection says where from, and au_render() fetches it. That path is written
+// and auval exercises the properties, but the SAMPLES are proven only once a plug-in that reads its
+// input has been run in a real host - MidiSyncTool and GenBridge will be the first.
+//
+// EVERY INSTANCE IS ITS OWN. An Audio Unit is one object, so unlike VST3 there is no question of
+// which half belongs to which - but the plug-in's calls back into the wrapper still name their
+// instance, and are looked up in the table below rather than assumed to mean the only one loaded.
 
 #include <AudioToolbox/AudioToolbox.h>
 #include <AudioUnit/AudioUnit.h>
+#include <CoreAudio/HostTime.h>
 #include <CoreFoundation/CoreFoundation.h>
 
+#include <pthread.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
@@ -55,10 +60,20 @@
 
 #define MAX_LISTENERS        (32)
 #define MAX_RENDER_NOTIFY    (8)
+#define MAX_INSTANCES        (64)
 
 // A host must tell us its slice size before rendering, but auval and a few hosts render before
 // setting it. This is what MaximumFramesPerSlice reports until then.
 #define DEFAULT_MAX_FRAMES   (4096)
+
+// Events that arrived between one render and the next, waiting for the render they belong to. Sized
+// for a burst - a chord, a controller sweep, a host scheduling automation ahead - not for a backlog:
+// every render empties it.
+#define EVENT_QUEUE_SIZE     (1024)
+
+// How many consecutive points for one parameter go to paramPoints() in one call - see the VST3
+// wrapper's MAX_POINTS, which this matches.
+#define MAX_POINTS           (64)
 
 typedef struct {
     AudioUnitPropertyID          id;
@@ -70,6 +85,18 @@ typedef struct {
     AURenderCallback proc;
     void *           userData;
 } tRenderNotify;
+
+// ONE THING THAT HAPPENED BEFORE A RENDER, to be delivered inside it: a MIDI message, or a scheduled
+// parameter value.
+typedef struct {
+    bool     isParam;
+    uint8_t  status;
+    uint8_t  data1;
+    uint8_t  data2;
+    uint32_t id;
+    double   value;             // normalized
+    uint32_t offset;            // frames into the render it belongs to
+} tQueuedEvent;
 
 typedef struct {
     // FIRST, AND IT MUST STAY FIRST. The pointer the factory returns is the address of this member,
@@ -101,10 +128,11 @@ typedef struct {
 
     double                 sampleRate;
     UInt32                 maxFrames;
+    bool                   offline;
+    bool                   bypassed;        // an effect's input handed straight through - see au_render()
     bool                   initialized;
 
-    double *               params;          // normalized, one per parameter
-    uint32_t               paramCapacity;
+    tSynthLibParamStore    params;
 
     tPropertyListener      listeners[MAX_LISTENERS];
     UInt32                 listenerCount;
@@ -121,15 +149,68 @@ typedef struct {
     UInt32                 ownedFrames;
 
     AUPreset               currentPreset;
+
+    // THE EVENT QUEUE. One consumer, the render; producers are whoever the host calls MIDIEvent and
+    // ScheduleParameters from, usually the render thread itself and occasionally a MIDI or UI thread
+    // - so producers take a spin flag against EACH OTHER and the render never waits on anything.
+    tQueuedEvent           events[EVENT_QUEUE_SIZE];
+    _Atomic uint32_t       eventWrite;
+    _Atomic uint32_t       eventRead;
+    atomic_flag            eventProducer;
 } tSynthLibAu;
 
-// The sole instance, for synthlib_plugin_param_edited(). Same limit, and the same reason, as the
-// VST3 wrapper's registry: the engines behind these plug-ins keep their state in process-wide
-// globals, so a second instance in one host would fight the first over the same engine whatever
-// this pointer said. With two loaded this goes NULL and an editor's moves simply do not reach the
-// host's automation - which is the honest outcome, rather than reaching the wrong instance.
-static tSynthLibAu * gSoleAu       = NULL;
-static int           gInstanceCount = 0;
+// ------------------------------------------------------------------------------------------------
+// The live instances
+// ------------------------------------------------------------------------------------------------
+
+// For the calls a plug-in makes back into the wrapper, which name an instance - see the foot of this
+// file. Replaces a single "sole instance" pointer that went NULL the moment a second copy loaded, so
+// that with two tracks neither editor's moves reached its host.
+static pthread_mutex_t gInstanceLock = PTHREAD_MUTEX_INITIALIZER;
+static tSynthLibAu *   gInstances[MAX_INSTANCES];
+
+static void register_au(tSynthLibAu * au) {
+    pthread_mutex_lock(&gInstanceLock);
+
+    for (int i = 0; i < MAX_INSTANCES; i++) {
+        if (gInstances[i] == NULL) {
+            gInstances[i] = au;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&gInstanceLock);
+}
+
+static void unregister_au(tSynthLibAu * au) {
+    pthread_mutex_lock(&gInstanceLock);
+
+    for (int i = 0; i < MAX_INSTANCES; i++) {
+        if (gInstances[i] == au) {
+            gInstances[i] = NULL;
+        }
+    }
+    pthread_mutex_unlock(&gInstanceLock);
+}
+
+// The unit an instance belongs to. Used on the main thread, which is also where a host disposes of a
+// unit, so what is found here cannot be closed while it is being used.
+static tSynthLibAu * au_for(void * inst) {
+    tSynthLibAu * found = NULL;
+
+    if (inst == NULL) {
+        return NULL;
+    }
+    pthread_mutex_lock(&gInstanceLock);
+
+    for (int i = 0; i < MAX_INSTANCES; i++) {
+        if ((gInstances[i] != NULL) && (gInstances[i]->inst == inst)) {
+            found = gInstances[i];
+            break;
+        }
+    }
+    pthread_mutex_unlock(&gInstanceLock);
+    return found;
+}
 
 static const tSynthLibPluginSet * variants(void) {
     static const tSynthLibPluginSet * v = NULL;
@@ -169,8 +250,18 @@ static uint32_t input_channels(const tSynthLibPluginDesc * d) {
 // Small conversions
 // ------------------------------------------------------------------------------------------------
 
-static AudioUnitParameterUnit au_unit_of(tSynthLibParamUnit unit) {
-    switch (unit) {
+static bool is_list(const tSynthLibParamDesc * p) {
+    return ((p->flags & SYNTHLIB_PARAM_LIST) != 0u) && (p->stepCount > 0);
+}
+
+static AudioUnitParameterUnit au_unit_of(const tSynthLibParamDesc * p) {
+    // A LIST IS INDEXED, whatever unit it was given - that is what makes a host draw a menu and ask
+    // for the ParameterValueStrings rather than a knob.
+    if (is_list(p) == true) {
+        return kAudioUnitParameterUnit_Indexed;
+    }
+
+    switch (p->unit) {
         case eSynthLibUnitPercent:      return kAudioUnitParameterUnit_Percent;
         case eSynthLibUnitDecibels:     return kAudioUnitParameterUnit_Decibels;
         case eSynthLibUnitHertz:        return kAudioUnitParameterUnit_Hertz;
@@ -182,6 +273,27 @@ static AudioUnitParameterUnit au_unit_of(tSynthLibParamUnit unit) {
         case eSynthLibUnitGeneric:
         default:                        return kAudioUnitParameterUnit_Generic;
     }
+}
+
+// THE RANGE AN AUDIO UNIT HOST SEES. An Audio Unit's values are PLAIN, in the range declared in its
+// ParameterInfo - where VST3's are always 0..1 - so the table's plainMin/plainMax apply, except for a
+// list, which an Indexed parameter must count from 0 to its last entry.
+static double au_min(const tSynthLibParamDesc * p) {
+    return is_list(p) ? 0.0 : p->plainMin;
+}
+
+static double au_max(const tSynthLibParamDesc * p) {
+    return is_list(p) ? (double)p->stepCount : p->plainMax;
+}
+
+static double au_to_plain(const tSynthLibParamDesc * p, double normalized) {
+    return au_min(p) + (normalized * (au_max(p) - au_min(p)));
+}
+
+static double au_to_normalized(const tSynthLibParamDesc * p, double plain) {
+    double span = au_max(p) - au_min(p);
+
+    return (span == 0.0) ? 0.0 : synthlib_param_clamp((plain - au_min(p)) / span);
 }
 
 // THE FORMAT THIS WRAPPER RENDERS, AND THE ONLY ONE IT ACCEPTS. De-interleaved 32-bit float, one
@@ -213,34 +325,41 @@ static void notify_listeners(tSynthLibAu * au, AudioUnitPropertyID id,
 // ------------------------------------------------------------------------------------------------
 
 static void apply_param(tSynthLibAu * au, AudioUnitParameterID id, double normalized) {
-    const tSynthLibPluginDesc * d = au->desc;
+    const tSynthLibPluginDesc * d       = au->desc;
+    double                      clamped = synthlib_param_clamp(normalized);
 
-    if (id >= synthlib_param_count(d, au->inst)) {
+    if (synthlib_params_set(&au->params, (uint32_t)id, clamped) == false) {
         return;
     }
 
-    if (normalized < 0.0) {
-        normalized = 0.0;
-    } else if (normalized > 1.0) {
-        normalized = 1.0;
-    }
-    au->params[id] = normalized;
-
     if ((au->inst != NULL) && (d->cb.setParam != NULL)) {
-        d->cb.setParam(au->inst, (uint32_t)id, normalized);
+        d->cb.setParam(au->inst, (uint32_t)id, clamped);
     }
 }
 
 static void restore_defaults(tSynthLibAu * au) {
-    const tSynthLibPluginDesc * d     = au->desc;
-    uint32_t                    count = synthlib_param_count(d, au->inst);
+    const tSynthLibPluginDesc * d = au->desc;
 
-    for (uint32_t i = 0; i < count; i++) {
+    for (uint32_t i = 0; i < au->params.count; i++) {
         tSynthLibParamDesc p;
 
         if (synthlib_param_describe(d, au->inst, i, &p) == true) {
             apply_param(au, (AudioUnitParameterID)p.id, p.defaultNormalized);
         }
+    }
+}
+
+// THE PLUG-IN'S OWN VALUES, read back into the store - after a state restore that may have set
+// parameters the wrapper never saved, which is every NO_SAVE one and all of them in an old project.
+static void sync_from_plugin(tSynthLibAu * au) {
+    const tSynthLibPluginDesc * d = au->desc;
+
+    if ((au->inst == NULL) || (d->cb.getParam == NULL)) {
+        return;
+    }
+
+    for (uint32_t i = 0; i < au->params.count; i++) {
+        synthlib_params_set(&au->params, au->params.ids[i], d->cb.getParam(au->inst, au->params.ids[i]));
     }
 }
 
@@ -284,14 +403,14 @@ static CFDictionaryRef copy_class_info(tSynthLibAu * au) {
     // OUR OWN BLOB, BYTE FOR BYTE THE ONE THE VST3 SIDE WRITES. That is what lets a patch saved in
     // one format be read back by the other, and stops the two from drifting over what a saved
     // plug-in means - see synthlibPluginState.h.
-    size_t need = synthlib_state_write(d, au->inst, au->params, NULL, 0);
+    size_t need = synthlib_state_write(d, au->inst, &au->params, NULL, 0);
 
     if (need > 0) {
         uint8_t * bytes = (uint8_t *)malloc(need);
 
         if (bytes != NULL) {
-            size_t     wrote = synthlib_state_write(d, au->inst, au->params, bytes, need);
-            CFDataRef  data  = CFDataCreate(NULL, bytes, (CFIndex)wrote);
+            size_t    wrote = synthlib_state_write(d, au->inst, &au->params, bytes, need);
+            CFDataRef data  = CFDataCreate(NULL, bytes, (CFIndex)wrote);
 
             if (data != NULL) {
                 CFDictionarySetValue(dict, CFSTR(kAUPresetDataKey), data);
@@ -314,20 +433,20 @@ static OSStatus apply_class_info(tSynthLibAu * au, CFDictionaryRef dict) {
     if ((data == NULL) || (CFGetTypeID(data) != CFDataGetTypeID())) {
         return noErr;       // a dictionary with no data of ours in it is not an error, just nothing to do
     }
-    uint32_t     count      = synthlib_param_count(d, au->inst);
-    double *     values     = (double *)calloc(count ? count : 1u, sizeof(double));
-    uint32_t     got        = 0;
-    const void * pluginData = NULL;
-    size_t       pluginLen  = 0;
+    uint32_t              capacity   = (au->params.count > 0u) ? au->params.count : 1u;
+    tSynthLibParamValue * values     = (tSynthLibParamValue *)calloc(capacity, sizeof(tSynthLibParamValue));
+    uint32_t              got        = 0;
+    const void *          pluginData = NULL;
+    size_t                pluginLen  = 0;
 
     if (values == NULL) {
         return kAudioUnitErr_FailedInitialization;
     }
 
-    if (synthlib_state_read(d, CFDataGetBytePtr(data), (size_t)CFDataGetLength(data),
-                            values, &got, &pluginData, &pluginLen) == true) {
+    if (synthlib_state_read(&au->params, CFDataGetBytePtr(data), (size_t)CFDataGetLength(data),
+                            values, au->params.count, &got, &pluginData, &pluginLen) == true) {
         for (uint32_t i = 0; i < got; i++) {
-            apply_param(au, (AudioUnitParameterID)i, values[i]);
+            apply_param(au, (AudioUnitParameterID)values[i].id, values[i].value);
         }
 
         // THE PLUG-IN'S OWN STATE LAST, for the reason the VST3 wrapper gives: loading it rebuilds
@@ -335,6 +454,7 @@ static OSStatus apply_class_info(tSynthLibAu * au, CFDictionaryRef dict) {
         if ((au->inst != NULL) && (d->cb.setState != NULL)) {
             d->cb.setState(au->inst, pluginData, pluginLen);
         }
+        sync_from_plugin(au);
     }
     free(values);
 
@@ -350,6 +470,24 @@ static OSStatus apply_class_info(tSynthLibAu * au, CFDictionaryRef dict) {
     notify_listeners(au, kAudioUnitProperty_ParameterList, kAudioUnitScope_Global, 0);
     notify_listeners(au, kAudioUnitProperty_PresentPreset, kAudioUnitScope_Global, 0);
     return noErr;
+}
+
+// ------------------------------------------------------------------------------------------------
+// Lifecycle helpers
+// ------------------------------------------------------------------------------------------------
+
+static void send_prepare(tSynthLibAu * au) {
+    const tSynthLibPluginDesc * d = au->desc;
+
+    if ((au->inst == NULL) || (d->cb.prepare == NULL)) {
+        return;
+    }
+    tSynthLibSetup setup;
+
+    setup.sampleRate = au->sampleRate;
+    setup.maxFrames  = au->maxFrames;
+    setup.offline    = au->offline;
+    d->cb.prepare(au->inst, &setup);
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -373,6 +511,7 @@ static UInt32 element_count(const tSynthLibPluginDesc * d, AudioUnitScope scope)
 static bool is_global_only(AudioUnitPropertyID id) {
     switch (id) {
         case kAudioUnitProperty_ParameterInfo:
+        case kAudioUnitProperty_ParameterValueStrings:
         case kAudioUnitProperty_Latency:
         case kAudioUnitProperty_TailTime:
         case kAudioUnitProperty_SupportedNumChannels:
@@ -382,6 +521,8 @@ static bool is_global_only(AudioUnitPropertyID id) {
         case kAudioUnitProperty_PresentPreset:
         case kAudioUnitProperty_CocoaUI:
         case kAudioUnitProperty_ParameterStringFromValue:
+        case kAudioUnitProperty_OfflineRender:
+        case kAudioUnitProperty_BypassEffect:
         case kMusicDeviceProperty_InstrumentCount:
         case kSynthLibAuProperty_Instance:
             return true;
@@ -391,14 +532,25 @@ static bool is_global_only(AudioUnitPropertyID id) {
     }
 }
 
+// The parameters a host is shown: all of them but the hidden ones, which exist only to be delivered
+// to - a GenBridge pass-through arrives here as MIDI and is mapped by us, never set by a host.
+static uint32_t visible_count(const tSynthLibAu * au) {
+    uint32_t count = 0;
+
+    for (uint32_t i = 0; i < au->params.count; i++) {
+        if ((au->params.flags[i] & SYNTHLIB_PARAM_HIDDEN) == 0u) {
+            count++;
+        }
+    }
+    return count;
+}
+
 static OSStatus au_get_property_info(void * self, AudioUnitPropertyID id, AudioUnitScope scope,
                                      AudioUnitElement element, UInt32 * outSize, Boolean * outWritable) {
     tSynthLibAu *               au = (tSynthLibAu *)self;
     const tSynthLibPluginDesc * d  = au->desc;
     UInt32                      size     = 0;
     Boolean                     writable = false;
-
-    (void)au;
 
     if ((is_global_only(id) == true) && (scope != kAudioUnitScope_Global)) {
         return kAudioUnitErr_InvalidScope;
@@ -421,16 +573,29 @@ static OSStatus au_get_property_info(void * self, AudioUnitPropertyID id, AudioU
             // then read one of them back with AudioUnitGetParameter, which answers kInvalidScope,
             // and the parameter test failed on a plug-in whose parameters are all fine.
             size = (scope == kAudioUnitScope_Global)
-                   ? (UInt32)(synthlib_param_count(d, au->inst) * sizeof(AudioUnitParameterID))
+                   ? (UInt32)(visible_count(au) * sizeof(AudioUnitParameterID))
                    : 0;
             break;
 
+        // THE ELEMENT IS THE PARAMETER ID, not its position - which only mattered once a plug-in's
+        // ids stopped being their positions.
         case kAudioUnitProperty_ParameterInfo:
-            if (element >= synthlib_param_count(d, au->inst)) {
+            if (synthlib_params_index(&au->params, (uint32_t)element) < 0) {
                 return kAudioUnitErr_InvalidElement;
             }
             size = sizeof(AudioUnitParameterInfo);
             break;
+
+        case kAudioUnitProperty_ParameterValueStrings: {
+            tSynthLibParamDesc p;
+
+            if ((synthlib_params_describe(&au->params, d, au->inst, (uint32_t)element, &p) == false) ||
+                (is_list(&p) == false)) {
+                return kAudioUnitErr_InvalidProperty;
+            }
+            size = sizeof(CFArrayRef);
+            break;
+        }
 
         case kAudioUnitProperty_StreamFormat:
             if (element_count(d, scope) == 0) {
@@ -454,6 +619,23 @@ static OSStatus au_get_property_info(void * self, AudioUnitPropertyID id, AudioU
             break;
 
         case kAudioUnitProperty_MaximumFramesPerSlice:
+            size     = sizeof(UInt32);
+            writable = true;
+            break;
+
+        // A BOUNCE, which a host announces here. Accepted from any plug-in and passed on through
+        // prepare(); what to DO about it is the plug-in's business.
+        case kAudioUnitProperty_OfflineRender:
+            size     = sizeof(UInt32);
+            writable = true;
+            break;
+
+        // A HOST'S BYPASS BUTTON, which auval lists among the properties an effect should have. Only
+        // an effect: an instrument has no input for a bypass to hand on.
+        case kAudioUnitProperty_BypassEffect:
+            if ((d->isInstrument == true) || (input_channels(d) == 0u)) {
+                return kAudioUnitErr_InvalidProperty;
+            }
             size     = sizeof(UInt32);
             writable = true;
             break;
@@ -578,14 +760,13 @@ static OSStatus au_get_property(void * self, AudioUnitPropertyID id, AudioUnitSc
             break;
 
         case kAudioUnitProperty_ParameterList: {
-            AudioUnitParameterID * ids   = (AudioUnitParameterID *)outData;
-            uint32_t               count = synthlib_param_count(d, au->inst);
+            AudioUnitParameterID * ids = (AudioUnitParameterID *)outData;
+            uint32_t               n   = 0;
 
-            for (uint32_t i = 0; i < count; i++) {
-                tSynthLibParamDesc p;
-
-                ids[i] = (synthlib_param_describe(d, au->inst, i, &p) == true)
-                         ? (AudioUnitParameterID)p.id : (AudioUnitParameterID)i;
+            for (uint32_t i = 0; i < au->params.count; i++) {
+                if ((au->params.flags[i] & SYNTHLIB_PARAM_HIDDEN) == 0u) {
+                    ids[n++] = (AudioUnitParameterID)au->params.ids[i];
+                }
             }
             break;
         }
@@ -594,15 +775,14 @@ static OSStatus au_get_property(void * self, AudioUnitPropertyID id, AudioUnitSc
             tSynthLibParamDesc       p;
             AudioUnitParameterInfo * info = (AudioUnitParameterInfo *)outData;
 
-            if (synthlib_param_describe(d, au->inst, (uint32_t)element, &p) == false) {
+            if (synthlib_params_describe(&au->params, d, au->inst, (uint32_t)element, &p) == false) {
                 return kAudioUnitErr_InvalidElement;
             }
             memset(info, 0, sizeof(*info));
-            info->unit         = au_unit_of(p.unit);
-            info->minValue     = (AudioUnitParameterValue)p.plainMin;
-            info->maxValue     = (AudioUnitParameterValue)p.plainMax;
-            info->defaultValue = (AudioUnitParameterValue)synthlib_param_to_plain(&p,
-                                                                                  p.defaultNormalized);
+            info->unit         = au_unit_of(&p);
+            info->minValue     = (AudioUnitParameterValue)au_min(&p);
+            info->maxValue     = (AudioUnitParameterValue)au_max(&p);
+            info->defaultValue = (AudioUnitParameterValue)au_to_plain(&p, p.defaultNormalized);
             info->cfNameString = CFStringCreateWithCString(NULL, p.title, kCFStringEncodingUTF8);
 
             // CFNameRelease says the caller owns the string we just made. Without it the host leaks
@@ -613,9 +793,43 @@ static OSStatus au_get_property(void * self, AudioUnitPropertyID id, AudioUnitSc
                           kAudioUnitParameterFlag_CFNameRelease |
                           kAudioUnitParameterFlag_IsHighResolution;
 
+            if (is_list(&p) == true) {
+                info->flags |= kAudioUnitParameterFlag_ValuesHaveStrings;
+            }
+
             // The 52-byte name is the legacy field, filled as well as the CFString: some hosts and
             // every old one read only this.
             strncpy(info->name, p.title, sizeof(info->name) - 1);
+            break;
+        }
+
+        case kAudioUnitProperty_ParameterValueStrings: {
+            tSynthLibParamDesc     p;
+            CFMutableArrayRef      names;
+
+            if (synthlib_params_describe(&au->params, d, au->inst, (uint32_t)element, &p) == false) {
+                return kAudioUnitErr_InvalidElement;
+            }
+            names = CFArrayCreateMutable(NULL, p.stepCount + 1, &kCFTypeArrayCallBacks);
+
+            if (names == NULL) {
+                return kAudioUnitErr_FailedInitialization;
+            }
+
+            // THE SAME NAMES THE VST3 HOST GETS, from paramText(), entry by entry.
+            for (int32_t i = 0; i <= p.stepCount; i++) {
+                char        text[128];
+                CFStringRef s;
+
+                synthlib_param_text(d, au->inst, &p, (double)i / (double)p.stepCount, text, sizeof(text));
+                s = CFStringCreateWithCString(NULL, text, kCFStringEncodingUTF8);
+
+                if (s != NULL) {
+                    CFArrayAppendValue(names, s);
+                    CFRelease(s);
+                }
+            }
+            *(CFArrayRef *)outData = names;             // the caller releases it
             break;
         }
 
@@ -631,14 +845,19 @@ static OSStatus au_get_property(void * self, AudioUnitPropertyID id, AudioUnitSc
             *(UInt32 *)outData = element_count(d, scope);
             break;
 
-        case kAudioUnitProperty_Latency:
-            *(Float64 *)outData = 0.0;
+        case kAudioUnitProperty_Latency: {
+            uint32_t samples = ((au->inst != NULL) && (d->cb.latencySamples != NULL))
+                               ? d->cb.latencySamples(au->inst) : 0u;
+
+            // SECONDS, where VST3 counts samples.
+            *(Float64 *)outData = (au->sampleRate > 0.0) ? ((Float64)samples / au->sampleRate) : 0.0;
             break;
+        }
 
         case kAudioUnitProperty_TailTime:
-            // THE SAME ANSWER AS THE VST3 SIDE'S kInfiniteTail, said the way an Audio Unit says it.
-            // There are reverbs and delays in these engines, so a host must not decide the plug-in
-            // has finished the moment the notes stop.
+            // THE NEAREST AN AUDIO UNIT CAN COME TO VST3'S kInfiniteTail. There are reverbs and delays
+            // in these engines, so a host must not decide the plug-in has finished the moment the
+            // notes stop.
             *(Float64 *)outData = 10.0;
             break;
 
@@ -652,6 +871,14 @@ static OSStatus au_get_property(void * self, AudioUnitPropertyID id, AudioUnitSc
 
         case kAudioUnitProperty_MaximumFramesPerSlice:
             *(UInt32 *)outData = au->maxFrames;
+            break;
+
+        case kAudioUnitProperty_OfflineRender:
+            *(UInt32 *)outData = au->offline ? 1u : 0u;
+            break;
+
+        case kAudioUnitProperty_BypassEffect:
+            *(UInt32 *)outData = au->bypassed ? 1u : 0u;
             break;
 
         case kAudioUnitProperty_HostCallbacks:
@@ -725,20 +952,18 @@ static OSStatus au_get_property(void * self, AudioUnitPropertyID id, AudioUnitSc
 
         case kAudioUnitProperty_ParameterStringFromValue: {
             AudioUnitParameterStringFromValue * req = (AudioUnitParameterStringFromValue *)outData;
-            char                                text[64];
-            double                              plain;
+            char                                text[128];
+            double                              normalized;
 
             tSynthLibParamDesc p;
 
-            if (synthlib_param_by_id(d, au->inst, (uint32_t)req->inParamID, &p) == false) {
+            if (synthlib_params_describe(&au->params, d, au->inst, (uint32_t)req->inParamID, &p) == false) {
                 return kAudioUnitErr_InvalidParameter;
             }
-            plain = (req->inValue != NULL) ? (double)(*req->inValue)
-                                           : synthlib_param_to_plain(&p, au->params[req->inParamID]);
+            normalized = (req->inValue != NULL) ? au_to_normalized(&p, (double)(*req->inValue))
+                                                : synthlib_params_get(&au->params, (uint32_t)req->inParamID);
 
-            if (synthlib_param_text(d, au->inst, (uint32_t)req->inParamID,
-                                    synthlib_param_to_normalized(&p, plain),
-                                    text, sizeof(text)) == false) {
+            if (synthlib_param_text(d, au->inst, &p, normalized, text, sizeof(text)) == false) {
                 return kAudioUnitErr_InvalidParameter;
             }
             req->outString = CFStringCreateWithCString(NULL, text, kCFStringEncodingUTF8);
@@ -839,6 +1064,31 @@ static OSStatus au_set_property(void * self, AudioUnitPropertyID id, AudioUnitSc
             // does anything else that caches a buffer sized from it, which is the reason the test
             // exists at all.
             notify_listeners(au, kAudioUnitProperty_MaximumFramesPerSlice, kAudioUnitScope_Global, 0);
+            return noErr;
+        }
+
+        case kAudioUnitProperty_OfflineRender: {
+            if ((inData == NULL) || (inDataSize < sizeof(UInt32))) {
+                return kAudioUnitErr_InvalidPropertyValue;
+            }
+            bool offline = (*(const UInt32 *)inData != 0u);
+
+            if (offline != au->offline) {
+                au->offline = offline;
+
+                if (au->initialized == true) {
+                    send_prepare(au);
+                }
+            }
+            return noErr;
+        }
+
+        case kAudioUnitProperty_BypassEffect: {
+            if ((inData == NULL) || (inDataSize < sizeof(UInt32))) {
+                return kAudioUnitErr_InvalidPropertyValue;
+            }
+            au->bypassed = (*(const UInt32 *)inData != 0u);
+            notify_listeners(au, kAudioUnitProperty_BypassEffect, kAudioUnitScope_Global, 0);
             return noErr;
         }
 
@@ -995,6 +1245,52 @@ static OSStatus au_remove_render_notify(void * self, AURenderCallback proc, void
 }
 
 // ------------------------------------------------------------------------------------------------
+// The event queue
+// ------------------------------------------------------------------------------------------------
+
+// FALSE WHEN FULL, and the event is dropped - which a render that empties the queue every time makes
+// a matter of a host scheduling a thousand events between two renders.
+static bool enqueue(tSynthLibAu * au, const tQueuedEvent * event) {
+    bool queued = false;
+
+    while (atomic_flag_test_and_set_explicit(&au->eventProducer, memory_order_acquire) == true) {
+        // Another producer, for the handful of instructions below. Never the render.
+    }
+    uint32_t write = atomic_load_explicit(&au->eventWrite, memory_order_relaxed);
+    uint32_t read  = atomic_load_explicit(&au->eventRead, memory_order_acquire);
+
+    if ((write - read) < (uint32_t)EVENT_QUEUE_SIZE) {
+        au->events[write % EVENT_QUEUE_SIZE] = *event;
+        atomic_store_explicit(&au->eventWrite, write + 1u, memory_order_release);
+        queued = true;
+    }
+    atomic_flag_clear_explicit(&au->eventProducer, memory_order_release);
+    return queued;
+}
+
+static OSStatus queue_midi(tSynthLibAu * au, uint8_t status, uint8_t data1, uint8_t data2, UInt32 offset) {
+    tQueuedEvent event;
+
+    memset(&event, 0, sizeof(event));
+    event.status = status;
+    event.data1  = data1 & 0x7Fu;
+    event.data2  = data2 & 0x7Fu;
+    event.offset = offset;
+    return (enqueue(au, &event) == true) ? noErr : kAudioUnitErr_TooManyFramesToProcess;
+}
+
+static void queue_param(tSynthLibAu * au, uint32_t id, double normalized, uint32_t offset) {
+    tQueuedEvent event;
+
+    memset(&event, 0, sizeof(event));
+    event.isParam = true;
+    event.id      = id;
+    event.value   = synthlib_param_clamp(normalized);
+    event.offset  = offset;
+    (void)enqueue(au, &event);
+}
+
+// ------------------------------------------------------------------------------------------------
 // Parameters, as the host sees them
 // ------------------------------------------------------------------------------------------------
 
@@ -1011,24 +1307,25 @@ static OSStatus au_get_parameter(void * self, AudioUnitParameterID id, AudioUnit
     tSynthLibParamDesc p;
 
     if ((outValue == NULL) ||
-        (synthlib_param_by_id(au->desc, au->inst, (uint32_t)id, &p) == false)) {
+        (synthlib_params_describe(&au->params, au->desc, au->inst, (uint32_t)id, &p) == false)) {
         return kAudioUnitErr_InvalidParameter;
     }
     // PLAIN, not normalized. An Audio Unit's parameter values are in the range it declared in
     // AudioUnitParameterInfo, where VST3's are always 0..1 - the one real difference between the two
     // formats' parameter models, and the reason the table carries plainMin and plainMax at all.
-    *outValue = (AudioUnitParameterValue)synthlib_param_to_plain(&p, au->params[id]);
+    *outValue = (AudioUnitParameterValue)au_to_plain(&p, synthlib_params_get(&au->params, (uint32_t)id));
     return noErr;
 }
 
+// FROM ANY THREAD, AND APPLIED AT ONCE - see the threading note in synthlibPlugin.h. A host moving a
+// knob in its own generic panel calls this from its UI thread with no render in sight, so there is no
+// block to queue it for; the offset only means something to ScheduleParameters, below.
 static OSStatus au_set_parameter(void * self, AudioUnitParameterID id, AudioUnitScope scope,
                                  AudioUnitElement element, AudioUnitParameterValue value,
                                  UInt32 inBufferOffsetInFrames) {
     tSynthLibAu * au = (tSynthLibAu *)self;
 
     (void)element;
-    // BLOCK GRANULARITY, as on the VST3 side: the offset is accepted and ignored because the engines
-    // behind this cannot place a change inside a block. See the note in synthlibPlugin.h.
     (void)inBufferOffsetInFrames;
 
     if (scope != kAudioUnitScope_Global) {
@@ -1037,13 +1334,15 @@ static OSStatus au_set_parameter(void * self, AudioUnitParameterID id, AudioUnit
 
     tSynthLibParamDesc p;
 
-    if (synthlib_param_by_id(au->desc, au->inst, (uint32_t)id, &p) == false) {
+    if (synthlib_params_describe(&au->params, au->desc, au->inst, (uint32_t)id, &p) == false) {
         return kAudioUnitErr_InvalidParameter;
     }
-    apply_param(au, id, synthlib_param_to_normalized(&p, (double)value));
+    apply_param(au, id, au_to_normalized(&p, (double)value));
     return noErr;
 }
 
+// AUTOMATION FOR THE NEXT RENDER, from a host that schedules it - so it is queued and delivered inside
+// that render, at its offset, exactly as a VST3 host's parameter queue is walked inside process().
 static OSStatus au_schedule_parameters(void * self, const AudioUnitParameterEvent * events,
                                        UInt32 numEvents) {
     tSynthLibAu * au = (tSynthLibAu *)self;
@@ -1054,21 +1353,28 @@ static OSStatus au_schedule_parameters(void * self, const AudioUnitParameterEven
 
     for (UInt32 i = 0; i < numEvents; i++) {
         const AudioUnitParameterEvent * e = &events[i];
-        double                          value;
+        tSynthLibParamDesc              p;
 
-        // A RAMP IS TAKEN AT ITS END POINT. The engines have no notion of a parameter moving within
-        // a block, so interpolating would be inventing a resolution they cannot use - the same
-        // trade the VST3 wrapper makes by reading only the last point in each automation queue.
-        if (e->eventType == kParameterEvent_Ramped) {
-            value = (double)e->eventValues.ramp.endValue;
-        } else {
-            value = (double)e->eventValues.immediate.value;
+        if ((e->scope != kAudioUnitScope_Global) ||
+            (synthlib_params_describe(&au->params, au->desc, au->inst, (uint32_t)e->parameter, &p) == false)) {
+            continue;
         }
 
-        tSynthLibParamDesc p;
+        // A RAMP IS ITS TWO ENDS. The engines have no notion of a parameter moving within a block,
+        // so interpolating would be inventing a resolution they cannot use - a plug-in with
+        // paramPoints() sees both ends, one without sees the end it settles at.
+        if (e->eventType == kParameterEvent_Ramped) {
+            SInt32   start    = e->eventValues.ramp.startBufferOffset;
+            uint32_t startAt  = (start > 0) ? (uint32_t)start : 0u;
+            uint32_t duration = e->eventValues.ramp.durationInFrames;
 
-        if (synthlib_param_by_id(au->desc, au->inst, (uint32_t)e->parameter, &p) == true) {
-            apply_param(au, e->parameter, synthlib_param_to_normalized(&p, value));
+            queue_param(au, e->parameter, au_to_normalized(&p, (double)e->eventValues.ramp.startValue),
+                        startAt);
+            queue_param(au, e->parameter, au_to_normalized(&p, (double)e->eventValues.ramp.endValue),
+                        startAt + ((duration > 0u) ? (duration - 1u) : 0u));
+        } else {
+            queue_param(au, e->parameter, au_to_normalized(&p, (double)e->eventValues.immediate.value),
+                        e->eventValues.immediate.bufferOffset);
         }
     }
     return noErr;
@@ -1078,131 +1384,186 @@ static OSStatus au_schedule_parameters(void * self, const AudioUnitParameterEven
 // MIDI
 // ------------------------------------------------------------------------------------------------
 
-// THE MAPPING THE VST3 SIDE GETS FROM THE HOST, DONE HERE OURSELVES. A VST3 host converts a
-// controller into a parameter change and asks IMidiMapping which parameter; an Audio Unit host hands
-// the raw bytes over and leaves it to us. Both read the same midiControl column of the same table,
-// so the two formats cannot end up wired differently.
-static void midi_control_to_param(tSynthLibAu * au, int16_t control, double normalized) {
-    const tSynthLibPluginDesc * d     = au->desc;
-    uint32_t                    count = synthlib_param_count(d, au->inst);
-
-    for (uint32_t i = 0; i < count; i++) {
-        tSynthLibParamDesc p;
-
-        if ((synthlib_param_describe(d, au->inst, i, &p) == true) && (p.midiControl == control)) {
-            apply_param(au, (AudioUnitParameterID)p.id, normalized);
-            notify_listeners(au, kAudioUnitProperty_ParameterList, kAudioUnitScope_Global, 0);
-            return;
-        }
-    }
-}
+// ALL OF THESE QUEUE, and the render delivers. An Audio Unit host hands over its MIDI BEFORE the
+// render it belongs to - that is what inOffsetSampleFrame is measured from - so delivering it on the
+// spot would reach a plug-in that has not yet been told where the block it belongs to begins.
 
 static OSStatus au_midi_event(void * self, UInt32 inStatus, UInt32 inData1, UInt32 inData2,
                               UInt32 inOffsetSampleFrame) {
-    tSynthLibAu *               au = (tSynthLibAu *)self;
-    const tSynthLibPluginDesc * d  = au->desc;
-    UInt32                      command = inStatus & 0xF0u;
-
-    // Block granularity, as everywhere else here.
-    (void)inOffsetSampleFrame;
-
-    if (au->inst == NULL) {
-        return noErr;
-    }
-
-    switch (command) {
-        case 0x90:      // note on - and a note on at zero velocity is a note off, as it is on the wire
-            if ((inData2 > 0u) && (d->cb.noteOn != NULL)) {
-                d->cb.noteOn(au->inst, (uint8_t)inData1, (float)inData2 / 127.0f);
-            } else if (d->cb.noteOff != NULL) {
-                d->cb.noteOff(au->inst, (uint8_t)inData1);
-            }
-            break;
-
-        case 0x80:      // note off
-            if (d->cb.noteOff != NULL) {
-                d->cb.noteOff(au->inst, (uint8_t)inData1);
-            }
-            break;
-
-        case 0xA0:      // POLYPHONIC key pressure, which is not channel pressure and not a controller
-            if (d->cb.polyPressure != NULL) {
-                d->cb.polyPressure(au->inst, (uint8_t)inData1, (float)inData2 / 127.0f);
-            }
-            break;
-
-        case 0xB0:      // continuous controller
-            midi_control_to_param(au, (int16_t)inData1, (double)inData2 / 127.0);
-
-            // ALL NOTES OFF and ALL SOUND OFF, which a host sends on a transport stop and which a
-            // plug-in that ignores them leaves droning.
-            if (((inData1 == 120u) || (inData1 == 123u)) && (d->cb.reset != NULL)) {
-                d->cb.reset(au->inst);
-            }
-            break;
-
-        case 0xD0:      // channel pressure
-            midi_control_to_param(au, SYNTHLIB_MIDI_AFTERTOUCH, (double)inData1 / 127.0);
-            break;
-
-        case 0xE0: {    // pitch bend, 14 bits across the two data bytes, 0x2000 at rest
-            uint32_t value = (inData1 & 0x7Fu) | ((inData2 & 0x7Fu) << 7);
-
-            midi_control_to_param(au, SYNTHLIB_MIDI_PITCH_BEND, (double)value / 16383.0);
-            break;
-        }
-
-        default:
-            break;
-    }
-    return noErr;
+    return queue_midi((tSynthLibAu *)self, (uint8_t)inStatus, (uint8_t)inData1, (uint8_t)inData2,
+                      inOffsetSampleFrame);
 }
 
+// THE GROUP IS THE CHANNEL, by convention - which is all a MusicDevice that is not multitimbral
+// makes of it.
 static OSStatus au_start_note(void * self, MusicDeviceInstrumentID inInstrument,
                               MusicDeviceGroupID inGroupID, NoteInstanceID * outNoteInstanceID,
                               UInt32 inOffsetSampleFrame, const MusicDeviceNoteParams * inParams) {
-    tSynthLibAu *               au = (tSynthLibAu *)self;
-    const tSynthLibPluginDesc * d  = au->desc;
-
     (void)inInstrument;
-    (void)inGroupID;
-    (void)inOffsetSampleFrame;
 
-    if ((inParams == NULL) || (au->inst == NULL)) {
+    if (inParams == NULL) {
         return kAudioUnitErr_InvalidParameter;
     }
     // mPitch is a FLOAT here, so a host may ask for a fractional note. The engines are note-number
     // driven, so it is rounded - and the note instance id is the rounded number, which is what
     // StopNote will hand back.
-    UInt8 note = (UInt8)(inParams->mPitch + 0.5f);
+    uint8_t note     = (uint8_t)(inParams->mPitch + 0.5f);
+    uint8_t velocity = (uint8_t)(inParams->mVelocity + 0.5f);
 
     if (outNoteInstanceID != NULL) {
         *outNoteInstanceID = (NoteInstanceID)note;
     }
-
-    if (d->cb.noteOn != NULL) {
-        d->cb.noteOn(au->inst, note, inParams->mVelocity / 127.0f);
-    }
-    return noErr;
+    return queue_midi((tSynthLibAu *)self, (uint8_t)(0x90u | (inGroupID & 0x0Fu)), note,
+                      (velocity > 0u) ? velocity : 1u, inOffsetSampleFrame);
 }
 
 static OSStatus au_stop_note(void * self, MusicDeviceGroupID inGroupID, NoteInstanceID inNoteInstanceID,
                              UInt32 inOffsetSampleFrame) {
-    tSynthLibAu *               au = (tSynthLibAu *)self;
-    const tSynthLibPluginDesc * d  = au->desc;
+    return queue_midi((tSynthLibAu *)self, (uint8_t)(0x80u | (inGroupID & 0x0Fu)),
+                      (uint8_t)inNoteInstanceID, 0u, inOffsetSampleFrame);
+}
 
-    (void)inGroupID;
-    (void)inOffsetSampleFrame;
+// THE MAPPING THE VST3 SIDE GETS FROM THE HOST, DONE HERE OURSELVES. A VST3 host converts a
+// controller into a parameter change and asks IMidiMapping which parameter; an Audio Unit host hands
+// the raw bytes over and leaves it to us. Both ask the same midiMapping() or read the same midiControl
+// column of the same table, so the two formats cannot end up wired differently.
+static bool map_control(tSynthLibAu * au, uint8_t channel, int16_t control, uint32_t * idOut) {
+    const tSynthLibPluginDesc * d = au->desc;
 
-    if ((au->inst != NULL) && (d->cb.noteOff != NULL)) {
-        d->cb.noteOff(au->inst, (uint8_t)inNoteInstanceID);
+    if (d->cb.midiMapping != NULL) {
+        return (d->cb.midiMapping(d, au->inst, channel, control, idOut) == true) &&
+               (synthlib_params_index(&au->params, *idOut) >= 0);
     }
-    return noErr;
+
+    for (uint32_t i = 0; i < au->params.count; i++) {
+        tSynthLibParamDesc p;
+
+        if ((synthlib_param_describe(d, au->inst, i, &p) == true) && (p.midiControl == control)) {
+            *idOut = p.id;
+            return true;
+        }
+    }
+    return false;
 }
 
 // ------------------------------------------------------------------------------------------------
 // Render
 // ------------------------------------------------------------------------------------------------
+
+// Parameter points for one id, delivered as a run - the same shape paramPoints() gets on VST3.
+static void deliver_points(tSynthLibAu * au, uint32_t id, const tSynthLibParamPoint * points, uint32_t count) {
+    const tSynthLibPluginDesc * d = au->desc;
+
+    if ((count == 0u) || (synthlib_params_set(&au->params, id, points[count - 1].value) == false)) {
+        return;
+    }
+
+    if (d->cb.paramPoints != NULL) {
+        d->cb.paramPoints(au->inst, id, points, count);
+    } else if (d->cb.setParam != NULL) {
+        d->cb.setParam(au->inst, id, points[count - 1].value);
+    }
+}
+
+static void deliver_midi(tSynthLibAu * au, const tQueuedEvent * e, uint32_t offset) {
+    const tSynthLibPluginDesc * d       = au->desc;
+    uint8_t                     channel = e->status & 0x0Fu;
+    uint32_t                    id      = 0;
+    tSynthLibParamPoint         point;
+
+    point.sampleOffset = offset;
+
+    switch (e->status & 0xF0u) {
+        case 0x90:      // note on - and a note on at zero velocity is a note off, as it is on the wire
+            if ((e->data2 > 0u) && (d->cb.noteOn != NULL)) {
+                d->cb.noteOn(au->inst, channel, e->data1, (float)e->data2 / 127.0f, offset);
+            } else if (d->cb.noteOff != NULL) {
+                d->cb.noteOff(au->inst, channel, e->data1, 0.0f, offset);
+            }
+            break;
+
+        case 0x80:      // note off
+            if (d->cb.noteOff != NULL) {
+                d->cb.noteOff(au->inst, channel, e->data1, (float)e->data2 / 127.0f, offset);
+            }
+            break;
+
+        case 0xA0:      // POLYPHONIC key pressure, which is not channel pressure and not a controller
+            if (d->cb.polyPressure != NULL) {
+                d->cb.polyPressure(au->inst, channel, e->data1, (float)e->data2 / 127.0f, offset);
+            }
+            break;
+
+        case 0xB0:      // continuous controller
+            if (map_control(au, channel, (int16_t)e->data1, &id) == true) {
+                point.value = (double)e->data2 / 127.0;
+                deliver_points(au, id, &point, 1u);
+            }
+
+            // ALL NOTES OFF and ALL SOUND OFF, which a host sends on a transport stop and which a
+            // plug-in that ignores them leaves droning.
+            if (((e->data1 == 120u) || (e->data1 == 123u)) && (d->cb.reset != NULL)) {
+                d->cb.reset(au->inst);
+            }
+            break;
+
+        case 0xD0:      // channel pressure
+            if (map_control(au, channel, SYNTHLIB_MIDI_AFTERTOUCH, &id) == true) {
+                point.value = (double)e->data1 / 127.0;
+                deliver_points(au, id, &point, 1u);
+            }
+            break;
+
+        case 0xE0:      // pitch bend, 14 bits across the two data bytes, 0x2000 at rest
+            if (map_control(au, channel, SYNTHLIB_MIDI_PITCH_BEND, &id) == true) {
+                point.value = (double)((uint32_t)e->data1 | ((uint32_t)e->data2 << 7)) / 16383.0;
+                deliver_points(au, id, &point, 1u);
+            }
+            break;
+
+        default:
+            break;
+    }
+}
+
+// EVERYTHING QUEUED SINCE THE LAST RENDER, in order, now that this one's position is known. Offsets
+// past the end of the block are pulled back to its last frame: a host scheduling for the next render
+// has already missed this one, and early is better than dropped.
+static void drain_events(tSynthLibAu * au, uint32_t frames) {
+    uint32_t read  = atomic_load_explicit(&au->eventRead, memory_order_relaxed);
+    uint32_t write = atomic_load_explicit(&au->eventWrite, memory_order_acquire);
+    uint32_t last  = (frames > 0u) ? (frames - 1u) : 0u;
+
+    while (read != write) {
+        const tQueuedEvent * e = &au->events[read % EVENT_QUEUE_SIZE];
+
+        if (e->isParam == false) {
+            deliver_midi(au, e, (e->offset < last) ? e->offset : last);
+            read++;
+            continue;
+        }
+        // A RUN OF ONE PARAMETER'S POINTS goes over as one call, so a plug-in that looks for a press
+        // among a block's points - GenBridge's Measure - sees a press and its release together.
+        tSynthLibParamPoint points[MAX_POINTS];
+        uint32_t            count = 0;
+        uint32_t            id    = e->id;
+
+        while ((read != write) && au->events[read % EVENT_QUEUE_SIZE].isParam &&
+               (au->events[read % EVENT_QUEUE_SIZE].id == id)) {
+            const tQueuedEvent * p = &au->events[read % EVENT_QUEUE_SIZE];
+
+            if (count == MAX_POINTS) {
+                count = MAX_POINTS - 1u;
+            }
+            points[count].sampleOffset = (p->offset < last) ? p->offset : last;
+            points[count].value        = p->value;
+            count++;
+            read++;
+        }
+        deliver_points(au, id, points, count);
+    }
+    atomic_store_explicit(&au->eventRead, read, memory_order_release);
+}
 
 static OSStatus ensure_owned_buffer(tSynthLibAu * au, UInt32 frames) {
     uint32_t channels = output_channels(au->desc);
@@ -1223,11 +1584,6 @@ static OSStatus ensure_owned_buffer(tSynthLibAu * au, UInt32 frames) {
 // PULLING THE INPUT, for an effect. A host either installs a render callback or connects another
 // unit's output to ours, and either way the samples do not arrive - they are fetched, from here,
 // during our own render.
-//
-// EXERCISED ONLY WHEN A PLUG-IN ACTUALLY READS ITS INPUT, and none of them does yet: GenBridge
-// declares an input because declaring an effect sidesteps a whole class of host rejection, and then
-// ignores the samples. So treat the buffer contents as unproven until something consumes them; the
-// property plumbing either side of it is what hosts exercise, and that they do.
 static OSStatus pull_input(tSynthLibAu * au, AudioUnitRenderActionFlags * flags,
                            const AudioTimeStamp * ts, UInt32 frames) {
     uint32_t channels = input_channels(au->desc);
@@ -1274,14 +1630,28 @@ static OSStatus pull_input(tSynthLibAu * au, AudioUnitRenderActionFlags * flags,
     return noErr;
 }
 
-// THE HOST'S TRANSPORT, SUCH AS IT IS. Everything here is a question we ASK the host, through
-// function pointers it installed if it felt like it - where a VST3 host fills in a ProcessContext
-// for the block it is asking us to render. So the answers are not tied to this block, several hosts
-// install none of these at all, and a plug-in whose whole purpose is timing accuracy should be
-// measured on both formats before either is believed.
-static void fill_transport(tSynthLibAu * au, tSynthLibTransport * out) {
+// THE HOST'S TRANSPORT, SUCH AS IT IS. Everything here but the timestamp is a question we ASK the
+// host, through function pointers it installed if it felt like it - where a VST3 host fills in a
+// ProcessContext for the block it is asking us to render. So the answers are not tied to this block,
+// several hosts install none of these at all, and a plug-in whose whole purpose is timing accuracy
+// should be measured on both formats before either is believed.
+static void fill_transport(tSynthLibAu * au, const AudioTimeStamp * ts, tSynthLibTransport * out) {
     memset(out, 0, sizeof(*out));
     out->sampleRate = au->sampleRate;
+
+    // THE TIMESTAMP IS THE ONE THING EVERY HOST HANDS OVER, with the render itself - and its host
+    // time is exactly the field VST3's Live never fills in.
+    if (ts != NULL) {
+        if ((ts->mFlags & kAudioTimeStampHostTimeValid) != 0u) {
+            out->systemTimeValid = true;
+            out->systemTime      = AudioConvertHostTimeToNanos(ts->mHostTime);
+        }
+
+        if ((ts->mFlags & kAudioTimeStampSampleTimeValid) != 0u) {
+            out->continuousTimeValid   = true;
+            out->continuousTimeSamples = (int64_t)ts->mSampleTime;
+        }
+    }
 
     if ((au->desc->wantsTransport == false) || (au->haveHostCallbacks == false)) {
         return;             // valid stays false, which is the whole point of the flag
@@ -1316,6 +1686,9 @@ static void fill_transport(tSynthLibAu * au, tSynthLibTransport * out) {
             out->playing            = (playing != false);
             out->recording          = (recording != false);
             out->cycleActive        = (cycling != false);
+            out->cycleValid         = true;
+            out->cycleStartMusic    = (double)cycleStart;
+            out->cycleEndMusic      = (double)cycleEnd;
             out->projectTimeSamples = (int64_t)sample;
         }
     } else if (cb->transportStateProc != NULL) {
@@ -1331,6 +1704,9 @@ static void fill_transport(tSynthLibAu * au, tSynthLibTransport * out) {
             out->valid              = true;
             out->playing            = (playing != false);
             out->cycleActive        = (cycling != false);
+            out->cycleValid         = true;
+            out->cycleStartMusic    = (double)cycleStart;
+            out->cycleEndMusic      = (double)cycleEnd;
             out->projectTimeSamples = (int64_t)sample;
         }
     }
@@ -1343,9 +1719,12 @@ static void fill_transport(tSynthLibAu * au, tSynthLibTransport * out) {
 
         if (cb->musicalTimeLocationProc(cb->hostUserData, &offset, &numerator,
                                         &denominator, &downBeat) == noErr) {
-            out->valid            = true;
-            out->barPositionValid = true;
-            out->barPositionMusic = (double)downBeat;
+            out->valid              = true;
+            out->barPositionValid   = true;
+            out->barPositionMusic   = (double)downBeat;
+            out->timeSigValid       = (numerator > 0.0f) && (denominator > 0u);
+            out->timeSigNumerator   = (int32_t)(numerator + 0.5f);
+            out->timeSigDenominator = (int32_t)denominator;
         }
     }
 }
@@ -1418,11 +1797,31 @@ static OSStatus au_render(void * self, AudioUnitRenderActionFlags * ioActionFlag
         // is exactly what it produces anyway.
         err = noErr;
     }
+    tSynthLibTransport transport;
 
-    if (d->cb.process != NULL) {
-        tSynthLibTransport transport;
+    fill_transport(au, inTimeStamp, &transport);
 
-        fill_transport(au, &transport);
+    // THE SAME ORDER AS THE VST3 WRAPPER'S process(): where the block is, then what happened in it,
+    // then the audio.
+    if (d->cb.blockBegin != NULL) {
+        d->cb.blockBegin(au->inst, inNumberFrames, &transport);
+    }
+    drain_events(au, inNumberFrames);
+
+    if (au->bypassed == true) {
+        // BYPASSED: the input straight through, which is what a host's bypass button promises. The
+        // plug-in still hears where the block is and what changed in it above - its state stays
+        // current - it simply does not get to touch the audio. No input connected is silence.
+        for (UInt32 c = 0; c < channels; c++) {
+            const float * source = (numIn > 0u) ? au->inputChannels[(c < numIn) ? c : (numIn - 1u)] : NULL;
+
+            if (source == NULL) {
+                memset(au->channels[c], 0, (size_t)inNumberFrames * sizeof(float));
+            } else if (source != au->channels[c]) {
+                memcpy(au->channels[c], source, (size_t)inNumberFrames * sizeof(float));
+            }
+        }
+    } else if (d->cb.process != NULL) {
         d->cb.process(au->inst, (numIn > 0u) ? au->inputChannels : NULL, numIn,
                       au->channels, channels, inNumberFrames, &transport);
     }
@@ -1471,12 +1870,21 @@ static OSStatus au_initialize(void * self) {
     if (d->cb.setSampleRate != NULL) {
         d->cb.setSampleRate(au->inst, au->sampleRate);
     }
+    send_prepare(au);
 
     // GOING ACTIVE IS WHERE THE ENGINE STARTS, not where the instance was made - see the note on
     // setActive in synthlibPlugin.h. Doing this at construction time is the mistake that had the
     // VST3 build render silence from a perfectly good patch.
     if (d->cb.setActive != NULL) {
         d->cb.setActive(au->inst, true);
+    }
+
+    // AN AUDIO UNIT HAS NO setProcessing(): a host keeps a unit initialised for as long as it may
+    // render, so initialisation is the nearest thing to "blocks are about to start arriving".
+    if (d->cb.setProcessing != NULL) {
+        d->cb.setProcessing(au->inst, true);
+    } else if (d->cb.reset != NULL) {
+        d->cb.reset(au->inst);
     }
     au->initialized = true;
     return noErr;
@@ -1488,13 +1896,17 @@ static OSStatus au_uninitialize(void * self) {
 
     au->initialized = false;
 
+    if ((au->inst != NULL) && (d->cb.setProcessing != NULL)) {
+        d->cb.setProcessing(au->inst, false);
+    }
+
     if ((au->inst != NULL) && (d->cb.setActive != NULL)) {
         d->cb.setActive(au->inst, false);
     }
     return noErr;
 }
 
-static AudioComponentMethod au_lookup(SInt16 selector) {
+static AudioComponentMethod au_lookup_common(SInt16 selector) {
     switch (selector) {
         case kAudioUnitInitializeSelect:            return (AudioComponentMethod)au_initialize;
         case kAudioUnitUninitializeSelect:          return (AudioComponentMethod)au_uninitialize;
@@ -1512,10 +1924,24 @@ static AudioComponentMethod au_lookup(SInt16 selector) {
         case kAudioUnitScheduleParametersSelect:    return (AudioComponentMethod)au_schedule_parameters;
         case kAudioUnitRenderSelect:                return (AudioComponentMethod)au_render;
         case kAudioUnitResetSelect:                 return (AudioComponentMethod)au_reset;
-        case kMusicDeviceMIDIEventSelect:           return (AudioComponentMethod)au_midi_event;
-        case kMusicDeviceStartNoteSelect:           return (AudioComponentMethod)au_start_note;
-        case kMusicDeviceStopNoteSelect:            return (AudioComponentMethod)au_stop_note;
         default:                                    return NULL;
+    }
+}
+
+// ONLY A UNIT THAT TAKES MIDI ANSWERS THE MIDI SELECTORS. auval flags an 'aufx' that does - "it should
+// be 'aumf'" - and a host is entitled to route MIDI to anything that says it takes it. The selector
+// table is a plain function with no instance to ask, so it is two tables and the factory hands each
+// unit the right one.
+static AudioComponentMethod au_lookup_effect(SInt16 selector) {
+    return au_lookup_common(selector);
+}
+
+static AudioComponentMethod au_lookup_music(SInt16 selector) {
+    switch (selector) {
+        case kMusicDeviceMIDIEventSelect: return (AudioComponentMethod)au_midi_event;
+        case kMusicDeviceStartNoteSelect: return (AudioComponentMethod)au_start_note;
+        case kMusicDeviceStopNoteSelect:  return (AudioComponentMethod)au_stop_note;
+        default:                          return au_lookup_common(selector);
     }
 }
 
@@ -1537,40 +1963,23 @@ static OSStatus au_open(void * self, AudioComponentInstance ci) {
         d->cb.initialize(au->inst);
     }
 
-    // A DYNAMIC PARAMETER LIST IS ONLY KNOWABLE NOW, with an instance to ask - see the factory.
-    uint32_t count = synthlib_param_count(d, au->inst);
-
-    if (count > au->paramCapacity) {
-        double * grown = (double *)realloc(au->params, (size_t)count * sizeof(double));
-
-        if (grown == NULL) {
-            return kAudioUnitErr_FailedInitialization;
-        }
-        memset(grown + au->paramCapacity, 0, (size_t)(count - au->paramCapacity) * sizeof(double));
-        au->params        = grown;
-        au->paramCapacity = count;
+    // THE PARAMETER STORE IS BUILT NOW, with an instance to ask, and every value starts at its
+    // default - a parameter left at zero that means "full bend down" is a plug-in reporting a state
+    // it is not in.
+    if (synthlib_params_init(&au->params, d, au->inst) == false) {
+        return kAudioUnitErr_FailedInitialization;
     }
-
-    for (uint32_t i = 0; i < count; i++) {
-        tSynthLibParamDesc p;
-
-        if (synthlib_param_describe(d, au->inst, i, &p) == true) {
-            au->params[i] = p.defaultNormalized;
-        }
-    }
-
-    if (gInstanceCount == 0) {
-        gSoleAu = au;
-    } else {
-        gSoleAu = NULL;
-    }
-    gInstanceCount++;
+    register_au(au);
     return noErr;
 }
 
 static OSStatus au_close(void * self) {
     tSynthLibAu *               au = (tSynthLibAu *)self;
     const tSynthLibPluginDesc * d  = au->desc;
+
+    // OUT OF THE TABLE FIRST, so nothing the plug-in posted to the main thread finds a unit that is
+    // going.
+    unregister_au(au);
 
     if (au->inst != NULL) {
         if (d->cb.terminate != NULL) {
@@ -1582,16 +1991,11 @@ static OSStatus au_close(void * self) {
         }
         au->inst = NULL;
     }
-    gInstanceCount--;
-
-    if (gSoleAu == au) {
-        gSoleAu = NULL;
-    }
 
     if (au->currentPreset.presetName != NULL) {
         CFRelease(au->currentPreset.presetName);
     }
-    free(au->params);
+    synthlib_params_free(&au->params);
     free(au->channels);
     free(au->ownedSamples);
     free(au->inputSamples);
@@ -1608,42 +2012,88 @@ static OSStatus au_close(void * self) {
 // What the plug-in may ask of us
 // ------------------------------------------------------------------------------------------------
 
-void synthlib_plugin_param_edited(uint32_t id, double normalized) {
-    tSynthLibAu * au = gSoleAu;
+typedef struct {
+    void *   inst;
+    uint32_t id;
+    double   value;
+    bool     latency;
+} tHostPost;
 
-    if ((au == NULL) || (id >= synthlib_param_count(au->desc, au->inst))) {
+// ON THE MAIN THREAD, and possibly some time after the plug-in asked - so the unit is found again
+// here, from scratch. If it has been closed in the meantime there is nobody left to tell.
+static void deliver_to_host(void * ctx) {
+    tHostPost *   post = (tHostPost *)ctx;
+    tSynthLibAu * au   = au_for(post->inst);
+
+    if (au != NULL) {
+        if (post->latency == true) {
+            notify_listeners(au, kAudioUnitProperty_Latency, kAudioUnitScope_Global, 0);
+        } else {
+            apply_param(au, (AudioUnitParameterID)post->id, post->value);
+
+            // BEGIN, CHANGE, END, as one gesture - the Audio Unit spelling of VST3's
+            // beginEdit/performEdit/endEdit, and what lets a host record the move as automation
+            // rather than watch a value appear from nowhere.
+            AudioUnitEvent event;
+
+            memset(&event, 0, sizeof(event));
+            event.mArgument.mParameter.mAudioUnit   = au->ci;
+            event.mArgument.mParameter.mParameterID = (AudioUnitParameterID)post->id;
+            event.mArgument.mParameter.mScope       = kAudioUnitScope_Global;
+            event.mArgument.mParameter.mElement     = 0;
+
+            event.mEventType = kAudioUnitEvent_BeginParameterChangeGesture;
+            AUEventListenerNotify(NULL, NULL, &event);
+
+            event.mEventType = kAudioUnitEvent_ParameterValueChange;
+            AUEventListenerNotify(NULL, NULL, &event);
+
+            event.mEventType = kAudioUnitEvent_EndParameterChangeGesture;
+            AUEventListenerNotify(NULL, NULL, &event);
+        }
+    }
+    free(post);
+}
+
+static void post_to_host(void * inst, uint32_t id, double value, bool latency) {
+    tHostPost * post;
+
+    if (inst == NULL) {
         return;
     }
-    apply_param(au, (AudioUnitParameterID)id, normalized);
+    post = (tHostPost *)malloc(sizeof(tHostPost));
 
-    // BEGIN, CHANGE, END, as one gesture - the Audio Unit spelling of VST3's
-    // beginEdit/performEdit/endEdit, and what lets a host record the move as automation rather than
-    // watch a value appear from nowhere.
-    AudioUnitEvent event;
+    if (post == NULL) {
+        return;
+    }
+    post->inst    = inst;
+    post->id      = id;
+    post->value   = synthlib_param_clamp(value);
+    post->latency = latency;
+    synthlib_run_on_main(deliver_to_host, post);
+}
 
-    memset(&event, 0, sizeof(event));
-    event.mArgument.mParameter.mAudioUnit   = au->ci;
-    event.mArgument.mParameter.mParameterID = (AudioUnitParameterID)id;
-    event.mArgument.mParameter.mScope       = kAudioUnitScope_Global;
-    event.mArgument.mParameter.mElement     = 0;
+void synthlib_plugin_param_edited(void * inst, uint32_t id, double normalized) {
+    post_to_host(inst, id, normalized, false);
+}
 
-    event.mEventType = kAudioUnitEvent_BeginParameterChangeGesture;
-    AUEventListenerNotify(NULL, NULL, &event);
+void synthlib_plugin_latency_changed(void * inst) {
+    post_to_host(inst, 0u, 0.0, true);
+}
 
-    event.mEventType = kAudioUnitEvent_ParameterValueChange;
-    AUEventListenerNotify(NULL, NULL, &event);
+double synthlib_plugin_param_value(void * inst, uint32_t id) {
+    tSynthLibAu * au = au_for(inst);
 
-    event.mEventType = kAudioUnitEvent_EndParameterChangeGesture;
-    AUEventListenerNotify(NULL, NULL, &event);
+    return (au != NULL) ? synthlib_params_get(&au->params, id) : 0.0;
 }
 
 // AN AUDIO UNIT IS ONE OBJECT, so there is no channel to cross - the message goes straight to the
 // callback. VST3 needs IConnectionPoint and an IMessage the host has to allocate; here the two
 // halves the message was invented to join are the same pointer.
 bool synthlib_plugin_send_message(void * inst, const char * id, int64_t value) {
-    tSynthLibAu * au = gSoleAu;
+    tSynthLibAu * au = au_for(inst);
 
-    if ((au == NULL) || (au->inst != inst) || (au->desc->cb.message == NULL) || (id == NULL)) {
+    if ((au == NULL) || (au->desc->cb.message == NULL) || (id == NULL)) {
         return false;
     }
     au->desc->cb.message(inst, id, value);
@@ -1654,7 +2104,8 @@ bool synthlib_plugin_send_message(void * inst, const char * id, int64_t value) {
 // IPlugFrame::resizeView here: a Cocoa view resizes itself and the host follows, or it does not.
 // Answering false is what tells the caller to leave the window alone rather than resize its own view
 // inside a frame that did not move.
-bool synthlib_plugin_request_resize(double width, double height) {
+bool synthlib_plugin_request_resize(void * inst, double width, double height) {
+    (void)inst;
     (void)width;
     (void)height;
     return false;
@@ -1688,24 +2139,19 @@ AudioComponentPlugInInterface * SynthLibAUFactory(const AudioComponentDescriptio
     }
     au->iface.Open     = au_open;
     au->iface.Close    = au_close;
-    au->iface.Lookup   = au_lookup;
+    au->iface.Lookup   = ((d->isInstrument == true) || (d->wantsMidiIn == true)) ? au_lookup_music
+                                                                               : au_lookup_effect;
     au->iface.reserved = NULL;
 
     au->desc       = d;
     au->sampleRate = 44100.0;
     au->maxFrames  = DEFAULT_MAX_FRAMES;
+    au->channels   = (float **)calloc(outChannels, sizeof(float *));
+    atomic_init(&au->eventWrite, 0u);
+    atomic_init(&au->eventRead, 0u);
+    atomic_flag_clear(&au->eventProducer);
 
-    // SIZED FROM THE STATIC TABLE, WHICH MAY NOT BE THE WHOLE STORY. A plug-in with a DYNAMIC
-    // parameter list has no instance yet - one is made in Open() - so this is grown there.
-    uint32_t count = (d->params != NULL) ? d->numParams : 0u;
-
-    au->paramCapacity = (count > 0u) ? count : 1u;
-    au->params        = (double *)calloc(au->paramCapacity, sizeof(double));
-    au->channels      = (float **)calloc(outChannels, sizeof(float *));
-
-    if ((au->params == NULL) || (au->channels == NULL)) {
-        free(au->params);
-        free(au->channels);
+    if (au->channels == NULL) {
         free(au);
         return NULL;
     }
@@ -1720,17 +2166,10 @@ AudioComponentPlugInInterface * SynthLibAUFactory(const AudioComponentDescriptio
         if ((au->inputList == NULL) || (au->inputChannels == NULL)) {
             free(au->inputList);
             free(au->inputChannels);
-            free(au->params);
             free(au->channels);
             free(au);
             return NULL;
         }
-    }
-
-    // The defaults, and they matter before anything has been played: a parameter left at zero that
-    // means "full bend down" is a plug-in reporting a state it is not in.
-    for (uint32_t i = 0; i < count; i++) {
-        au->params[i] = d->params[i].defaultNormalized;
     }
     au->currentPreset.presetNumber = 0;
     au->currentPreset.presetName   = CFStringCreateCopy(NULL, CFSTR("Default"));

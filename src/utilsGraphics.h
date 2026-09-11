@@ -172,7 +172,7 @@ tRgb contrasting_text_colour(tRgb bg);
 // The module canvas is drawn as one or more PANES stacked vertically down the window. Today there
 // is exactly one, occupying the whole canvas band, so this is behaviourally identical to the single
 // canvas that came before it — the structure exists so the Patch Window Split Bar can show the
-// Voice Area and the FX Area at once (see G2-Edit's todo.txt) without every drawing call having to
+// Voice Area and the FX Area at once (see G2-Edit's todo.md) without every drawing call having to
 // learn which half it is drawing into.
 //
 // A pane owns its SCROLL POSITION and its slice of the canvas band. It does NOT own the zoom:

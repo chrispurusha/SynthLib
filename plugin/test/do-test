@@ -1,0 +1,33 @@
+#!/bin/zsh
+# Offline checks of SynthLib's plug-in wrappers - no host, no hardware, no bundle.
+#
+#   stateTest          the saved-state format: SLP2 round trip, SLP1 and pre-header blobs, id lookup
+#   multiInstanceTest  a fake plug-in linked straight against synthlibPluginVst3.cpp, recording which
+#                      instance every call reaches - the one thing a real host cannot show
+#
+# Run it after any change to plugin/. The VST3 half needs the SDK, as do-plugin does.
+
+set -e
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+PLUGIN="$HERE/.."
+SDK="${VST3_SDK:-$HOME/Documents/vst3sdk}"
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
+clang -std=gnu11 -Wall -Wextra -Werror -I"$PLUGIN" -c "$PLUGIN/synthlibPluginState.c" -o "$WORK/state.o"
+
+clang -std=gnu11 -Wall -Wextra -Werror -I"$PLUGIN" -o "$WORK/stateTest" "$HERE/stateTest.c" "$WORK/state.o"
+"$WORK/stateTest"
+
+if [[ ! -d "$SDK/pluginterfaces" ]]; then
+    print -u2 "VST3 SDK not found at $SDK - skipping the multi-instance test (set VST3_SDK)"
+    exit 1
+fi
+
+clang++ -std=gnu++17 -Wall -Werror -I"$SDK" -I"$PLUGIN" -o "$WORK/multiInstanceTest" \
+    "$HERE/multiInstanceTest.cpp" "$PLUGIN/synthlibPluginVst3.cpp" "$WORK/state.o" \
+    "$SDK/pluginterfaces/base/funknown.cpp" "$SDK/pluginterfaces/base/coreiids.cpp" \
+    "$SDK/public.sdk/source/vst/vstinitiids.cpp" "$SDK/pluginterfaces/base/ustring.cpp" \
+    "$SDK/pluginterfaces/base/conststringtable.cpp" -framework CoreFoundation
+"$WORK/multiInstanceTest"

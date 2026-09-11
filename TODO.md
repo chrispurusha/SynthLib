@@ -1,5 +1,86 @@
 # SynthLib TODO
 
+## The plug-in contract, second version (2026-09-11), and the sibling ports
+
+`plugin/synthlibPlugin.h` was reworked before GenBridge or MidiSyncTool could
+move onto the shared wrappers, because the first version assumed ONE INSTANCE
+PER VARIANT - true of G2 Alike's process-wide engine, false of both siblings,
+which are routinely loaded once per synth or per track. With two copies loaded
+the VST3 controller found no instance at all (a per-variant global that went
+empty), editors opened blank, and every editor's edits went to whichever
+controller was created last. The AU had the same with `gSoleAu`.
+
+**What changed, all in `plugin/`:**
+
+- **Instances.** Each VST3 processor announces a serial number to its own
+  controller over the IConnectionPoint the host wires between them
+  (`"synthlib.bind"`); the controller resolves it each time. A host that never
+  connects the halves gets the old behaviour - the sole instance, or none when
+  there are several. Every call a plug-in makes back into the wrapper now names
+  its instance: `synthlib_plugin_param_edited(inst, ...)`,
+  `_latency_changed(inst)`, `_param_value(inst, id)`, `_request_resize(inst, ...)`,
+  `_send_message(inst, ...)`. The host-facing ones may be called from any
+  thread and are posted to the main thread.
+- **Parameters** have flags - `SYNTHLIB_PARAM_HIDDEN`, `_LIST`, `_NO_SAVE` -
+  and ids that need not be indices. Both wrappers keep a `tSynthLibParamStore`
+  per half (indexed, found by id); `paramCount()`/`paramInfo()` take the
+  descriptor and must answer with no instance. AU list parameters get
+  `ParameterValueStrings`; hidden ones are left out of its parameter list.
+- **Events** carry the MIDI channel and the sample offset. The AU queues MIDI
+  and scheduled parameters and delivers them inside the render they belong to.
+- **New callbacks**: `prepare()` (max block, offline), `setProcessing()`,
+  `latencySamples()`, `blockBegin()`, `paramPoints()` (every automation point in
+  a block, for momentary buttons), `midiMapping()` (per channel), and
+  `stateParams()` (parameter values out of the plug-in's own blob, for a VST3
+  controller that has no instance and for projects saved before the wrapper).
+- **Transport** gained the loop ends, time signature and continuous time; the
+  AU fills `systemTime` from the render timestamp's host time.
+- **Saved state is "SLP2"**: (id, value) records for saved parameters only,
+  then the plug-in's blob. SLP1 and pre-header blobs are still read.
+- `controllerAppliesParams` keeps G2 Alike's old behaviour of pushing the
+  controller's values straight into the instance; leave it false for a
+  plug-in whose parameters are events (GenBridge's controller pass-throughs).
+
+`plugin/test/do-test` builds and runs the offline checks: the state format, and
+a fake plug-in linked straight against the VST3 wrapper that records which
+instance every call reaches. Run it after any change to the wrappers.
+
+**GenBridge's port - DONE 2026-09-11**, now `vst3/gbPlugin.c` plus `./do-plugin`; `tools/vst3check`
+passes 91/91 and `auval` passes both components clean. It needed five more things of the contract,
+all now in: `createView()` is given the descriptor (the instance may be NULL and the two variants draw
+different panels); `editorMaxWidth`; the VST3 controller keeps each project's editor WIDTH in its own
+state (reading GenBridge's old `GENBRIDGEGUI1` too); `checkSizeConstraint()` averages the width a
+rect implies with the width its height implies, so a drag of either edge converges; and a plug-in
+that saves no parameters through the wrapper has its own bytes written UNWRAPPED, so GenBridge's saved
+state is byte-identical to before. The Audio Unit gained `kAudioUnitProperty_BypassEffect` for
+effects, and only a unit that takes MIDI answers the MIDI selectors. What it was planned as, against
+the old `vst3/gbVst3.cpp`: two variants
+(effect + instrument with an aux side-chain); `latencySamples()` =
+`gb_bridge_latency()` and `synthlib_plugin_latency_changed()` in place of the
+`gbLatency` message; `blockBegin()` = `gb_bridge_block_begin()`; `paramPoints()`
+for `kParamMeasure`; `midiMapping()` for the 16 x 130 pass-throughs (HIDDEN |
+NO_SAVE at ids 1000+); every other parameter NO_SAVE with `stateParams()` =
+`gb_state_parse_active()`, since its own blob already holds them; and the
+`gbDeviceSlot`/`gbMode`/`gbFirstChannel`/`gbOffset`/`gbSource` corrections
+become `synthlib_plugin_param_edited()`. Its editor's per-project size
+(`GENBRIDGEGUI1`) is read by the shared controller, which now keeps every plug-in's width per project.
+
+**MidiSyncTool's port - DONE 2026-09-11**, now `vst3/msPlugin.c` plus
+`./do-plugin`: an effect with a pass-through `process()`, `wantsTransport`,
+`setProcessing()` for its suspend, and its existing `[4 doubles][name][double]
+[name]` blob written and read unwrapped. `msVst3.cpp`'s processor logic moved
+across unchanged. `auval` is clean, and `tools/mstDriver` through IAC delivers
+the same 333 ticks as the pre-port build with the same interval RMS (0.020-0.023
+ms against 0.019-0.022 over three runs each) and identical loop-wrap handling in
+its log. One wrapper change came out of it: the VST3 transport now copies the
+host's values RAW beside their flags, because `msVst3.cpp` read the loop ends
+without checking `kCycleValid`.
+
+**All three plug-ins are on the shared wrappers now**, so `renderBackendGL.c`
+no longer accepts the old `G2_VST3_BUILD` spelling. Left for later: the two
+panels' views (`gbView.m`/`msView.m`, 91% alike) take the same edit and sync
+callbacks now, and could become one shared view with a per-project draw hook.
+
 ## The renderer position after 2026-09-09, and what the ports need
 
 **macOS is Metal; OpenGL is what Windows and Linux will run.** That is now the
