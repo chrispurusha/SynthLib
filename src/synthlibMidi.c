@@ -16,6 +16,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
+// Notes: Docs/code-notes/synthlibMidi.c.md - "// notes §k" refers there.
 
 // See synthlibMidi.h for what this is and which of the two apps' versions it inherited from.
 
@@ -32,11 +33,7 @@ extern "C" {
 static MIDIPortRef     gOutPort   = 0;
 static pthread_mutex_t gSendMutex = PTHREAD_MUTEX_INITIALIZER;
 
-// ONE SHARED PACKING BUFFER RATHER THAN A STACK ONE. It has to be big enough for the largest thing
-// any app sends — a whole-bank restore, ~18.7KB measured — and putting that on the stack would mean
-// a 64KB frame at every call site, including the ones that only ever send three bytes. It is safe to
-// share because the mutex below already serialises sends: the lock is taken before the buffer is
-// touched and released after MIDISend has copied out of it.
+// notes §1
 static uint8_t         gPacketBuf[SYNTHLIB_MIDI_MAX_MESSAGE + sizeof(MIDIPacketList)];
 
 void synthlib_midi_set_out_port(MIDIPortRef port) {

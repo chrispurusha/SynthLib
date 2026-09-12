@@ -16,6 +16,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
+// Notes: Docs/code-notes/synthlibPluginVst3View.h.md - "// notes §k" refers there.
 
 #ifndef __SYNTHLIB_PLUGIN_VST3_VIEW_H__
 #define __SYNTHLIB_PLUGIN_VST3_VIEW_H__
@@ -24,16 +25,7 @@
 
 #include "synthlibPlugin.h"
 
-// Wraps the NSView the plug-in's own createView() builds in the IPlugView a VST3 host wants. Defined
-// in synthlibPluginVst3View.mm because it touches Cocoa; declared here so the wrapper itself needs
-// no Objective-C.
-//
-// The returned view is owned by the caller (refcount 1) and is handed straight back to the host.
-// May be NULL, which the caller reports to the host as "no editor".
-//
-// `owner` - the controller - is kept alive for as long as the view is, because `widthSink` points into
-// it: every width the host settles on is written there, which is how a project remembers its editor's
-// size. `initialWidth` is that remembered width, or 0 for "none yet".
+// notes §1
 Steinberg::IPlugView * synthlib_vst3_create_view(const tSynthLibPluginDesc * desc, void * inst,
                                                  Steinberg::FUnknown * owner, double initialWidth,
                                                  double * widthSink);

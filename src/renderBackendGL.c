@@ -16,35 +16,15 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
+// Notes: Docs/code-notes/renderBackendGL.c.md - "// notes §k" refers there.
 
 #include "renderBackendSelect.h"
 
-// COMPILED TO NOTHING WHERE OpenGL IS NOT WANTED. On macOS that is now every target - see
-// renderBackendSelect.h - and the guard is here rather than in a build script because SynthLib/src
-// is a synchronized folder in the Xcode projects: a file in it is compiled whether the target wants
-// it or not, so the only place to say "not this one" is inside the file.
-//
-// NOTHING BELOW HAS BEEN DELETED, and it must not be. This is the whole renderer for Windows and
-// Linux, where Metal does not exist, and it is the A/B reference on macOS when built with
-// SYNTHLIB_ALLOW_GL_ON_APPLE.
+// notes §1
 #ifndef SYNTHLIB_NO_GL_BACKEND
 
 
-// ── The OpenGL backend ──────────────────────────────────────────────────────────────────────────
-//
-// The nine functions of renderBackend.h, and THE ONLY FILE IN SYNTHLIB OR IN ANY OF THE THREE
-// APPLICATIONS THAT NAMES OPENGL. Everything above it draws by appending triangles.
-//
-// EVERY CALL BELOW IS OPENGL 1.1 OR EARLIER. That is not nostalgia, it is the reason this file
-// covers Windows and Linux as well as macOS without a second thought: glDrawArrays, the
-// client-side vertex array pointers, glTexImage2D, glScissor, glOrtho and glBlendFunc were all
-// there in 1997, so there is no driver on any of the three platforms that lacks them. macOS is
-// the only one of the three where OpenGL is deprecated, and it is deprecated rather than gone.
-//
-// So the eventual arrangement is not four backends. It is this file on Windows and Linux, and
-// this file OR renderBackendMetal.m on macOS — with this one kept alive there precisely so the
-// two can be run against each other on one machine and diffed, which is the only cheap way to
-// prove the Metal port moved no pixel.
+// notes §2
 
 #ifdef __cplusplus
 extern "C" {
@@ -61,11 +41,7 @@ extern "C" {
 #include "synthlibDefs.h"
 #include "renderBackend.h"
 
-// The surface height, remembered because gl_scissor() needs it: GL's scissor origin is the
-// BOTTOM left where every coordinate handed to this file is top-left. gl_set_surface() is always
-// called with the same height as set_render_height() — both from synthlibScale.c in the
-// applications and from g2_gl_draw_frame() in the plug-in — but this file keeps its own rather
-// than reaching for that global, so the flip cannot silently disagree with the projection.
+// notes §3
 static int gSurfaceHeight = 0;
 
 static void gl_init(void) {
@@ -73,11 +49,7 @@ static void gl_init(void) {
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
 #if GFX_MSAA_SAMPLES > 1
-    // The multisample BUFFER is requested by the window layer, because under OpenGL it is a
-    // property of the pixel format the context was created with and cannot be asked for after the
-    // fact — see the GLFW_SAMPLES hint in synthlibWindow.c and the pixel format in
-    // vst3/g2GlView.m. All that is left here is to switch it on. Harmless if no such buffer
-    // exists: GL simply has nothing to multisample.
+    // notes §4
     glEnable(GL_MULTISAMPLE);
 #endif
 
@@ -144,12 +116,7 @@ static void gl_scissor(int x, int y, int width, int height) {
         glDisable(GL_SCISSOR_TEST);
         return;
     }
-    // THE FLIP LIVES HERE, because a bottom-left scissor origin is a property of OpenGL and not of
-    // the UI — Metal's is top-left and needs none. It is exact: the rectangle arrives in whole
-    // pixels, so nothing is truncated and both backends cover the same rows. It did not used to
-    // be, and that was the one thing the Metal port actually got wrong — see renderBackend.h.
-    //
-    // GL clamps an out-of-bounds rectangle silently, so there is nothing to do about that here.
+    // notes §5
     glEnable(GL_SCISSOR_TEST);
     glScissor(x, gSurfaceHeight - (y + height), width, height);
 }
@@ -158,11 +125,7 @@ static bool gl_read_pixels_rgb(int x, int y, int width, int height, uint8_t * ou
     if ((width <= 0) || (height <= 0) || (out == NULL)) {
         return false;
     }
-    // Tightly-packed rows (width*3 bytes). Without this, glReadPixels' default GL_PACK_ALIGNMENT
-    // of 4 pads each row up to a 4-byte multiple whenever width*3 isn't already one (i.e. any
-    // width not a multiple of 4) — which both shears the saved PNG (row stride mismatch vs stbi's
-    // width*3) AND overruns the width*height*3 buffer. Only bit us at odd window sizes; Retina
-    // captures were multiples of 4.
+    // notes §6
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     glReadPixels(x, y, width, height, GL_RGB, GL_UNSIGNED_BYTE, out);
     return true;
@@ -212,14 +175,7 @@ static void gl_present(void) {
 // G2_VST3_BUILD before that, and this accepted both until the last of the three plug-ins moved onto
 // SynthLib's shared wrappers on 2026-09-11; nothing passes the old spelling any more.
 #if defined (SYNTHLIB_PLUGIN_BUILD)
-    // THE PLUG-IN HAS NO GLFW — not just no window, no library. It includes this file for the
-    // drawing and gets its GL headers through glfw3.h, but nothing links libglfw, so naming
-    // glfwSwapBuffers here is an undefined symbol at link time rather than a runtime no-op. It
-    // was, for one build.
-    //
-    // Nothing is lost: a plug-in draws into a view the HOST presents, so g2GlDraw.c ends its frame
-    // at render_backend_flush() and g2GlView.m calls [context flushBuffer]. render_present(), and
-    // therefore this, is never reached there.
+    // notes §7
 #else
     // The context GLFW made current — asking it, rather than being handed the window, keeps this
     // file out of SynthLib's window layer.

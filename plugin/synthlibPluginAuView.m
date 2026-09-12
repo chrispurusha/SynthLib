@@ -16,16 +16,9 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
+// Notes: Docs/code-notes/synthlibPluginAuView.m.md - "// notes §k" refers there.
 
-// HOW AN AUDIO UNIT HANDS A HOST ITS WINDOW. kAudioUnitProperty_CocoaUI names a bundle and a class
-// inside it; the host loads the class, makes one, and asks it for a view. This is that class, and
-// the view it hands back is the SAME one the VST3 editor shows - the plug-in's own createView().
-//
-// THE CLASS NAME COMES FROM THE BUILD, and that is not decoration. Objective-C class names are
-// global to the PROCESS: two SynthLib-based Audio Units loaded into one host, each with a class
-// called "SynthLibAUView", would collide - the runtime would keep one, say so in a log line nobody
-// reads, and a host would then open one plug-in's editor from inside the other. do-plugin passes
-// -DSYNTHLIB_AU_VIEW_CLASS with a name of the plug-in's own.
+// notes §1
 
 #import <Cocoa/Cocoa.h>
 #import <AudioUnit/AUCocoaUIView.h>
@@ -68,11 +61,7 @@ CFStringRef synthlib_au_view_class_name(void) {
 // The container
 // ------------------------------------------------------------------------------------------------
 
-// WHY THERE IS A CONTAINER AT ALL. An Audio Unit host has no equivalent of VST3's
-// checkSizeConstraint(): it resizes the view it was given and expects the view to cope. The canvas
-// plug-in scales from WIDTH alone, so a taller-but-not-wider window would uncover rows rather than
-// drawing larger - the very thing the application's own aspect lock prevents. Enforcing the ratio
-// here gives the Audio Unit editor the same behaviour the VST3 one gets from the host.
+// notes §2
 @interface SYNTHLIB_AU_CONTAINER_CLASS : NSView
 @property (assign, nonatomic) const tSynthLibPluginDesc * pluginDesc;
 @property (assign, nonatomic) void * pluginInstance;

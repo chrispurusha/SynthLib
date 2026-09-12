@@ -16,6 +16,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
+// Notes: Docs/code-notes/device.h.md - "// notes §k" refers there.
 
 #ifndef DEVICE_H
 #define DEVICE_H
@@ -32,11 +33,7 @@ extern "C" {
 #include <CoreAudio/CoreAudio.h>
 #pragma clang diagnostic pop
 
-// The HAL directly - AudioDeviceCreateIOProcID - rather than a HAL output AudioUnit as
-// G2-Edit's audioOutput.c uses. An AudioUnit is the right choice when something must be rendered
-// INTO a device and the unit's own pull model is convenient. Here two devices are being run
-// against each other and the interesting quantity is when each one's callback fires relative to
-// the other, so the extra layer only gets in the way. It is also what AudioMovers' feeder does.
+// notes §1
 
 #define DEVICE_NAME_LEN    (128)
 #define DEVICE_UID_LEN     (256)
@@ -93,18 +90,10 @@ bool     device_buffer_frame_range(AudioObjectID id, uint32_t * minFrames, uint3
 // the definition.
 bool     device_is_running_somewhere(AudioObjectID id);
 
-// Waits, up to timeoutMs, for a device to stop reporting that it is running. True if it went idle.
-//
-// CoreAudio tears an IOProc down asynchronously, so kAudioDevicePropertyDeviceIsRunningSomewhere can
-// still say "running" for a while after the client that owned it has closed - including when that
-// client was US. Anything that probes for OTHER clients right after closing its own stream needs
-// this first, or it sees its own ghost.
+// notes §2
 bool     device_wait_until_idle(AudioObjectID id, unsigned timeoutMs);
 
-// deviceLatency + safetyOffset + bufferFrames + streamLatency. The first three are what AudioMovers'
-// feeder logs separately; the fourth is declared on the STREAM rather than the device and is zero on
-// every USB and Thunderbolt interface here - but 2399 frames on the built-in microphone, which is
-// how it stayed missing. Together they are what a host must be told about.
+// notes §3
 uint32_t device_latency_frames(AudioObjectID id, bool isInput);
 
 // firstChannel is the device channel the first returned channel comes from, so a stereo pair can
@@ -112,15 +101,7 @@ uint32_t device_latency_frames(AudioObjectID id, bool isInput);
 bool     device_open(tDeviceStream * stream, AudioObjectID id, bool isInput,
                      uint32_t firstChannel, uint32_t channels,
                      uint32_t maxFrames, tDeviceCallback callback, void * user);
-// Told when a device is plugged in, unplugged, or otherwise appears or vanishes.
-//
-// NOTHING NOTICED HOT-PLUG BEFORE THIS. The device list is enumerated when something asks for it and
-// the plug-in only asks when a parameter changes, so a USB interface switched on after a project was
-// opened stayed invisible until the user touched a control - which is precisely the case the
-// "waiting for a saved device" state exists to serve, and it would have waited for ever.
-//
-// The callback comes from a CoreAudio thread, so it must do no more than set a flag and wake
-// somebody. Registering the same `user` twice replaces the first entry rather than adding a second.
+// notes §4
 typedef void (*tDeviceListChanged)(void * user);
 
 bool     device_watch_list(tDeviceListChanged callback, void * user);

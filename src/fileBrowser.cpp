@@ -16,6 +16,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
+// Notes: Docs/code-notes/fileBrowser.cpp.md - "// notes §k" refers there.
 
 #define GL_SILENCE_DEPRECATION    1
 // GLFW here is for its KEY CONSTANTS only — no GLFW function is called, so this links into
@@ -48,10 +49,7 @@ struct tFileBrowserEntry {
     bool        isDir;
 };
 
-// Left-hand quick-access column, built fresh each time the browser opens: a fixed Favorites
-// group (Home/Desktop/Documents/Downloads/iCloud Drive, whichever exist) plus a Locations group
-// with the boot volume and every currently-mounted volume under /Volumes — a real equivalent of
-// NSOpenPanel's sidebar rather than a hardcoded guess at what's mounted.
+// notes §1
 struct tSidebarItem {
     std::string label;
     std::string path;    // Empty for a section header — headers aren't clickable.
@@ -307,22 +305,14 @@ int32_t row_count_scrolled(void) {
     return (int32_t)((sState.entries.size() > (size_t)kVisibleRows) ? (sState.entries.size() - (size_t)kVisibleRows) : 0);
 }
 
-// draw_button() sizes its label text directly off the height of the rectangle passed in (see
-// utilsGraphics.cpp — there's no separate font-size parameter), so every button here uses
-// STANDARD_TEXT_HEIGHT for its height, matching the text size every other button in the app
-// renders at, rather than a larger "easier to click" rectangle. (G2-Edit's own defs.h has a
-// STANDARD_BUTTON_TEXT_HEIGHT alias for the same 12.0 value, but that header is app-specific and
-// this file can only see synthlibDefs.h.)
+// notes §2
 const double kButtonH = STANDARD_TEXT_HEIGHT;
 
 double button_row_y(void) {
     return sState.panelRect.coord.y + kPanelHeight - 10.0 - kButtonH;
 }
 
-// fromRight counts button-widths in from the panel's right edge — 0 is rightmost. x is computed
-// from the button's right edge inward so it can never extend past the panel (the original version
-// of this function computed x from the left instead, which put the rightmost button outside the
-// panel's own border).
+// notes §3
 tRectangle button_rect(int fromRight, double y) {
     double w         = 64.0;
     double gap       = 8.0;
@@ -466,10 +456,7 @@ bool file_browser_active(void) {
     return sState.active;
 }
 
-// Called on mouse-down while the browser is active so Close/Cancel/Confirm can show a pressed
-// state while held — matches the rest of the app's convention (gTopbarControls[i].isPressed,
-// tSettingsPanelRects.closePressed, ...) of darkening a button's fill from mouse-down to
-// mouse-up rather than only reacting on click.
+// notes §4
 void handle_file_browser_mouse_down(tCoord coord) {
     if (!sState.active) {
         return;
@@ -793,10 +780,7 @@ void render_file_browser(void) {
     if (sState.mode == fileBrowserModeSaveFile) {
         tRectangle  fieldRect = filename_field_rect();
 
-        // render_rectangle_with_border() fills the whole rectangle with whatever colour is
-        // current when it's called (see utilsGraphics.cpp) — a separate render_rectangle() fill
-        // beforehand would just be overwritten by it, so the focused/unfocused colour has to be
-        // set immediately before this one call, not before a preceding plain fill.
+        // notes §5
         set_rgb_colour(sState.filenameFocused ? (tRgb)RGB_GREY_7 : (tRgb)RGB_GREY_5);
         render_rectangle_with_border(mainArea, fieldRect);
         set_rgb_colour((tRgb)RGB_BLACK);

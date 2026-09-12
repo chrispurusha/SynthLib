@@ -16,21 +16,12 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
+// Notes: Docs/code-notes/midiPortDialog.h.md - "// notes §k" refers there.
 
 #ifndef __MIDI_PORT_DIALOG_H__
 #define __MIDI_PORT_DIALOG_H__
 
-// THE MIDI PORTS DIALOGUE: which input the synth is heard on and which output it is played through,
-// each either a named port or "Automatic", with a Scan button and a line saying what is connected.
-//
-// It only CHOOSES. The choice itself lives in synthlibMidi.h (synthlib_midi_ports_*), saved by name
-// under whatever scope the application set; connecting is the application's, because each one finds
-// its device differently. So the application supplies three things: what to do when the choice
-// changes (reconnect), what Scan means (the identity scan it has always had), and one line of status.
-//
-// NOT BUILT IN TO THE COORDINATOR, unlike the alert and the browsers: it needs CoreMIDI, and
-// synthlibPopups.c is linked into G2 Alike, which has no business linking CoreMIDI. An application
-// that wants the dialogue registers midi_port_dialog_popup() with synthlib_popups_register().
+// notes §1
 
 #include <stddef.h>
 #include <stdbool.h>

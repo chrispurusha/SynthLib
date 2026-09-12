@@ -16,6 +16,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
+// Notes: Docs/code-notes/menuBar.c.md - "// notes §k" refers there.
 
 #ifdef __cplusplus
 extern "C" {
@@ -90,11 +91,7 @@ void render_menu_bar(const tMenuBarItem * items, tRectangle bar) {
     for (int i = 0; items[i].label != NULL; i++) {
         tRectangle itemRect = menu_bar_item_rect(items, bar, i);
 
-        // AN OPEN MENU STAYS LIT; A HOVER DOES NOT COUNT WHILE THE POINTER IS CAPTURED. During a
-        // dial drag the cursor is hidden and its reported position is a relative-delta accumulator,
-        // free to drift anywhere - drag far enough and it wanders into the bar and lights an item
-        // under a cursor that is not on screen. sOpenIndex is deliberately still honoured: a menu
-        // the user actually opened should stay lit whatever the pointer is doing.
+        // notes §1
         if ((sOpenIndex == i) || (!synthlib_host_pointer_captured() && within_rectangle(mouseCoord, itemRect))) {
             set_rgb_colour((tRgb)RGB_GREY_5);
             render_rectangle(mainArea, itemRect);

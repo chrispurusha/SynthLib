@@ -16,6 +16,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
+// Notes: Docs/code-notes/synthlibScale.c.md - "// notes §k" refers there.
 
 #ifdef __cplusplus
 extern "C" {
@@ -55,17 +56,7 @@ void synthlib_scale_update(int width, int height) {
 
     set_render_width(width);
     set_render_height(height);
-    // The framebuffer `width` already reflects the display's backing/content scale
-    // (glfwGetFramebufferSize returns physical pixels). The UI is laid out in a fixed
-    // logical canvas gTargetFrameBuffWidth/2 units wide (the framebuffer width at the
-    // default window size on a 2x display), so the mapping is simply
-    // physical_pixels / logical_units = 2 * width / gTargetFrameBuffWidth.
-    // Do NOT multiply by gContentScale here: the framebuffer size already carries the
-    // scale, so doing so DOUBLE-COUNTS it and made the whole UI collapse to a quarter-
-    // size corner on non-Retina / "Low Resolution" displays (where content scale is
-    // 1.0). On a 2x display gContentScale==2.0, so old and new are identical there —
-    // only the 1x case is fixed. gContentScale is retained only as the change-trigger
-    // signal (content_scale_callback -> synthlib_scale_set_content_scale recomputes).
+    // notes §1
     gGlobalGuiScale = 2.0 * (double)width / (double)gTargetFrameBuffWidth;
 }
 

@@ -1,0 +1,100 @@
+# clickRegion.h notes
+
+The longer comments from `clickRegion.h`, moved here 2026-09-12 so the code reads cleanly. The code points at each as `// notes §k`. Verbatim and in file order; each is titled by what it documents.
+
+## 1. `eClickLayer`
+
+Generic clickable-rectangle registry, replacing scattered per-widget
+"if (within_rectangle(coord, thing->rectangle))" checks in each app's
+mouseHandle.c. Nothing here knows what a "module" or "dial" is (same
+principle as contextMenu.h) — a render function registers a rect, layer,
+and callback right where it already computes that rect for drawing; the
+app's mouse callback asks dispatch_click_region() to find and fire the
+match instead of re-deriving hit-testing itself.
+
+Lifecycle, once per frame:
+```
+  1. clear_click_regions() — call once at the start of the render pass.
+  2. register_click_region(...) — call from each render function, right
+     where it already computes the rect it's about to draw. Because this
+     happens fresh every frame, "activating/deactivating" a widget on the
+     fly needs no separate enable/disable call — a render function simply
+     skips registering (while still drawing, e.g. greyed out) when a
+     widget is currently non-interactive.
+  3. dispatch_click_region(...) — call from the app's GLFW mouse callback.
+
+```
+Layer order is fixed priority (eClickLayerModal checked before
+eClickLayerPanel before eClickLayerCanvas), matching how popups must win
+over whatever they're drawn on top of. Within a layer, the most recently
+registered region wins ties on overlapping rects — i.e. registration order
+should match paint order (last drawn = topmost = checked first), the same
+invariant apps already rely on today (e.g. morph group dials drawn after,
+and hit-tested before, regular module dials).
+
+## 2. `eClickPhase`
+
+eClickPress CAPTURES: the region that handles a press owns the matching release, wherever the
+cursor has moved to by then (standard mouse-capture behaviour — the registry used to look the
+release up by coordinate like any other event, so a press-and-drag-off delivered the release to
+whatever happened to be under the cursor, or to nothing at all). The captured handler is called
+with eClickRelease if the release landed back inside its rect, or eClickReleaseOutside if not.
+
+A handler that only tests `phase == eClickRelease` therefore gets press-and-drag-off-cancels for
+free, which is what a click is normally expected to do. Handlers that must act on the release
+either way — anything that latched state or sent something on the press that has to be undone,
+e.g. a device key-down needing its key-up — should treat both the same, typically by testing
+`phase == eClickPress` for the down case and handling everything else as the up case.
+
+## 3. `cancel_click_region_capture()`
+
+Drops any in-flight press capture. Only needed when something outside the registry takes over
+input mid-gesture (a modal opening on top, a device disconnect abandoning the interaction) and the
+captured handler must NOT be told about the eventual release. Normal press/release pairs clear the
+capture themselves.
+
+## 4. `set_click_region_clip()`
+
+CLIP REGISTRATIONS TO A VIEWPORT, exactly as glScissor clips the drawing of the same widgets.
+
+A scrolling pane draws its contents clipped, so a module scrolled past the bottom of its pane
+simply is not painted there. Its click region was registered all the same, in window coordinates,
+and stayed live underneath whatever the neighbouring pane was drawing — so in G2-Edit's split view
+a Voice Area module scrolled under the FX pane could still be selected and right-clicked through
+it, invisible but hittable.
+
+Set this where the scissor is set and clear it where the scissor is cleared, and the two cannot
+drift apart: a region entirely outside the clip is dropped, and one straddling the edge is TRIMMED
+to the visible part, so a half-scrolled widget is clickable exactly where it can be seen.
+
+NULL clears it. Not stacked — one viewport at a time, which is all a pane render needs.
+
+## 5. `click_region_at()`
+
+WHAT IS UNDER THIS COORDINATE, without delivering anything to it.
+
+dispatch_click_region() answers an EVENT: it finds the front-most region and calls its handler.
+Several things need the same question answered without an event — a right-click that wants to open
+a menu FOR whatever is under the cursor, a keyboard nudge that acts on the widget being pointed at,
+an overlay deciding what to describe. Each of those used to walk the app's own render-time
+rectangle arrays instead, which is a second, parallel description of where every widget is: it can
+disagree with this registry about z-order, it goes stale in exactly the frames where a widget was
+drawn but deliberately not registered, and it kept G2-Edit's 6MB gParamRectangle readable.
+
+Answers with the SAME front-to-back walk dispatch uses, so a query and a click can never disagree
+about which widget is in front. Returns the region's userData — the app's own handle for whatever
+it registered — or NULL if nothing is there. Does not touch the press capture.
+
+## 6. `click_region_capture_rect()`
+
+The rectangle of the region that owns the press currently in flight, if there is one.
+
+dispatch_click_region() already captures the whole region on eClickPress — it has to, so the
+matching release goes to the same handler wherever the cursor ends up. This exposes the rect it
+captured, so a handler starting a gesture can keep the geometry it was clicked on without going
+back to whatever array the app happened to record it in. That matters for a rotary drag, which
+needs the widget's centre on every mouse-move: re-deriving it per event is a lookup that can go
+stale or disagree, where the press already knew the answer exactly.
+
+Valid only from inside a press handler, which is the only time a capture is armed. Returns false
+otherwise and leaves rect untouched.

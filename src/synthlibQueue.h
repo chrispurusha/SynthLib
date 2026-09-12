@@ -16,6 +16,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
+// Notes: Docs/code-notes/synthlibQueue.h.md - "// notes §k" refers there.
 
 #ifndef __SYNTHLIB_QUEUE_H__
 #define __SYNTHLIB_QUEUE_H__
@@ -24,14 +25,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
-// A generic, payload-agnostic thread-safe FIFO for passing fixed-size messages between two threads
-// (e.g. a UI thread and a device-comms thread). The queue copies payloadSize opaque bytes per message
-// and never interprets them, so the embedding app defines its own message struct and passes
-// sizeof(that struct) to msg_init(). One queue is fixed to one payload size.
-//
-// Typical use: one queue per direction (e.g. gToUsbThread / gToGuiThread). The consumer either blocks
-// (eRcvWait — a dedicated worker thread) or polls (eRcvPoll — a render loop that must not block, then
-// wakes itself / is woken to drain). The mechanism has no app dependencies, so it lives in SynthLib.
+// notes §1
 
 typedef enum {
     eRcvPoll,

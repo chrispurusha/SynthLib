@@ -16,6 +16,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
+// Notes: Docs/code-notes/alertDialog.c.md - "// notes §k" refers there.
 
 #define GL_SILENCE_DEPRECATION    1
 #include <GLFW/glfw3.h>
@@ -115,11 +116,7 @@ static void push_line(const char * line) {
     sState.lineCount++;
 }
 
-// Greedy word-wrap into messageLine[], measured the same way render_text() will draw it (the same
-// technique bankBrowser.cpp uses for its own message text). A '\n' is a HARD break, and two in a
-// row leave a deliberate blank line — without that the newline is swallowed into whichever word it
-// touches and two sentences render as "disagree.Your edits", with nothing to show where one
-// thought ended and the next began.
+// notes §1
 static void wrap_message(const char * text, double maxWidth) {
     char   current[ALERT_LINE_SIZE] = {0};
     size_t pos                      = 0;
@@ -587,10 +584,7 @@ void render_alert_dialog(void) {
         draw_button(mainArea, button_rect(1, buttonY), "Cancel", cancelColour);
     }
 
-    // The bank picker's dropdown is opened (from handle_alert_dialog_click()) on top of this modal
-    // panel — the app's own render_context_menu() call elsewhere in the frame may run before or
-    // after render_alert_dialog(), so re-invoking it here (a harmless no-op redraw when it's not
-    // this dialog's own picker that's open) guarantees the flyout always ends up painted last.
+    // notes §2
     if (gContextMenu.active) {
         render_context_menu();
     }

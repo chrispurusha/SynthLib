@@ -16,6 +16,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
+// Notes: Docs/code-notes/synthlibWindow.c.md - "// notes §k" refers there.
 
 // See synthlibWindow.h for what this is and why the six callbacks below stopped being each
 // application's business.
@@ -41,14 +42,7 @@ extern "C" {
 #include "renderBackend.h"
 #include "utilsGraphics.h"
 
-// THE ONE PLACE A BACKEND CHANGES WHAT THE WINDOW IS, and it is a window concern rather than a
-// drawing one. OpenGL wants GLFW to create a context alongside the window and make it current.
-// Metal wants GLFW to create NO context at all — GLFW_NO_API, the same hint a Vulkan application
-// uses — and then takes the NSWindow and puts a CAMetalLayer on it.
-//
-// The tests below are RUNTIME, not #ifs, because both backends are in the binary and the choice
-// comes from a saved setting. This function being the difference between them is also why the
-// choice must be made before the window is created and cannot change while running.
+// notes §1
 #ifdef __APPLE__
 #define GLFW_EXPOSE_NATIVE_COCOA    1
 #pragma clang diagnostic push
@@ -66,17 +60,10 @@ static bool backend_is_opengl(void) {
     return gfx_backend_current() == eRenderBackendOpenGL;
 }
 
-// The window minimum, as a divisor of the design size. 640x360 for a 2560x1440 target, and still
-// exactly the locked 16:9. The old TARGET/8 allowed a 320pt window, which on a 1x display is a 320px
-// framebuffer — gGlobalGuiScale 0.25, putting body text at ~3px and the small labels at ~2px,
-// unreadable however well they are rendered. At 640pt the 1x case bottoms out at ~6px, which is not.
+// notes §2
 #define SYNTHLIB_WINDOW_MIN_DIVISOR    (4)
 
-// Which optional callbacks were actually registered, so the close handler can unregister exactly
-// those and nothing else. Kept rather than re-derived because "unregister everything" would call
-// glfwSet*Callback on a window during teardown for events the app never asked about — harmless
-// today, but the reason EmuUtility's hand-written copy of this had already gone stale was that the
-// register and unregister lists were two separate hand-maintained things. Here they are one.
+// notes §3
 static tSynthLibWindowCallbacks gCallbacks = {0};
 
 // ── The six that only ever talked to SynthLib ────────────────────────────────
@@ -92,10 +79,7 @@ static void framebuffer_size_callback(GLFWwindow * window, int width, int height
     synthlib_request_redraw();
 }
 
-// Fires when the window moves to a display with a different HiDPI scale (e.g. dragging from a Retina
-// built-in display to a non-Retina external one, or vice versa) — see synthlibScale.h's own comment
-// for the bug this fixes (gContentScale used to be hardcoded 2.0f, so anything deriving a screen
-// position from gGlobalGuiScale landed mispositioned wherever the real scale was not 2.0).
+// notes §4
 static void content_scale_callback(GLFWwindow * window, float xscale, float yscale) {
     (void)yscale; // these apps only ever use a single uniform scale factor
 
@@ -120,10 +104,7 @@ static void window_close_callback(GLFWwindow * window) {
     synthlib_window_close();
 }
 
-// ── The normalised shims ─────────────────────────────────────────────────────
-//
-// The boilerplate that used to be repeated around every event in every app, once. See
-// tSynthLibInputHandlers in the header for what this deliberately does NOT take over.
+// notes §5
 
 static tSynthLibInputHandlers gHandlers = {0};
 
@@ -270,12 +251,7 @@ void * synthlib_window_create(const tSynthLibWindowConfig * config, const tSynth
     if (!glfwInit()) {
         exit(EXIT_FAILURE);
     }
-    // GLFW_SCALE_FRAMEBUFFER, not GLFW_COCOA_RETINA_FRAMEBUFFER. The old name is a LEGACY ALIAS,
-    // not a deprecated behaviour: glfwWindowHint() falls both through to the same
-    // _glfw.hints.window.scaleFramebuffer (glfw/src/window.c), so this is a rename and nothing more.
-    // The new name is the honest one — the hint stopped being macOS-specific in GLFW 3.4, and a
-    // Windows or Linux build wants it too, which is the point at which the Cocoa name would have
-    // started to mislead. Needs GLFW >= 3.4; the bundled copy is 3.5.1.
+    // notes §6
     glfwWindowHint(GLFW_SCALE_FRAMEBUFFER, GLFW_TRUE);
     glfwWindowHint(GLFW_COCOA_GRAPHICS_SWITCHING, GLFW_TRUE);  // Needed for Intel systems with discrete graphics
 

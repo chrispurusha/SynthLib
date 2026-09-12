@@ -16,6 +16,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
+// Notes: Docs/code-notes/alertDialog.h.md - "// notes §k" refers there.
 
 #ifndef __SYNTHLIB_ALERT_DIALOG_H__
 #define __SYNTHLIB_ALERT_DIALOG_H__
@@ -26,22 +27,7 @@
 extern "C" {
 #endif
 
-// In-window replacement for NSAlert-based info/confirm/bank-number-picker dialogs, drawn with the
-// same GLFW/OpenGL primitives as fileBrowser.h/bankBrowser.h. Three flavours share one modal panel:
-//   show_alert()         - message + single OK button, no callback (fire and forget)
-//   show_confirm()       - message + Cancel/confirmLabel buttons
-//   show_bank_confirm()  - show_confirm() plus a "Bank N" picker button that opens a dropdown
-//                          (built on the app's own context-menu system, see contextMenu.h) for
-//                          choosing a bank number in [1, maxBank1Indexed]
-//
-// The embedding app must call synthlib_host_init() (synthlibHost.h) once at startup, same as
-// contextMenu.h/fileBrowser.h require, and must, once per frame, call render_alert_dialog() (order
-// relative to its own render_context_menu() call doesn't matter — render_alert_dialog() re-invokes
-// render_context_menu() itself when the picker dropdown is open, so that flyout always paints over
-// this panel regardless of where the app's own call happens to sit). Route mouse-down through
-// handle_alert_dialog_mouse_down() and mouse-up through handle_alert_dialog_click() ahead of other
-// click handling; route key events through handle_alert_dialog_key(). All are safe to call
-// unconditionally — they no-op when alert_dialog_active() is false.
+// notes §1
 
 typedef void (*tAlertConfirmCallback)(bool confirmed);
 typedef void (*tAlertBankConfirmCallback)(bool confirmed, uint32_t bank1Indexed);

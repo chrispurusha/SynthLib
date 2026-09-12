@@ -16,6 +16,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
+// Notes: Docs/code-notes/floatingPanel.c.md - "// notes §k" refers there.
 
 #ifdef __cplusplus
 extern "C" {
@@ -31,22 +32,13 @@ extern "C" {
 #include "inputState.h"   // ctrl_modifier_held() — ctrl turns the whole panel into a drag handle
 #include "floatingPanel.h"
 
-// Each newly placed panel is offset from the last so a second one does not land exactly on top of
-// the first. Centring them all — which is what the modal versions did — is the one placement that
-// guarantees they hide each other, and the complaint that started this work was precisely that these
-// panels take the whole screen.
+// notes §1
 #define PANEL_CASCADE_STEP    (28.0)
 #define PANEL_CASCADE_WRAP    (6)
 
 static uint32_t   sCascade  = 0;
 
-// Monotonic, so "most recently raised" is simply the largest. Never reset: at one raise per click it
-// would take longer than any session to wrap a uint32_t.
-//
-// A panel is raised when it is OPENED, not when it is first placed. Placement happens inside the
-// render pass, by which point that frame has already been sorted using the old order — so a newly
-// opened panel was drawn BEHIND the others for that frame, and since the app only redraws on demand,
-// that wrong stacking then stayed on screen until something else asked for a frame.
+// notes §2
 static uint32_t   sTopOrder = 0;
 
 void floating_panel_raise(tFloatingPanel * panel) {
@@ -97,18 +89,11 @@ tRectangle floating_panel_place(tFloatingPanel * panel, double width, double hei
         panel->placed     = true;
         sCascade++;
     }
-    // KEPT WHOLLY INSIDE THE BOUNDS, and re-clamped every frame rather than only on placement — a
-    // window resize can otherwise strand a panel outside them, and a panel parked off-screen cannot
-    // be dragged back. Because this runs after the drag has moved the panel, it is also what stops a
-    // drag at the edge: the panel simply will not go further.
-    //
-    // This used to clamp only enough to keep the TITLE BAR reachable, letting the rest hang off the
-    // bottom and right. That was fine against a bare window edge and wrong against chrome — a panel
-    // lying over the canvas scrollbars reads as a mistake rather than as a panel in front.
-    double minX = bounds.coord.x;
-    double minY = bounds.coord.y;
-    double maxX = (bounds.coord.x + renderW) - width;
-    double maxY = (bounds.coord.y + renderH) - height;
+    // notes §3
+    double     minX    = bounds.coord.x;
+    double     minY    = bounds.coord.y;
+    double     maxX    = (bounds.coord.x + renderW) - width;
+    double     maxY    = (bounds.coord.y + renderH) - height;
 
     // Bigger than the space it must live in: pin to the top-left and let it overflow. Refusing to
     // place it is not an option, and the top-left corner is the one that keeps the title bar — and

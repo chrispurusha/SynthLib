@@ -16,6 +16,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
+// Notes: Docs/code-notes/contextMenu.c.md - "// notes §k" refers there.
 
 #ifdef __cplusplus
 extern "C" {
@@ -36,11 +37,7 @@ extern "C" {
 
 tContextMenu gContextMenu = {0};
 
-// ── Core mechanism ───────────────────────────────────────────────────────────
-//
-// gContextMenu.frame[0..depth-1] is the stack of currently visible levels —
-// frame[0] is the original top-level menu, frame[depth-1] the deepest open
-// flyout. Every level stays visible and clickable while a deeper one is open.
+// notes §1
 
 // Forward declarations: the scroll strips are consulted by handle_context_menu_click(), which sits
 // above the scrolling block that defines them - and moving that block up would put the geometry
@@ -70,12 +67,7 @@ static uint32_t menu_columns(const tMenuFrame * frame) {
     return (frame->columns > 1) ? frame->columns : 1;
 }
 
-// HOW MANY ROWS THIS FRAME HAS, and how many of them fit below where it opens.
-//
-// A menu that will not fit used to be MOVED up until it did, and once it was taller than the window
-// that failed silently: it landed at the top and the surplus ran off the bottom, drawn nowhere and
-// clickable never. That is fine while every list is short and becomes a correctness bug the moment
-// one is not - a device list is as long as the machine says it is.
+// notes §2
 static int32_t menu_total_rows(const tMenuFrame * frame) {
     int      count   = 0;
     uint32_t columns = menu_columns(frame);
@@ -237,13 +229,7 @@ static void pop_menu_frames_to(uint32_t newDepth) {
     gContextMenu.depth = newDepth;
 }
 
-// Deliberately leaves gContextMenu.hoverFrame/hoverIndex/hoverStartTime alone:
-// the mouse is still physically sitting over whichever item just triggered
-// this push (that's true whether the trigger was a click or a hover-dwell), so
-// clearing them here would make the very next update_context_menu_hover() tick
-// see that item as "newly hovered" and immediately collapse the frame just
-// pushed. Callers that push from somewhere other than the current hover
-// target (none today) are responsible for updating hover state themselves.
+// notes §3
 static void push_menu_frame(tCoord coord, tMenuItem * items, uint32_t columns, double cellWidth) {
     if (gContextMenu.depth >= MAX_MENU_DEPTH) {
         return;
@@ -277,11 +263,7 @@ bool handle_context_menu_click(tCoord coord) {
     for (int f = (int)gContextMenu.depth - 1; f >= 0; f--) {
         tMenuFrame * frame = &gContextMenu.frame[f];
 
-        // A CLICK IN A SCROLL STRIP SCROLLS RATHER THAN CHOOSING, which is what a menu does
-        // everywhere else and is also the only way the strips are usable with a trackpad: a tap
-        // reports a position and no motion, so without this the tap would pick whatever item happens
-        // to sit under the strip. A page at a time, less one row of overlap so nothing is stepped
-        // over between pages.
+        // notes §4
         int          zone  = menu_edge_zone(frame, coord);
 
         if (zone != 0) {
@@ -320,23 +302,7 @@ bool handle_context_menu_click(tCoord coord) {
     return false;
 }
 
-// Called once per frame while gContextMenu.active (see the embedding app's
-// main render loop) — tracks which item the mouse is over and, if it has a
-// subMenu and the mouse dwells on it for MENU_HOVER_DELAY_SECS, opens it
-// exactly as a click would. Hovering a different item at a still-visible
-// ancestor level collapses whatever flyout was open beneath it, same as real
-// menus.
-// HOW A MENU TOO LONG TO FIT IS SCROLLED.
-//
-// Hovering the top or bottom edge of a scrolling frame scrolls it, continuously, while the pointer
-// stays there. That is what a macOS menu does when it outgrows the screen, and it is the right shape
-// for this code for a second reason: it needs nothing but the pointer position, which
-// update_context_menu_hover() is already given every frame. A dragged scrollbar - SynthLib's own
-// idiom for the file and bank browsers - would need mouse-up delivered to the menu, and no app
-// routes that here today.
-//
-// The strip is one cell tall, so it is exactly as big as the thing it scrolls by, and it is only
-// live on a frame that actually scrolls: a menu that fits has no edge behaviour at all.
+// notes §5
 #define MENU_SCROLL_ROWS_PER_SEC    (12.0)
 
 // Which scroll strip a point is in: -1 top, +1 bottom, 0 neither. Only ever non-zero on a frame that
@@ -513,10 +479,7 @@ void update_context_menu_hover(void) {
     }
 }
 
-// ── Rendering ────────────────────────────────────────────────────────────────
-//
-// Renders every currently open level (gContextMenu.frame[0..depth-1]) —
-// ancestors are drawn first so the deepest, frontmost flyout paints on top.
+// notes §6
 
 static void render_menu_frame(const tMenuFrame * frameData, tCoord mouseCoord) {
     double     size        = 0.0;
@@ -542,10 +505,7 @@ static void render_menu_frame(const tMenuFrame * frameData, tCoord mouseCoord) {
     double     cellH       = itemHeight + (5 * 2);
 
     for (int i = 0; frameData->items[i].label != NULL; i++) {
-        // ONE GEOMETRY FUNCTION. Both passes below used to recompute the cell rectangle inline,
-        // which was a second and a third copy of menu_item_rect() - and the moment a frame could
-        // scroll, three copies would have had to learn about it together or the menu would draw in
-        // one place and be clickable in another.
+        // notes §7
         if (!menu_row_visible(frameData, i)) {
             continue;
         }
@@ -600,13 +560,7 @@ static void render_menu_frame(const tMenuFrame * frameData, tCoord mouseCoord) {
     }
 }
 
-// THE STANDARD AFFORDANCE FOR A MENU THAT DOES NOT FIT: a strip at the edge with a chevron in it,
-// exactly where a macOS menu puts its scroll arrow, drawn OVER the first or last visible row.
-//
-// Overdrawing a row is not a loss, because a strip is only live while there is more in that
-// direction - reach the end of the list and the bottom strip goes inactive, the row beneath it stops
-// being swallowed, and the last item is clickable again. So every item is still reachable, which is
-// the whole reason the scrolling exists.
+// notes §8
 static void render_menu_scroll_strips(const tMenuFrame * frame) {
     if (!menu_scrolls(frame)) {
         return;

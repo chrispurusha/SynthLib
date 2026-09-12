@@ -16,6 +16,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
+// Notes: Docs/code-notes/synthlibGlobals.h.md - "// notes §k" refers there.
 
 #ifndef __SYNTHLIB_GLOBALS_H__
 #define __SYNTHLIB_GLOBALS_H__
@@ -28,20 +29,13 @@
 extern "C" {
 #endif
 
-// Lifecycle/window state identical across G2-Edit, EmuUtility, and SynthEdit — owned here as
-// accessor functions rather than raw externs, so nothing outside this file ever touches the
-// underlying storage directly (unlike gGlobalGuiScale/gScrollState in geometry.h, which predate
-// this and stayed plain externs — this is the stricter pattern going forward).
+// notes §1
 
 // ── Lifecycle ────────────────────────────────────────────────────────────────
 void synthlib_request_quit(void);   // call to begin app shutdown
 bool synthlib_quit_requested(void); // checked by the render loop and any background-thread loop
 
-// ── Redraw ───────────────────────────────────────────────────────────────────
-// Sets the redraw flag and wakes a possibly-blocked glfwWaitEvents()/glfwWaitEventsTimeout() —
-// every SynthLib popup/panel mechanism (contextMenu.c, menuBar.c, alertDialog.cpp,
-// bankBrowser.cpp, fileBrowser.cpp) calls this, and so does every app, in place of what used to
-// be a raw `gReDraw = true;`.
+// notes §2
 void synthlib_request_redraw(void);
 // Explicit clear, e.g. right before a window closes so no further frame is drawn during teardown.
 void synthlib_clear_redraw(void);

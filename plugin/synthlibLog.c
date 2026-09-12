@@ -16,6 +16,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
+// Notes: Docs/code-notes/synthlibLog.c.md - "// notes §k" refers there.
 
 #include <stdarg.h>
 #include <stdatomic.h>
@@ -34,12 +35,7 @@ static void log_path(char * out, size_t size, const char * suffix) {
 }
 
 void synthlib_log_line(const char * format, ...) {
-    // THE GATE IS CACHED, because it is a syscall and this is called from threads that must not
-    // spend them. access() on every call is cheap next to the fopen below when logging is ON, and
-    // it is the entire cost when logging is OFF - which is almost always, and is exactly when it
-    // must be free. Re-polled once a second so touching the file enables logging mid-session rather
-    // than needing a reload. Two threads may both re-poll at the turn of a second; both then store
-    // the same answer.
+    // notes §1
     static _Atomic double checkedAt = -1000.0;
     static _Atomic bool   enabled   = false;
     struct timespec       ts;

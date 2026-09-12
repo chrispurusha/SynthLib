@@ -16,6 +16,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
+// Notes: Docs/code-notes/synthlibTypes.h.md - "// notes §k" refers there.
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -100,21 +101,9 @@ typedef enum {
     eDialModeHorizontal = 2, // drag left/right; cursor hidden
 } tDialMode;
 
-// ── Context menu (see contextMenu.h) ────────────────────────────────────────
-//
-// Deliberately app-agnostic: an item knows only its label, colour, an
-// action(index) callback, an opaque param the callback can read back out, and
-// optionally a subMenu it opens instead of running that action. Nothing here
-// knows what a "module" or "param" is — an app that needs to recall what a
-// menu was raised against (e.g. G2-Edit's moduleKey/paramIndex) keeps that in
-// its own app-local struct, set before opening the menu and read back from
-// inside its own action callbacks.
+// notes §1
 typedef struct _struct_menuItem {
-    // CONST, because a menu item's label is only ever READ — rendered, measured, matched. It was
-    // `char *`, which made every caller passing a `const char *` table (a string map, a static const
-    // array of names) discard a qualifier to get it in, and two of those were the last warnings in
-    // G2-Edit's build. Nothing anywhere writes through this field; a label built at runtime is built in
-    // the caller's own buffer and that buffer's address stored here.
+    // notes §2
     const char *              label;
     tRgb                      colour;
     void (*action)(int index);
@@ -122,13 +111,7 @@ typedef struct _struct_menuItem {
     struct _struct_menuItem * subMenu;          // Non-NULL: hovering (after MENU_HOVER_DELAY_SECS) or clicking this item opens it as a flyout instead of running action
     uint32_t                  subMenuColumns;   // Layout for that flyout — same meaning as tMenuFrame's own columns (0/1 = single column)
     double                    subMenuCellWidth; // Layout for that flyout — 0 = auto width
-    // OPTIONAL CUSTOM FACE. When set, the item's cell is painted by this instead of by its label —
-    // the engine still measures and lays out from the label, so the cell comes out the size the text
-    // would have needed and the item stays keyboard- and search-friendly. Added for G2-Edit's
-    // waveform pickers, which the original hardware editor draws as little pictures of the wave
-    // rather than as words. Deliberately takes only the cell and the item's own `param`: SynthLib
-    // knows nothing about modules, so an app that needs more context stores it app-side before
-    // opening the menu, exactly as the note above this struct describes.
+    // notes §3
     void (*drawItem)(tRectangle cell, uint32_t param);
 } tMenuItem;
 
@@ -140,12 +123,9 @@ typedef struct {
     uint32_t    columns;     // 0 or 1 = single column; >1 = multi-column grid
     double      cellWidth;   // Override cell width when non-zero
 
-    // SCROLLING, for a list too long to fit the window. visibleRows is the number of rows this
-    // frame may actually show - equal to its total rows whenever everything fits, in which case
-    // nothing about the frame scrolls and scrollRow stays 0. Both are worked out by contextMenu.c
-    // when the frame is pushed and re-checked as the window resizes; an app never sets them.
-    int32_t visibleRows;     // Rows that fit; < total means the frame scrolls
-    double  scrollRow;       // Index of the first visible row
+    // notes §4
+    int32_t     visibleRows; // Rows that fit; < total means the frame scrolls
+    double      scrollRow;   // Index of the first visible row
 } tMenuFrame;
 
 typedef struct {
@@ -162,11 +142,7 @@ typedef struct {
     double  hoverStartTime;            // glfwGetTime() timestamp when (hoverFrame, hoverIndex) last changed
 } tContextMenu;
 
-// Mouse press/release, normalised away from GLFW's button/action pair.
-//
-// MOVED HERE FROM G2-Edit's types.h (2026-08-20) because the shared floating-panel registry takes it
-// in its handler signature. It was G2-Edit's alone; EmuUtility and SynthEdit still pass GLFW's raw
-// ints around, which is exactly why neither of them could adopt a panel until now.
+// notes §5
 typedef enum {
     mouseButtonNone,
     mouseButtonLeftDown,

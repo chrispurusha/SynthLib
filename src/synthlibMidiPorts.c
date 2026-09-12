@@ -16,6 +16,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
+// Notes: Docs/code-notes/synthlibMidiPorts.c.md - "// notes §k" refers there.
 
 // See synthlibMidiPorts.h - and synthlibMidi.h, where the port choice is described.
 
@@ -30,11 +31,7 @@ extern "C" {
 #include "synthlibMidiPorts.h"
 #include "prefs.h"
 
-// ── The chosen ports ─────────────────────────────────────────────────────────────────────────────
-//
-// Written on the UI thread and read by the MIDI thread at every scan, so the three strings are only
-// ever touched under this lock. The prefs file is the UI thread's alone: it is read and written here
-// only from the two UI-thread entry points, never from synthlib_midi_ports_chosen().
+// notes §1
 
 static pthread_mutex_t gChoiceMutex = PTHREAD_MUTEX_INITIALIZER;
 static char            gChoiceScope[SYNTHLIB_MIDI_PORT_NAME_MAX];

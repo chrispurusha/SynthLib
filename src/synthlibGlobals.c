@@ -16,6 +16,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
+// Notes: Docs/code-notes/synthlibGlobals.c.md - "// notes §k" refers there.
 
 #ifdef __cplusplus
 extern "C" {
@@ -32,10 +33,7 @@ extern "C" {
 static _Atomic bool sQuitAll  = false;
 static _Atomic bool sReDraw   = true;
 static void *       sWindow   = NULL;
-// eDialModeVertical matches EmuUtility's and SynthEdit's own previous default — G2-Edit's default
-// was eDialModeRotary instead, so it calls synthlib_set_dial_mode() explicitly at the top of its
-// own init_graphics(), before load_saved_settings() can overwrite it from a real saved value
-// anyway (see that call site's own comment).
+// notes §1
 static tDialMode    sDialMode = eDialModeVertical;
 
 void synthlib_request_quit(void) {
