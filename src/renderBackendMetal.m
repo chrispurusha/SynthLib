@@ -483,12 +483,25 @@ static void mtl_submit(const tVertex * verts, size_t count, uint32_t texture) {
     if (gEncoder == nil) {
         return;
     }
-    // A fresh buffer per submission. There are a few dozen submissions in a frame, so this is not
-    // yet worth a ring buffer — and a ring buffer would need fences to know when the GPU is done
-    // with a region. Revisit if a profile ever says to.
-    id<MTLBuffer> buffer = [gDevice newBufferWithBytes:verts
-                                                length:(count * sizeof(tVertex))
-                                               options:MTLResourceStorageModeShared];
+    // SMALL SUBMISSIONS GO IN THE COMMAND BUFFER ITSELF. A fresh MTLBuffer per submission was the
+    // plan here "until a profile says otherwise"; G2 Alike submits ~470 times a frame, averaging ~50
+    // vertices, which is an allocation and a free per draw call for data a few hundred bytes long.
+    // setVertexBytes: copies up to 4 KB straight into the command buffer and allocates nothing -
+    // Apple's own advice for data that small - and only the occasional large batch still gets a
+    // buffer of its own. MEASURED in tools/vst3host: idle CPU of the continuously repainting panels
+    // fell from 3.5% to 2.9% (GenBridge) and 4.8% to 3.6% (MidiSyncTool). It did NOT change their
+    // memory: the ~400 MB of GPU memory a plug-in editor shows there is not this file's (see todo).
+    size_t bytes = count * sizeof(tVertex);
+
+    if (bytes <= 4096u) {
+        [gEncoder setVertexBytes:verts length:bytes atIndex:0];
+    } else {
+        id<MTLBuffer> buffer = [gDevice newBufferWithBytes:verts
+                                                    length:bytes
+                                                   options:MTLResourceStorageModeShared];
+
+        [gEncoder setVertexBuffer:buffer offset:0 atIndex:0];
+    }
 
     // Exactly the matrix glOrtho(0, w, h, 0, -1, 1) builds: x scaled by 2/w and biased by -1,
     // y scaled by -2/h and biased by +1. Computed here, in float, so the shader performs the same
@@ -500,7 +513,6 @@ static void mtl_submit(const tVertex * verts, size_t count, uint32_t texture) {
         1.0f
     };
 
-    [gEncoder setVertexBuffer:buffer offset:0 atIndex:0];
     [gEncoder setVertexBytes:xform length:sizeof(xform) atIndex:1];
 
     id<MTLTexture> bound = gWhite;

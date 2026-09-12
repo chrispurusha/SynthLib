@@ -77,9 +77,11 @@ host's values RAW beside their flags, because `msVst3.cpp` read the loop ends
 without checking `kCycleValid`.
 
 **All three plug-ins are on the shared wrappers now**, so `renderBackendGL.c`
-no longer accepts the old `G2_VST3_BUILD` spelling. Left for later: the two
-panels' views (`gbView.m`/`msView.m`, 91% alike) take the same edit and sync
-callbacks now, and could become one shared view with a per-project draw hook.
+no longer accepts the old `G2_VST3_BUILD` spelling. The two panels' views
+(`gbView.m`/`msView.m`, 91% alike) became one the same day:
+`plugin/synthlibPanelView.m`, driven by a `tSynthLibPanel` of draw calls each
+plug-in supplies, with its Objective-C class name taken from the build
+(`-DSYNTHLIB_PANEL_VIEW_CLASS`) as the AU view's is.
 
 ## The renderer position after 2026-09-09, and what the ports need
 
@@ -201,7 +203,7 @@ database.
 
 ### The next candidates, measured 2026-09-09
 
-    gbView.m    vs msView.m      91%   -> plugin/pluginView.m
+    gbView.m    vs msView.m      91%   -> plugin/synthlibPanelView.m (DONE 2026-09-11)
     gbEditor.mm vs msEditor.mm   78%   -> plugin/pluginEditor.mm
 
 Both are the same job with a small per-project interface: the view needs a
