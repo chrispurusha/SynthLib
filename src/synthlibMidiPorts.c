@@ -33,10 +33,15 @@ extern "C" {
 
 // notes §1
 
-static pthread_mutex_t gChoiceMutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t gChoiceMutex   = PTHREAD_MUTEX_INITIALIZER;
 static char            gChoiceScope[SYNTHLIB_MIDI_PORT_NAME_MAX];
 static char            gChoiceInput[SYNTHLIB_MIDI_PORT_NAME_MAX];
 static char            gChoiceOutput[SYNTHLIB_MIDI_PORT_NAME_MAX];
+static uint32_t        gChoiceChannel = SYNTHLIB_MIDI_CHANNEL_AUTOMATIC;
+
+static uint32_t valid_channel(long channel) {
+    return ((channel >= 1) && (channel <= 16)) ? (uint32_t)channel : SYNTHLIB_MIDI_CHANNEL_AUTOMATIC;
+}
 
 static void choice_key(char * out, size_t size, const char * base, const char * scope) {
     if (scope[0] == '\0') {
@@ -47,22 +52,27 @@ static void choice_key(char * out, size_t size, const char * base, const char * 
 }
 
 void synthlib_midi_ports_set_scope(const char * scope) {
-    char         scopeCopy[SYNTHLIB_MIDI_PORT_NAME_MAX]   = {0};
-    char         keyIn[SYNTHLIB_MIDI_PORT_NAME_MAX + 16]  = {0};
-    char         keyOut[SYNTHLIB_MIDI_PORT_NAME_MAX + 16] = {0};
-    const char * input                                    = NULL;
-    const char * output                                   = NULL;
+    char         scopeCopy[SYNTHLIB_MIDI_PORT_NAME_MAX]       = {0};
+    char         keyIn[SYNTHLIB_MIDI_PORT_NAME_MAX + 16]      = {0};
+    char         keyOut[SYNTHLIB_MIDI_PORT_NAME_MAX + 16]     = {0};
+    const char * input                                        = NULL;
+    const char * output                                       = NULL;
+    char         keyChannel[SYNTHLIB_MIDI_PORT_NAME_MAX + 16] = {0};
+    uint32_t     channel                                      = SYNTHLIB_MIDI_CHANNEL_AUTOMATIC;
 
     snprintf(scopeCopy, sizeof(scopeCopy), "%s", (scope != NULL) ? scope : "");
     choice_key(keyIn, sizeof(keyIn), "midiInput", scopeCopy);
     choice_key(keyOut, sizeof(keyOut), "midiOutput", scopeCopy);
-    input  = prefs_get_string(keyIn, "");
-    output = prefs_get_string(keyOut, "");
+    choice_key(keyChannel, sizeof(keyChannel), "midiChannel", scopeCopy);
+    channel        = valid_channel(prefs_get_int(keyChannel, SYNTHLIB_MIDI_CHANNEL_AUTOMATIC));
+    input          = prefs_get_string(keyIn, "");
+    output         = prefs_get_string(keyOut, "");
 
     pthread_mutex_lock(&gChoiceMutex);
     snprintf(gChoiceScope, sizeof(gChoiceScope), "%s", scopeCopy);
     snprintf(gChoiceInput, sizeof(gChoiceInput), "%s", (input != NULL) ? input : "");
     snprintf(gChoiceOutput, sizeof(gChoiceOutput), "%s", (output != NULL) ? output : "");
+    gChoiceChannel = channel;
     pthread_mutex_unlock(&gChoiceMutex);
 }
 
@@ -94,6 +104,29 @@ void synthlib_midi_ports_chosen(char * input, size_t inputSize, char * output, s
         snprintf(output, outputSize, "%s", gChoiceOutput);
     }
     pthread_mutex_unlock(&gChoiceMutex);
+}
+
+void synthlib_midi_channel_choose(uint32_t channel) {
+    char     scope[SYNTHLIB_MIDI_PORT_NAME_MAX]           = {0};
+    char     keyChannel[SYNTHLIB_MIDI_PORT_NAME_MAX + 16] = {0};
+    uint32_t valid                                        = valid_channel((long)channel);
+
+    pthread_mutex_lock(&gChoiceMutex);
+    gChoiceChannel = valid;
+    snprintf(scope, sizeof(scope), "%s", gChoiceScope);
+    pthread_mutex_unlock(&gChoiceMutex);
+
+    choice_key(keyChannel, sizeof(keyChannel), "midiChannel", scope);
+    prefs_set_int(keyChannel, (long)valid);
+}
+
+uint32_t synthlib_midi_channel_chosen(void) {
+    uint32_t channel = SYNTHLIB_MIDI_CHANNEL_AUTOMATIC;
+
+    pthread_mutex_lock(&gChoiceMutex);
+    channel = gChoiceChannel;
+    pthread_mutex_unlock(&gChoiceMutex);
+    return channel;
 }
 
 // ── The ports present ────────────────────────────────────────────────────────────────────────────

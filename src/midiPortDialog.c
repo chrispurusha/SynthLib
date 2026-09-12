@@ -40,6 +40,7 @@
 #define PORT_TITLE_SIZE      (96)
 #define PORT_STATUS_SIZE     (160)
 #define PORT_VISIBLE_ROWS    (12)
+#define CHANNEL_CELLS        (17)    // Auto, then 1-16: a cell's index IS the channel it chooses
 
 typedef enum {
     ePortSideInput  = 0,
@@ -72,20 +73,24 @@ typedef struct {
     int      buttonPressed;               // -1 none, 0 Close, 1 Scan
     int      rowPressedSide;              // -1 none
     uint32_t rowPressed;
+    uint32_t channel;                     // SYNTHLIB_MIDI_CHANNEL_AUTOMATIC or 1-16
+    int      channelPressed;              // -1 none, else a cell
 } tPortDialogState;
 
-static tPortDialogState sState      = {.buttonPressed = -1, .rowPressedSide = -1};
+static tPortDialogState sState         = {.buttonPressed = -1, .rowPressedSide = -1, .channelPressed = -1};
 
-static const double     kPanelWidth = 620.0;
-static const double     kTitleH     = 26.0;
-static const double     kPad        = 10.0;
-static const double     kHeaderH    = STANDARD_TEXT_HEIGHT + 6.0;
-static const double     kRowH       = STANDARD_TEXT_HEIGHT + 6.0;
-static const double     kStatusH    = STANDARD_TEXT_HEIGHT + 8.0;
+static const double     kPanelWidth    = 620.0;
+static const double     kTitleH        = 26.0;
+static const double     kPad           = 10.0;
+static const double     kHeaderH       = STANDARD_TEXT_HEIGHT + 6.0;
+static const double     kRowH          = STANDARD_TEXT_HEIGHT + 6.0;
+static const double     kStatusH       = STANDARD_TEXT_HEIGHT + 8.0;
+static const double     kChannelLabelW = 64.0;
+static const double     kChannelAutoW  = 72.0;
 
 // draw_button() sizes its label from the rectangle's height, so buttons are STANDARD_TEXT_HEIGHT
 // tall exactly as alertDialog.c's are.
-static const double     kButtonH    = STANDARD_TEXT_HEIGHT;
+static const double     kButtonH       = STANDARD_TEXT_HEIGHT;
 
 static double now_seconds(void) {
     struct timespec t;
@@ -97,7 +102,7 @@ static double now_seconds(void) {
 // ── Layout ──────────────────────────────────────────────────────────────────────────────────────
 
 static double panel_height(void) {
-    return kTitleH + kPad + kHeaderH + (PORT_VISIBLE_ROWS * kRowH) + kPad + kStatusH + kPad + kButtonH + kPad;
+    return kTitleH + kPad + kHeaderH + (PORT_VISIBLE_ROWS * kRowH) + kPad + kRowH + kPad + kStatusH + kPad + kButtonH + kPad;
 }
 
 // Centred afresh every frame rather than once at open, so resizing the window keeps it centred;
@@ -142,10 +147,39 @@ static tRectangle row_rect(tPortSide side, uint32_t visibleIndex) {
     };
 }
 
-static double status_y(void) {
+static double channel_row_y(void) {
     tRectangle box = list_rect(ePortSideInput);
 
     return box.coord.y + box.size.h + kPad;
+}
+
+static double status_y(void) {
+    return channel_row_y() + kRowH + kPad;
+}
+
+static tRectangle channel_cell_rect(uint32_t cell) {
+    double x     = sState.panelRect.coord.x + kPad + kChannelLabelW;
+    double width = (kPanelWidth - (2.0 * kPad) - kChannelLabelW - kChannelAutoW) / (double)(CHANNEL_CELLS - 1);
+
+    if (cell > 0) {
+        x += kChannelAutoW + ((double)(cell - 1) * width);
+    }
+    return (tRectangle){{
+                            x, channel_row_y()
+                        }, {
+                            (cell == 0) ? kChannelAutoW : width, kRowH
+                        }
+    };
+}
+
+static int channel_cell_at(tCoord coord) {
+    for (uint32_t cell = 0; cell < CHANNEL_CELLS; cell++) {
+        if (within_rectangle(coord, channel_cell_rect(cell))) {
+            return (int)cell;
+        }
+    }
+
+    return -1;
 }
 
 static double button_row_y(void) {
@@ -242,7 +276,17 @@ static void refresh(void) {
         }
     }
 
+    sState.channel     = synthlib_midi_channel_chosen();
     sState.refreshedAt = now_seconds();
+}
+
+static void choose_channel(uint32_t channel) {
+    synthlib_midi_channel_choose(channel);
+    refresh();
+
+    if (sState.host.changed != NULL) {
+        sState.host.changed();
+    }
 }
 
 static void choose(tPortSide side, uint32_t row) {
@@ -386,6 +430,45 @@ static void render_list(tPortSide side) {
     }
 }
 
+static void render_channel_row(void) {
+    uint32_t inUse = (sState.host.channelInUse != NULL) ? sState.host.channelInUse() : 0;
+
+    set_rgb_colour((tRgb)RGB_BLACK);
+    render_text(mainArea, (tRectangle){
+        {sState.panelRect.coord.x + kPad, channel_row_y() + 3.0}, {BLANK_SIZE, STANDARD_TEXT_HEIGHT}
+    }, "Channel");
+
+    for (uint32_t cell = 0; cell < CHANNEL_CELLS; cell++) {
+        tRectangle r         = channel_cell_rect(cell);
+        char       label[16] = {0};
+        double     width     = 0.0;
+
+        if (cell == sState.channel) {
+            set_rgb_colour((tRgb)RGB_GREEN_ON);
+        } else if (sState.channelPressed == (int)cell) {
+            set_rgb_colour((tRgb)RGB_GREY_7);
+        } else {
+            set_rgb_colour((tRgb)RGB_WHITE);
+        }
+        render_rectangle(mainArea, (tRectangle){
+            {r.coord.x + 1.0, r.coord.y}, {r.size.w - 2.0, r.size.h}
+        });
+
+        if (cell > 0) {
+            snprintf(label, sizeof(label), "%u", (unsigned)cell);
+        } else if ((sState.channel == SYNTHLIB_MIDI_CHANNEL_AUTOMATIC) && (inUse >= 1) && (inUse <= 16)) {
+            snprintf(label, sizeof(label), "Auto (%u)", (unsigned)inUse);
+        } else {
+            snprintf(label, sizeof(label), "Auto");
+        }
+        width = get_text_width(label, STANDARD_TEXT_HEIGHT, eNoCache);
+        set_rgb_colour((tRgb)RGB_BLACK);
+        render_text(mainArea, (tRectangle){
+            {r.coord.x + ((r.size.w - width) / 2.0), r.coord.y + 3.0}, {BLANK_SIZE, STANDARD_TEXT_HEIGHT}
+        }, label);
+    }
+}
+
 static void render_dialog(void) {
     char status[PORT_STATUS_SIZE] = {0};
 
@@ -409,6 +492,7 @@ static void render_dialog(void) {
 
     render_list(ePortSideInput);
     render_list(ePortSideOutput);
+    render_channel_row();
 
     if (sState.host.status != NULL) {
         char shown[PORT_STATUS_SIZE] = {0};
@@ -445,6 +529,7 @@ static bool dialog_mouse(tCoord coord, tMouseButton mouseButton) {
         sState.closePressed   = within_rectangle(coord, panel_close_button_rect(sState.panelRect));
         sState.buttonPressed  = button_at(coord);
         sState.rowPressedSide = -1;
+        sState.channelPressed = channel_cell_at(coord);
 
         if (row_at(coord, &side, &row)) {
             sState.rowPressedSide = (int)side;
@@ -457,14 +542,17 @@ static bool dialog_mouse(tCoord coord, tMouseButton mouseButton) {
     if (mouseButton != mouseButtonLeftUp) {
         return true;
     }
-    bool closeHit = sState.closePressed && within_rectangle(coord, panel_close_button_rect(sState.panelRect));
-    int  button   = ((sState.buttonPressed >= 0) && (button_at(coord) == sState.buttonPressed)) ? sState.buttonPressed : -1;
-    bool rowHit   = (sState.rowPressedSide >= 0) && row_at(coord, &side, &row)
-                    && ((int)side == sState.rowPressedSide) && (row == sState.rowPressed);
+    bool closeHit   = sState.closePressed && within_rectangle(coord, panel_close_button_rect(sState.panelRect));
+    int  button     = ((sState.buttonPressed >= 0) && (button_at(coord) == sState.buttonPressed)) ? sState.buttonPressed : -1;
+    bool rowHit     = (sState.rowPressedSide >= 0) && row_at(coord, &side, &row)
+                      && ((int)side == sState.rowPressedSide) && (row == sState.rowPressed);
+    int  channelHit = ((sState.channelPressed >= 0) && (channel_cell_at(coord) == sState.channelPressed))
+                      ? sState.channelPressed : -1;
 
     sState.closePressed   = false;
     sState.buttonPressed  = -1;
     sState.rowPressedSide = -1;
+    sState.channelPressed = -1;
     synthlib_request_redraw();
 
     if (closeHit || (button == 0)) {
@@ -477,6 +565,8 @@ static bool dialog_mouse(tCoord coord, tMouseButton mouseButton) {
         }
     } else if (rowHit && !row_selected(side, row)) {
         choose(side, row);
+    } else if ((channelHit >= 0) && ((uint32_t)channelHit != sState.channel)) {
+        choose_channel((uint32_t)channelHit);
     }
     return true;
 }
@@ -541,6 +631,7 @@ void midi_port_dialog_open(const tMidiPortDialogHost * host) {
     sState.closePressed                 = false;
     sState.buttonPressed                = -1;
     sState.rowPressedSide               = -1;
+    sState.channelPressed               = -1;
     sState.list[ePortSideInput].scroll  = 0.0;
     sState.list[ePortSideOutput].scroll = 0.0;
     refresh();

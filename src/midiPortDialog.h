@@ -24,6 +24,7 @@
 // notes §1
 
 #include <stddef.h>
+#include <stdint.h>
 #include <stdbool.h>
 
 #include "synthlibPopups.h"
@@ -37,6 +38,7 @@ typedef struct {
     void (*changed)(void);                        // the choice changed and has been saved: reconnect
     void (*scan)(void);                           // the Scan button
     void (*status)(char * text, size_t size);     // one line on the connection; NULL for none
+    uint32_t (*channelInUse)(void);               // the channel Auto found, 1-16, or 0; NULL for none
 } tMidiPortDialogHost;
 
 // UI thread. Opens the dialogue on the current choice. The host struct is copied.

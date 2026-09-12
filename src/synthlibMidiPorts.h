@@ -33,7 +33,8 @@ extern "C" {
 #endif
 
 // notes §2
-#define SYNTHLIB_MIDI_PORT_NAME_MAX    (128)
+#define SYNTHLIB_MIDI_PORT_NAME_MAX        (128)
+#define SYNTHLIB_MIDI_CHANNEL_AUTOMATIC    (0)
 
 // UI thread. Loads the choice saved under `scope` (NULL or "" for the application-wide one) and makes
 // it the current one. Call it before the MIDI thread's first scan, and again whenever the device
@@ -45,6 +46,12 @@ void synthlib_midi_ports_choose(const char * input, const char * output);
 
 // Any thread: the MIDI thread consults it at every scan.
 void synthlib_midi_ports_chosen(char * input, size_t inputSize, char * output, size_t outputSize);
+
+// UI thread. Records the channel, 1-16 or SYNTHLIB_MIDI_CHANNEL_AUTOMATIC, under the current scope.
+void synthlib_midi_channel_choose(uint32_t channel);
+
+// Any thread. 1-16, or SYNTHLIB_MIDI_CHANNEL_AUTOMATIC: the application finds the channel itself.
+uint32_t synthlib_midi_channel_chosen(void);
 
 // The ports present now, by name, in CoreMIDI's order. Returns how many were written.
 uint32_t synthlib_midi_port_names(bool inputs, char names[][SYNTHLIB_MIDI_PORT_NAME_MAX], uint32_t max);
