@@ -4,6 +4,8 @@
 #   stateTest          the saved-state format: SLP2 round trip, SLP1 and pre-header blobs, id lookup
 #   multiInstanceTest  a fake plug-in linked straight against synthlibPluginVst3.cpp, recording which
 #                      instance every call reaches - the one thing a real host cannot show
+#   logTest            synthlibLog.c: the file gate on and off without a reload, and concurrent lines
+#                      arriving whole - built with ThreadSanitizer
 #
 # Run it after any change to plugin/. The VST3 half needs the SDK, as do-plugin does.
 
@@ -19,6 +21,10 @@ clang -std=gnu11 -Wall -Wextra -Werror -I"$PLUGIN" -c "$PLUGIN/synthlibPluginSta
 
 clang -std=gnu11 -Wall -Wextra -Werror -I"$PLUGIN" -o "$WORK/stateTest" "$HERE/stateTest.c" "$WORK/state.o"
 "$WORK/stateTest"
+
+clang -std=gnu11 -Wall -Wextra -Werror -fsanitize=thread -g -I"$PLUGIN" -o "$WORK/logTest" \
+    "$HERE/logTest.c" "$PLUGIN/synthlibLog.c"
+"$WORK/logTest"
 
 if [[ ! -d "$SDK/pluginterfaces" ]]; then
     print -u2 "VST3 SDK not found at $SDK - skipping the multi-instance test (set VST3_SDK)"
