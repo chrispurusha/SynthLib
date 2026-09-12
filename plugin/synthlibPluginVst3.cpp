@@ -149,6 +149,25 @@ static std::vector<tLiveInstance>        gInstances;
 static std::vector<SynthLibController *> gControllers;
 static int64                             gNextSerial = 1;
 
+// THE BLOCK'S MIDI OUTPUT, for synthlib_plugin_midi_out(): set for the length of each process() call
+// on the thread making it, so a plug-in's call finds the host's list without the registry lock.
+struct tMidiOut {
+    void *       inst;
+    IEventList * list;
+};
+
+static thread_local tMidiOut gMidiOut = { nullptr, nullptr };
+
+struct tMidiOutScope {
+    tMidiOutScope(void * inst, IEventList * list) {
+        gMidiOut = { inst, list };
+    }
+
+    ~tMidiOutScope() {
+        gMidiOut = { nullptr, nullptr };
+    }
+};
+
 static int64 register_instance(const tSynthLibPluginDesc * d, void * inst, SynthLibProcessor * p) {
     std::lock_guard<std::mutex> lock(gRegistryLock);
     int64                       serial = gNextSerial++;
@@ -400,6 +419,10 @@ public:
         if ((type == kEvent) && (dir == kInput) && (desc->wantsMidiIn == true)) {
             return 1;
         }
+
+        if ((type == kEvent) && (dir == kOutput) && (desc->wantsMidiOut == true)) {
+            return 1;
+        }
         return 0;
     }
 
@@ -436,6 +459,16 @@ public:
             bus.busType      = kMain;
             bus.flags        = BusInfo::kDefaultActive;
             copy_name(bus.name, "MIDI In");
+            return kResultOk;
+        }
+
+        if ((type == kEvent) && (dir == kOutput) && (desc->wantsMidiOut == true) && (index == 0)) {
+            bus.mediaType    = kEvent;
+            bus.direction    = kOutput;
+            bus.channelCount = 16;
+            bus.busType      = kMain;
+            bus.flags        = BusInfo::kDefaultActive;
+            copy_name(bus.name, "MIDI Out");
             return kResultOk;
         }
         return kInvalidArgument;
@@ -584,6 +617,7 @@ public:
         if (inst == nullptr) {
             return kResultOk;
         }
+        tMidiOutScope      midiOut(inst, (desc->wantsMidiOut == true) ? data.outputEvents : nullptr);
         tSynthLibTransport transport;
 
         fill_transport(data.processContext, transport);
@@ -1320,6 +1354,48 @@ double synthlib_plugin_param_value(void * inst, uint32_t id) {
 
 // NOT AFTER terminate(). The processor is looked up under the lock and used outside it, which is safe
 // because a plug-in stops everything that sends before the host is allowed to destroy it.
+bool synthlib_plugin_midi_out(void * inst, uint8_t status, uint8_t data1, uint8_t data2, uint32_t sampleOffset) {
+    if ((inst == nullptr) || (gMidiOut.inst != inst) || (gMidiOut.list == nullptr)) {
+        return false;
+    }
+    Event   e       = {};
+    uint8_t kind    = (uint8_t)(status & 0xF0);
+    int16   channel = (int16)(status & 0x0F);
+
+    e.busIndex     = 0;
+    e.sampleOffset = (int32)sampleOffset;
+    e.flags        = Event::kIsLive;
+
+    if ((kind == 0x90) && (data2 > 0)) {
+        e.type             = Event::kNoteOnEvent;
+        e.noteOn.channel   = channel;
+        e.noteOn.pitch     = (int16)(data1 & 0x7F);
+        e.noteOn.velocity  = (float)data2 / 127.0f;
+        e.noteOn.noteId    = -1;
+    } else if ((kind == 0x80) || (kind == 0x90)) {      // a note-on at velocity 0 is a note-off
+        e.type             = Event::kNoteOffEvent;
+        e.noteOff.channel  = channel;
+        e.noteOff.pitch    = (int16)(data1 & 0x7F);
+        e.noteOff.velocity = (kind == 0x80) ? ((float)data2 / 127.0f) : 0.0f;
+        e.noteOff.noteId   = -1;
+    } else if (kind == 0xA0) {
+        e.type                  = Event::kPolyPressureEvent;
+        e.polyPressure.channel  = channel;
+        e.polyPressure.pitch    = (int16)(data1 & 0x7F);
+        e.polyPressure.pressure = (float)data2 / 127.0f;
+        e.polyPressure.noteId   = -1;
+    } else if ((kind == 0xB0) || (kind == 0xD0) || (kind == 0xE0)) {
+        e.type                    = Event::kLegacyMIDICCOutEvent;
+        e.midiCCOut.channel       = (int8)channel;
+        e.midiCCOut.controlNumber = (kind == 0xB0) ? (uint8)(data1 & 0x7F) : ((kind == 0xD0) ? (uint8)kAfterTouch : (uint8)kPitchBend);
+        e.midiCCOut.value         = (int8)((kind == 0xB0) ? data2 : data1);
+        e.midiCCOut.value2        = (int8)((kind == 0xE0) ? data2 : 0);
+    } else {
+        return false;
+    }
+    return gMidiOut.list->addEvent(e) == kResultOk;
+}
+
 bool synthlib_plugin_send_message(void * inst, const char * id, int64_t value) {
     SynthLibProcessor * p = nullptr;
 

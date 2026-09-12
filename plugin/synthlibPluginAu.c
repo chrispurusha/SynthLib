@@ -2118,3 +2118,14 @@ AudioComponentPlugInInterface * SynthLibAUFactory(const AudioComponentDescriptio
     // which is what lets every method cast its `self` straight back to a tSynthLibAu *.
     return &au->iface;
 }
+
+// NO MIDI OUTPUT FROM THE AUDIO UNIT YET - a MIDI processor ('aumi') and the host's
+// kAudioUnitProperty_MIDIOutputCallback are what it would take.
+bool synthlib_plugin_midi_out(void * inst, uint8_t status, uint8_t data1, uint8_t data2, uint32_t sampleOffset) {
+    (void)inst;
+    (void)status;
+    (void)data1;
+    (void)data2;
+    (void)sampleOffset;
+    return false;
+}

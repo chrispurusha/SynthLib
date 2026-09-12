@@ -319,6 +319,7 @@ struct tSynthLibPluginDesc {
     // send MIDI open their own CoreMIDI port, because VST3 cannot express a system-realtime byte -
     // a MIDI clock generator has no way to emit a 0xF8 through its host at all.
     bool         wantsMidiIn;
+    bool         wantsMidiOut;         // an event output bus, fed by synthlib_plugin_midi_out()
 
     // Whether the host's transport is worth asking for. VST3 turns this into
     // IProcessContextRequirements, which is how a host knows it need not fill in a ProcessContext
@@ -404,6 +405,12 @@ bool synthlib_plugin_request_resize(void * inst, double width, double height);
 // false when there is nothing connected to send it to, which on VST3 is every moment before the
 // host has joined the two halves up.
 bool synthlib_plugin_send_message(void * inst, const char * id, int64_t value);
+
+// Audio thread, from inside the plug-in's own blockBegin(), note callbacks or process(): one MIDI
+// message out, sampleOffset frames into the current block. Needs wantsMidiOut. Notes, poly and
+// channel pressure, controllers and pitch bend. False if the host gave no output list this block,
+// or the format has no MIDI output yet (the Audio Unit).
+bool synthlib_plugin_midi_out(void * inst, uint8_t status, uint8_t data1, uint8_t data2, uint32_t sampleOffset);
 
 #ifdef __cplusplus
 }
