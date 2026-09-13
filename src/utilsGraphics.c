@@ -1176,6 +1176,15 @@ tRectangle render_bezier_curve(tArea area, tCoord start, tCoord control, tCoord 
 }
 
 // Draw the power button symbol
+// A button's black edge, drawn AFTER global scaling so it stays one line thick at every zoom.
+static void render_button_border(tRectangle rectangle, double lineWidth) {
+    set_rgb_colour((tRgb)RGB_BLACK);
+    internal_render_rectangle((tRectangle){{rectangle.coord.x, rectangle.coord.y + rectangle.size.h - lineWidth}, {rectangle.size.w, lineWidth}}); // Bottom
+    internal_render_rectangle((tRectangle){{rectangle.coord.x, rectangle.coord.y}, {lineWidth, rectangle.size.h}});                                // Left
+    internal_render_rectangle((tRectangle){{rectangle.coord.x, rectangle.coord.y}, {rectangle.size.w, lineWidth}});                                // Top
+    internal_render_rectangle((tRectangle){{rectangle.coord.x + rectangle.size.w - lineWidth, rectangle.coord.y}, {lineWidth, rectangle.size.h}}); // Right
+}
+
 tRectangle draw_power_button(tArea area, tRectangle rectangle, bool active) {
     tRectangle retRectangle = {0};
 
@@ -1200,6 +1209,7 @@ tRectangle draw_power_button(tArea area, tRectangle rectangle, bool active) {
 
     internal_render_circle_line_part_angle(circleCentre, circleRadius, 30.0, 330.0, rectangle.size.w * 0.1, 10);
     internal_render_line((tCoord){circleCentre.x, rectangle.coord.y + (rectangle.size.h * 0.05)}, (tCoord){circleCentre.x, rectangle.coord.y + (rectangle.size.h * 0.05) + (rectangle.size.h * 0.5)}, rectangle.size.w * 0.1);
+    render_button_border(rectangle, 1.0);   // edged like the text buttons (CT)
 
     return retRectangle;
 }
@@ -1257,37 +1267,7 @@ tRectangle draw_button_split(tArea area, tRectangle rectangle, const char * text
         set_rgb_colour(bottomColour);
         internal_render_rectangle(bottomHalf);
     }
-    set_rgb_colour((tRgb)RGB_BLACK);
-
-    tRectangle line = {0};
-    line = (tRectangle){{
-                            rectangle.coord.x, rectangle.coord.y + rectangle.size.h - borderLineWidth
-                        }, {
-                            rectangle.size.w, borderLineWidth
-                        }
-    };
-    internal_render_rectangle(line); // Bottom
-    line = (tRectangle){{
-                            rectangle.coord.x, rectangle.coord.y
-                        }, {
-                            borderLineWidth, rectangle.size.h
-                        }
-    };
-    internal_render_rectangle(line); // Left
-    line = (tRectangle){{
-                            rectangle.coord.x, rectangle.coord.y
-                        }, {
-                            rectangle.size.w, borderLineWidth
-                        }
-    };
-    internal_render_rectangle(line); // Top
-    line = (tRectangle){{
-                            rectangle.coord.x + rectangle.size.w - borderLineWidth, rectangle.coord.y
-                        }, {
-                            borderLineWidth, rectangle.size.h
-                        }
-    };
-    internal_render_rectangle(line); // Right
+    render_button_border(rectangle, borderLineWidth);
 
     // Contrast is taken from the TOP colour. The glyph crosses the seam, so no single choice is
     // ideal, but the two colours a split button is ever given are both light enough to want the same
