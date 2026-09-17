@@ -529,6 +529,16 @@ bool synthlib_state_read(const tSynthLibParamStore * layout, const void * data, 
             }
         }
 
+        // SAVED BY AN OLDER BUILD, NOT RESTORED BY THIS ONE: a parameter declared NO_SAVE since - a
+        // performance control, say - starts where the plug-in starts it, whatever an old project holds.
+        if (layout != NULL) {
+            int32_t index = synthlib_params_index(layout, id);
+
+            if ((index >= 0) && ((layout->flags[index] & SYNTHLIB_PARAM_NO_SAVE) != 0u)) {
+                continue;
+            }
+        }
+
         if ((values != NULL) && (taken < capacity)) {
             values[taken].id    = id;
             values[taken].value = synthlib_param_clamp(value);

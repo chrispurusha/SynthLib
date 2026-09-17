@@ -39,6 +39,11 @@ void prefs_set_int(const char * key, long value);
 
 bool prefs_has_key(const char * key);
 
+// One key in ANOTHER app's prefs.txt (or this one's), read from disk and written straight back - for
+// a setting two programs share, such as a plug-in and the application it came from.
+void prefs_set_string_in(const char * appName, const char * key, const char * value);
+const char * prefs_get_string_from(const char * appName, const char * key, const char * defaultValue);
+
 // Returns defaultValue if the key isn't present or can't be parsed as the requested type. The
 // string returned by prefs_get_string() is only valid until the next prefs_get_string()/
 // prefs_set_string() call — copy it if the caller needs to keep it past that.

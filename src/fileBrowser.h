@@ -46,6 +46,9 @@ void open_file_browser_folder(tFileBrowserCallback callback, const char * title)
 void set_file_browser_start_directory(const char * path);
 typedef void (*tFileBrowserDirectoryChangedCallback)(const char * path);
 void set_file_browser_directory_changed_callback(tFileBrowserDirectoryChangedCallback callback);
+// Asked each time the browser opens; a non-NULL existing folder becomes where it starts.
+typedef const char * (*tFileBrowserStartDirectoryProvider)(void);
+void set_file_browser_start_directory_provider(tFileBrowserStartDirectoryProvider provider);
 
 bool file_browser_active(void);
 void handle_file_browser_mouse_down(tCoord coord);

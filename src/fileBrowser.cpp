@@ -81,6 +81,7 @@ struct tFileBrowserState {
 tFileBrowserState                    sState;
 std::string                          sLastDirectory;
 tFileBrowserDirectoryChangedCallback sDirectoryChangedCallback = nullptr;
+tFileBrowserStartDirectoryProvider   sStartDirectoryProvider   = nullptr;
 
 const double                         kRowHeight                = STANDARD_TEXT_HEIGHT + 8.0;
 const int                            kVisibleRows              = 12;
@@ -226,6 +227,15 @@ void begin_browse(tFileBrowserMode mode, tFileBrowserCallback callback, const ch
     sState.mode            = mode;
     sState.callback        = callback;
     sState.title           = (title != nullptr) ? title : "";
+
+    // Asked afresh at every open, so a folder another process chose since is where this one starts.
+    if (sStartDirectoryProvider != nullptr) {
+        const char * start = sStartDirectoryProvider();
+
+        if ((start != nullptr) && (start[0] != '\0') && fs::is_directory(fs::path(start))) {
+            sLastDirectory = start;
+        }
+    }
 
     if (sLastDirectory.empty()) {
         sLastDirectory = default_start_directory();
@@ -450,6 +460,10 @@ void set_file_browser_start_directory(const char * path) {
 
 void set_file_browser_directory_changed_callback(tFileBrowserDirectoryChangedCallback callback) {
     sDirectoryChangedCallback = callback;
+}
+
+void set_file_browser_start_directory_provider(tFileBrowserStartDirectoryProvider provider) {
+    sStartDirectoryProvider = provider;
 }
 
 bool file_browser_active(void) {

@@ -83,6 +83,23 @@ int main(void) {
     assert(vals[2].id == 3 && vals[2].value == 1.0);
     assert(pl == strlen(gBlob) && memcmp(pd, gBlob, pl) == 0);
 
+    // An SLP2 blob from a build that still saved id 2: skipped the same way
+    {
+        uint8_t  older[64];
+        uint32_t two = 2, idA = 0, idB = 2, none = 0;
+        double   a = 0.5, b = 0.75;
+
+        memcpy(older, "SLP2", 4);
+        memcpy(older + 4, &two, 4);
+        memcpy(older + 8, &idA, 4);
+        memcpy(older + 12, &a, 8);
+        memcpy(older + 20, &idB, 4);
+        memcpy(older + 24, &b, 8);
+        memcpy(older + 32, &none, 4);
+        assert(synthlib_state_read(&store, older, 36, vals, 8, &n, &pd, &pl));
+        assert(n == 1 && vals[0].id == 0 && vals[0].value == 0.5 && pl == 0);
+    }
+
     // Truncated mid-record
     assert(!synthlib_state_read(&store, buf, 8 + 12 + 3, vals, 8, &n, &pd, &pl) || n <= 1);
 
@@ -97,7 +114,8 @@ int main(void) {
     memcpy(old + 40, &blen, 4);
     memcpy(old + 44, "abc", 3);
     assert(synthlib_state_read(&store, old, 47, vals, 8, &n, &pd, &pl));
-    assert(n == 4 && vals[2].id == 2 && vals[2].value == 0.3);
+    // id 2 is NO_SAVE: an old project's value for it is not restored
+    assert(n == 3 && vals[1].id == 1 && vals[1].value == 0.2 && vals[2].id == 3 && vals[2].value == 0.4);
     assert(pl == 3 && memcmp(pd, "abc", 3) == 0);
 
     // Legacy blob: no magic

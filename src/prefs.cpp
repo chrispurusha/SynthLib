@@ -23,6 +23,7 @@
 #include <fstream>
 #include <map>
 #include <mutex>
+#include <set>
 #include <string>
 
 #include "prefs.h"
@@ -44,6 +45,7 @@ std::recursive_mutex     sMutex;
 struct tStore {
     fs::path                           path;
     std::map<std::string, std::string> values;
+    std::set<std::string>              written;   // keys THIS process has set - the only ones a save writes
     bool                               loaded = false;
 };
 
@@ -110,9 +112,38 @@ void load_if_needed(tStore &store) {
     }
 }
 
+void read_file(const fs::path &path, std::map<std::string, std::string> &out) {
+    std::ifstream file(path);
+    std::string   line;
+
+    while (file.is_open() && std::getline(file, line)) {
+        if (!line.empty() && (line.back() == '\r')) {
+            line.pop_back();
+        }
+        size_t eq = line.find('=');
+
+        if (eq != std::string::npos) {
+            out[line.substr(0, eq)] = line.substr(eq + 1);
+        }
+    }
+}
+
 // notes §4
 void save(tStore &store) {
     std::error_code ec;
+
+    // notes §5 - the file as it is now, with this process's own keys laid over it
+    {
+        std::map<std::string, std::string> onDisk;
+
+        read_file(store.path, onDisk);
+
+        for (const auto &key : store.written) {
+            onDisk[key] = store.values[key];
+        }
+
+        store.values.swap(onDisk);
+    }
 
     fs::create_directories(store.path.parent_path(), ec);
 
@@ -173,6 +204,7 @@ void prefs_set_string(const char * key, const char * value) {
     }
     load_if_needed(sPrefs);
     sPrefs.values[key] = value;
+    sPrefs.written.insert(key);
     save(sPrefs);
 }
 
@@ -271,7 +303,47 @@ void cache_set_string(const char * key, const char * value) {
     }
     load_if_needed(sCache);
     sCache.values[key] = value;
+    sCache.written.insert(key);
     save(sCache);
+}
+
+// notes §6
+void prefs_set_string_in(const char * appName, const char * key, const char * value) {
+    std::lock_guard<std::recursive_mutex> lock(sMutex);
+
+    if ((appName == nullptr) || (key == nullptr) || (value == nullptr)) {
+        return;
+    }
+    tStore                                other;
+
+    other.path        = config_dir(appName) / "prefs.txt";
+    other.values[key] = value;
+    other.written.insert(key);
+    save(other);
+
+    // The same file as this process's own: keep its copy current too
+    if (other.path == sPrefs.path) {
+        sPrefs.values[key] = value;
+    }
+}
+
+const char * prefs_get_string_from(const char * appName, const char * key, const char * defaultValue) {
+    std::lock_guard<std::recursive_mutex> lock(sMutex);
+
+    if ((appName == nullptr) || (key == nullptr)) {
+        return defaultValue;
+    }
+    std::map<std::string, std::string>    values;
+
+    read_file(config_dir(appName) / "prefs.txt", values);
+
+    auto                                  it = values.find(key);
+
+    if (it == values.end()) {
+        return defaultValue;
+    }
+    sGetStringScratch = it->second;
+    return sGetStringScratch.c_str();
 }
 
 // Falls back to prefs for a key the cache does not have, so caches written before the split are
