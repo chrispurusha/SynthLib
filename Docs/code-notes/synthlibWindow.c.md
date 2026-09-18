@@ -50,3 +50,25 @@ _glfw.hints.window.scaleFramebuffer (glfw/src/window.c), so this is a rename and
 The new name is the honest one — the hint stopped being macOS-specific in GLFW 3.4, and a
 Windows or Linux build wants it too, which is the point at which the Cocoa name would have
 started to mislead. Needs GLFW >= 3.4; the bundled copy is 3.5.1.
+
+## 7. `shim_cursor_enter()`
+
+AN OPEN MENU DOES NOT SURVIVE THE POINTER LEAVING THE WINDOW (2026-09-18, CT: "if cursor moves
+outside of window, open menus could close"). Before this, a menu opened and then abandoned sat there
+until something else was clicked - there was no cursor-enter callback anywhere in the library or in
+any of the three applications.
+
+CLOSING IS SAFE BECAUSE MENUS ARE CLAMPED. `clamp_menu_to_screen()` keeps every frame inside the
+window, so leaving the window IS leaving the menu: there is nothing left to aim at, and the usual
+objection to closing on leave - that the user is only overshooting an item near the edge - cannot
+arise. No guard on a held mouse button is needed for the same reason.
+
+SYNTHLIB'S OWN DOING, NOT THE APPLICATION'S. The menu belongs to contextMenu.c, so this shim closes
+it directly and is registered unconditionally, unlike every other shim here, which exists only when
+the app supplied a handler. An app that also wants to know the pointer crossed the edge supplies
+`cursorEnter`; it does not have to, and none of the three does today.
+
+ENTERING DOES NOTHING. A menu closed on the way out should not reappear on the way back in.
+
+Unregistered in `synthlib_window_close()` with the rest: GLFW can deliver events between the close
+request and the loop noticing, and this one would reach into menu state the app is tearing down.

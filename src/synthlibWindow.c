@@ -41,6 +41,7 @@ extern "C" {
 #include "renderBackendSelect.h"
 #include "renderBackend.h"
 #include "utilsGraphics.h"
+#include "contextMenu.h"          // close_context_menu() - an open menu does not survive the pointer leaving
 
 // notes §1
 #ifdef __APPLE__
@@ -170,6 +171,24 @@ static void shim_window_focus(GLFWwindow * window, int focused) {
     synthlib_request_redraw();
 }
 
+// A MENU DOES NOT SURVIVE THE POINTER LEAVING THE WINDOW. Menus are clamped to the window
+// (clamp_menu_to_screen()), so leaving the window is leaving the menu - there is nothing left to aim
+// at, and one left open sits there until something else is clicked. Closing is SynthLib's own doing
+// rather than each app's, since the menu is SynthLib's; an app that also wants to know supplies
+// cursorEnter. Entering does nothing: a menu that closed on the way out should not come back.
+static void shim_cursor_enter(GLFWwindow * window, int entered) {
+    (void)window;
+
+    if (entered == GLFW_FALSE) {
+        close_context_menu();
+    }
+
+    if (gHandlers.cursorEnter != NULL) {
+        gHandlers.cursorEnter(entered != GLFW_FALSE);
+    }
+    synthlib_request_redraw();
+}
+
 static void shim_window_refresh(GLFWwindow * window) {
     (void)window;
 
@@ -227,6 +246,9 @@ void * synthlib_window_create(const tSynthLibWindowConfig * config, const tSynth
         if (gHandlers.windowFocus != NULL) {
             gCallbacks.windowFocus = shim_window_focus;
         }
+        // Unconditional, unlike the rest: closing the menu is SynthLib's behaviour, not the app's,
+        // so there is no app handler to gate it on.
+        gCallbacks.cursorEnter = shim_cursor_enter;
 
         if (gHandlers.windowRefresh != NULL) {
             gCallbacks.windowRefresh = shim_window_refresh;
@@ -334,6 +356,10 @@ void * synthlib_window_create(const tSynthLibWindowConfig * config, const tSynth
         glfwSetWindowFocusCallback(window, gCallbacks.windowFocus);   // clears held modifiers — see inputState.h
     }
 
+    if (gCallbacks.cursorEnter != NULL) {
+        glfwSetCursorEnterCallback(window, gCallbacks.cursorEnter);
+    }
+
     if (gCallbacks.windowRefresh != NULL) {
         glfwSetWindowRefreshCallback(window, gCallbacks.windowRefresh);
     }
@@ -391,6 +417,10 @@ void synthlib_window_close(void) {
 
     if (gCallbacks.scroll != NULL) {
         glfwSetScrollCallback(window, NULL);
+    }
+
+    if (gCallbacks.cursorEnter != NULL) {
+        glfwSetCursorEnterCallback(window, NULL);
     }
 
     if (gCallbacks.windowFocus != NULL) {

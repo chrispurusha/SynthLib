@@ -42,6 +42,9 @@ typedef struct {
     void (*character)(unsigned int codepoint);
     void (*scroll)(double dx, double dy);
     void (*windowFocus)(bool focused);
+    // The pointer crossing the window edge. SynthLib closes any open menu on the way out whether or
+    // not an app supplies this - see shim_cursor_enter().
+    void (*cursorEnter)(bool entered);
     void (*windowRefresh)(void);
 } tSynthLibInputHandlers;
 
@@ -70,6 +73,7 @@ typedef struct {
     GLFWmousebuttonfun   mouseButton;
     GLFWscrollfun        scroll;
     GLFWwindowfocusfun   windowFocus;
+    GLFWcursorenterfun   cursorEnter;
     GLFWwindowrefreshfun windowRefresh;
 } tSynthLibWindowCallbacks;
 
