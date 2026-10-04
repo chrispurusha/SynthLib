@@ -1586,6 +1586,16 @@ SMTG_EXPORT_SYMBOL IPluginFactory * PLUGIN_API GetPluginFactory(void) {
     return new SynthLibFactory();
 }
 
+#if defined (_WIN32)
+// Windows loads a .vst3 as a DLL, and asks these of it instead of macOS's bundle entry points
+SMTG_EXPORT_SYMBOL bool InitDll(void) {
+    return true;
+}
+
+SMTG_EXPORT_SYMBOL bool ExitDll(void) {
+    return true;
+}
+#else
 // macOS loads a .vst3 as a bundle, so these are the entry points rather than a plain dylib's.
 SMTG_EXPORT_SYMBOL bool bundleEntry(void * ref) {
     (void)ref;
@@ -1595,4 +1605,5 @@ SMTG_EXPORT_SYMBOL bool bundleEntry(void * ref) {
 SMTG_EXPORT_SYMBOL bool bundleExit(void) {
     return true;
 }
+#endif
 }
