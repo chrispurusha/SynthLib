@@ -23,10 +23,17 @@
 
 // notes §1
 
-#include <CoreMIDI/CoreMIDI.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+
+#if defined (__APPLE__)
+#include <CoreMIDI/CoreMIDI.h>
+#else
+// CoreMIDI's handles are 32-bit object IDs; elsewhere the platform file gives them its own meaning.
+typedef uint32_t   MIDIEndpointRef;
+typedef uint32_t   MIDIPortRef;
+#endif
 
 #ifdef __cplusplus
 extern "C" {

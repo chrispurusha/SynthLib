@@ -23,9 +23,14 @@
 
 // notes §1
 
-#include <CoreMIDI/CoreMIDI.h>
 #include <stdbool.h>
 #include <stdint.h>
+
+#if defined (__APPLE__)
+#include <CoreMIDI/CoreMIDI.h>
+#else
+#include "synthlibMidiPorts.h"   // MIDIEndpointRef and MIDIPortRef off Apple
+#endif
 
 #ifdef __cplusplus
 extern "C" {
