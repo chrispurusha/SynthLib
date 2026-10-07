@@ -44,6 +44,8 @@
 #include "synthlibPluginState.h"
 #include "synthlibPluginVst3View.h"
 
+#define SYNTHLIB_MAX_OUT_CHANNELS    (32)   // every output bus together, as process() receives them
+
 using namespace Steinberg;
 using namespace Steinberg::Vst;
 
@@ -653,25 +655,27 @@ public:
                 }
             }
         }
-        float ** out    = nullptr;
+        // notes §12 (synthlibPlugin.h) - EVERY output bus, its channels one after another; the main
+        // bus must be there, a bus the host has not activated arrives as NULL channels
+        float *  outs[SYNTHLIB_MAX_OUT_CHANNELS];
         uint32_t numOut = 0;
 
-        if ((data.numOutputs > 0) && (data.outputs != nullptr) &&
-            (data.outputs[0].channelBuffers32 != nullptr)) {
-            out    = data.outputs[0].channelBuffers32;
-            numOut = (uint32_t)data.outputs[0].numChannels;
+        if (data.outputs != nullptr) {
+            for (int32 b = 0; (b < data.numOutputs) && ((uint32_t)b < desc->numOutputs); b++) {
+                const AudioBusBuffers & bus = data.outputs[b];
 
-            for (uint32_t c = 0; c < numOut; c++) {
-                if (out[c] == nullptr) {
-                    return kResultOk;
+                for (uint32_t c = 0; (c < desc->outputs[b].channels) && (numOut < SYNTHLIB_MAX_OUT_CHANNELS); c++) {
+                    float * channel = ((bus.channelBuffers32 != nullptr) && ((int32)c < bus.numChannels)) ? bus.channelBuffers32[c] : nullptr;
+
+                    if ((b == 0) && (channel == nullptr)) {
+                        return kResultOk;
+                    }
+                    outs[numOut++] = channel;
                 }
+                data.outputs[b].silenceFlags = 0;
             }
         }
-        desc->cb.process(inst, in, numIn, out, numOut, (uint32_t)data.numSamples, &transport);
-
-        if (data.numOutputs > 0) {
-            data.outputs[0].silenceFlags = 0;
-        }
+        desc->cb.process(inst, in, numIn, (numOut > 0u) ? outs : nullptr, numOut, (uint32_t)data.numSamples, &transport);
         return kResultOk;
     }
 

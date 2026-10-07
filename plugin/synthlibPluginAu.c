@@ -470,7 +470,7 @@ static UInt32 element_count(const tSynthLibPluginDesc * d, AudioUnitScope scope)
     switch (scope) {
         case kAudioUnitScope_Global: return 1;
         case kAudioUnitScope_Input:  return d->numInputs;
-        case kAudioUnitScope_Output: return d->numOutputs;
+        case kAudioUnitScope_Output: return (d->numOutputs > 0u) ? 1u : 0u;   // notes §12 (synthlibPlugin.h) - the main bus only
         case kAudioUnitScope_Group:  return d->isInstrument ? 1 : 0;
         default:                     return 0;
     }

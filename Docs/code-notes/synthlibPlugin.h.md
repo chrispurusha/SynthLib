@@ -154,6 +154,15 @@ DE-INTERLEAVED, because that is what both formats hand over - a VST3 channelBuff
 AudioBufferList of one-channel buffers are the same shape, and an engine rendering interleaved
 frames (G2-Edit's does) de-interleaves once, here, instead of once per wrapper.
 
+`out` is EVERY OUTPUT BUS, their channels one after another in the order the descriptor lists them,
+and `numOut` the total (2026-10-07; until then only the first bus). The first bus's channels are always
+real buffers. A later bus the host has not activated - an aux output nobody routed - arrives as NULL
+channels, so a plug-in with more than one output bus checks each pointer past the first bus. A plug-in
+with one bus sees exactly what it always did. THE AUDIO UNIT OFFERS ONLY THE FIRST BUS: a host renders
+an AU one output element at a time, which would need the whole block rendered at the first call and
+held for the others; until that is written the AU advertises one output element and passes the first
+bus alone.
+
 `in` is the first input bus, or NULL for a plug-in that declared none - and also NULL when the
 host has not connected one, which is a thing a host may legitimately do to a bus the plug-in
 said was auxiliary. `in` and `out` may be the SAME buffers: a host is entitled to process in

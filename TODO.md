@@ -83,6 +83,15 @@ no longer accepts the old `G2_VST3_BUILD` spelling. The two panels' views
 plug-in supplies, with its Objective-C class name taken from the build
 (`-DSYNTHLIB_PANEL_VIEW_CLASS`) as the AU view's is.
 
+## More than one output bus (2026-10-07)
+
+The VST3 wrapper hands `process()` every output bus's channels, one bus after another; a bus the host
+has not activated arrives as NULL channels (code-notes synthlibPlugin.h §12). First user: G2 Alike's
+"Out 3/4". Still to do: the Audio Unit wrapper advertises ONE output element whatever the descriptor
+says, because a host renders an AU one element at a time. Rendering the whole block at element 0
+(keyed on the timestamp's sample time) and copying out the held channels for the others would close it;
+`auval` and Logic's multi-output instrument mode are the checks.
+
 ## The renderer position after 2026-09-09, and what the ports need
 
 **macOS is Metal; OpenGL is what Windows and Linux will run.** That is now the
