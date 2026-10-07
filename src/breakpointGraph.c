@@ -32,7 +32,7 @@ extern "C" {
 
 static tCoord to_screen(tRectangle rect, const tGraphPoint * point) {
     return (tCoord){
-               rect.coord.x + (point->x * rect.size.w), rect.coord.y + ((1.0 - point->y) * rect.size.h)
+        rect.coord.x + (point->x * rect.size.w), rect.coord.y + ((1.0 - point->y) * rect.size.h)
     };
 }
 
@@ -94,7 +94,7 @@ tCoord graph_position(tRectangle rect, tCoord at) {
     double y = (rect.size.h > 0.0) ? 1.0 - ((at.y - rect.coord.y) / rect.size.h) : 0.0;
 
     return (tCoord){
-               (x < 0.0) ? 0.0 : (x > 1.0) ? 1.0 : x, (y < 0.0) ? 0.0 : (y > 1.0) ? 1.0 : y
+        (x < 0.0) ? 0.0 : (x > 1.0) ? 1.0 : x, (y < 0.0) ? 0.0 : (y > 1.0) ? 1.0 : y
     };
 }
 
