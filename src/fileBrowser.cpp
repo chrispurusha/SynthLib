@@ -793,12 +793,11 @@ void render_file_browser(void) {
 
     // notes §1a - an empty list that is really a refusal says so
     if (sState.accessDenied) {
-        static const char * kDenied[] = {
-            "This folder cannot be read: the system has not given this app access to it.",
+        static const char * kDenied[] = {"This folder cannot be read: the system has not given this app access to it.",
 #ifdef __APPLE__
-            "To allow it: System Settings > Privacy & Security > Files & Folders,",
-            "find this app, and switch on the folder (Documents, Desktop or Downloads).",
-            "Then open this folder again.",
+                                         "To allow it: System Settings > Privacy & Security > Files & Folders,",
+                                         "find this app, and switch on the folder (Documents, Desktop or Downloads).",
+                                         "Then open this folder again.",
 #endif
         };
 
