@@ -492,8 +492,12 @@ static void gather(const AudioBufferList * list, float * out, uint32_t frames,
     }
 }
 
-static void scatter(AudioBufferList * list, const float * in, uint32_t frames, uint32_t provided) {
-    uint32_t taken = 0;
+// firstChannel is the device channel the caller's first channel goes to, as gather() takes it on input.
+// It was ignored until 2026-10-08: every output landed on the device's channels 1-2 whatever was asked.
+static void scatter(AudioBufferList * list, const float * in, uint32_t frames, uint32_t firstChannel,
+                    uint32_t provided) {
+    uint32_t taken  = 0;
+    uint32_t global = 0;
 
     for (UInt32 b = 0; b < list->mNumberBuffers; b++) {
         AudioBuffer * buffer = &list->mBuffers[b];
@@ -501,11 +505,12 @@ static void scatter(AudioBufferList * list, const float * in, uint32_t frames, u
         float *       dst    = (float *)buffer->mData;
 
         if (dst == NULL) {
+            global += stride;
             continue;
         }
 
-        for (uint32_t c = 0; c < stride; c++) {
-            if (taken < provided) {
+        for (uint32_t c = 0; c < stride; c++, global++) {
+            if ((global >= firstChannel) && (taken < provided)) {
                 for (uint32_t f = 0; f < frames; f++) {
                     dst[((size_t)f * stride) + c] = in[((size_t)f * provided) + taken];
                 }
@@ -560,7 +565,7 @@ static OSStatus io_proc(AudioObjectID device, const AudioTimeStamp * now,
         }
 
         stream->callback(stream->user, NULL, stream->scratch, frames);
-        scatter(outputData, stream->scratch, frames, stream->channels);
+        scatter(outputData, stream->scratch, frames, stream->firstChannel, stream->channels);
     }
 
     return noErr;
