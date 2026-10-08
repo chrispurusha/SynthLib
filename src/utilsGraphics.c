@@ -2242,14 +2242,20 @@ tRectangle draw_panel_chrome(tArea area, tRectangle box, double titleH, const ch
 }
 
 // notes §32
+static bool sDialTextHidden = false;
+
+void set_dial_text_hidden(bool hidden) {
+    sDialTextHidden = hidden;
+}
+
 tRectangle render_dial_with_text(tArea area, tRectangle rectangle, const char * label, const char * buff, double labelH, uint32_t value, uint32_t range, uint32_t morphRange, tRgb colour) {
     set_rgb_colour((tRgb)RGB_BLACK);
 
-    if (buff != NULL) {
+    if ((buff != NULL) && !sDialTextHidden) {
         render_text(area, (tRectangle){{rectangle.coord.x, rectangle.coord.y - labelH}, {BLANK_SIZE, labelH}}, buff);
     }
 
-    if (label != NULL) {
+    if ((label != NULL) && !sDialTextHidden) {
         render_text(area, (tRectangle){{rectangle.coord.x, rectangle.coord.y - (labelH * 2.0)}, {BLANK_SIZE, labelH}}, label);
     }
     return render_dial(area, (tRectangle){{rectangle.coord.x, rectangle.coord.y}, {rectangle.size.w, rectangle.size.w}}, value, range, morphRange, colour);

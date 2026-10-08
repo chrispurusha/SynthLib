@@ -171,6 +171,8 @@ tRectangle rectangle_scale_from_percent(tRectangle rectangle);
 double scale_from_percent(double val);
 tRectangle render_dial(tArea area, tRectangle rectangle, uint32_t value, uint32_t range, uint32_t morphRange, tRgb colour);
 tRectangle render_dial_with_text(tArea area, tRectangle rectangle, const char * label, const char * buff, double labelH, uint32_t value, uint32_t range, uint32_t morphRange, tRgb colour);
+// Draw a dial without its name and value rows - for a caller that places that text itself, and puts it back
+void set_dial_text_hidden(bool hidden);
 
 // notes §14
 tRectangle list_scrollbar_thumb_rect(tRectangle listRect, int32_t totalRows, int32_t visibleRows, double scrollOffset);
