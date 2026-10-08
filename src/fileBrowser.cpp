@@ -63,6 +63,7 @@ struct tFileBrowserState {
     std::string                    title;
     std::string                    currentDir;
     std::vector<tFileBrowserEntry> entries;
+    bool                           accessDenied        = false; // the listing failed for want of permission - notes §1a
     std::vector<tSidebarItem>      sidebar;
     int32_t                        selectedIndex       = -1;
     double                         scrollOffset        = 0.0;
@@ -191,6 +192,8 @@ void refresh_directory_listing(void) {
     sState.entries.clear();
     std::error_code        ec;
     fs::directory_iterator it(sState.currentDir, ec);
+
+    sState.accessDenied = (ec == std::errc::operation_not_permitted) || (ec == std::errc::permission_denied);
 
     if (!ec) {
         for (const auto &entry : it) {
@@ -787,6 +790,26 @@ void render_file_browser(void) {
     }
 
     render_list_scrollbar(listRect, (int32_t)sState.entries.size(), kVisibleRows, sState.scrollOffset);
+
+    // notes §1a - an empty list that is really a refusal says so
+    if (sState.accessDenied) {
+        static const char * kDenied[] = {
+            "This folder cannot be read: the system has not given this app access to it.",
+#ifdef __APPLE__
+            "To allow it: System Settings > Privacy & Security > Files & Folders,",
+            "find this app, and switch on the folder (Documents, Desktop or Downloads).",
+            "Then open this folder again.",
+#endif
+        };
+
+        set_rgb_colour((tRgb)RGB_BLACK);
+
+        for (size_t line = 0; line < (sizeof(kDenied) / sizeof(kDenied[0])); line++) {
+            render_text(mainArea, (tRectangle){
+                    {listRect.coord.x + 8.0, listRect.coord.y + 8.0 + ((double)line * kRowHeight)}, {BLANK_SIZE, STANDARD_TEXT_HEIGHT}
+                }, truncate_to_width(kDenied[line], listRect.size.w - 16.0).c_str());
+        }
+    }
 
     // Filename field (Save mode only) — a lighter grey background plus a visible cursor means
     // "you're editing this"; unfocused is a darker flat grey with no cursor, so it's clear a click

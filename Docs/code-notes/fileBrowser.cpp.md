@@ -9,6 +9,15 @@ group (Home/Desktop/Documents/Downloads/iCloud Drive, whichever exist) plus a Lo
 with the boot volume and every currently-mounted volume under /Volumes — a real equivalent of
 NSOpenPanel's sidebar rather than a hardcoded guess at what's mounted.
 
+## 1a. `accessDenied`
+
+AN EMPTY LIST THAT IS REALLY A REFUSAL. This browser is drawn in the window rather than being the
+system's own Open/Save panel, so on macOS every folder it lists is read by the app itself - and
+Documents, Desktop and Downloads are behind the privacy control (TCC). The app is asked once; a
+"Don't Allow" is remembered, and from then on the listing fails with EPERM and the folder looked
+simply empty, with nothing to say why (CT, 2026-10-08). Now the list says so and, on a Mac, where
+to switch it back on. A permission error only: a folder that does not exist still shows nothing.
+
 ## 2. `kButtonH`
 
 draw_button() sizes its label text directly off the height of the rectangle passed in (see
