@@ -65,6 +65,10 @@
         return NO;
     }
 
+    if ((self.panel != NULL) && (self.panel->paused != NULL) && self.panel->paused(self.user)) {
+        return NO;    // the panel asked for no repainting - see tSynthLibPanel.paused
+    }
+
     return ([window occlusionState] & NSWindowOcclusionStateVisible) != 0;
 }
 
@@ -231,6 +235,7 @@
         (void)self.panel->click(self.user, p.x, p.y);
     }
     [self redraw];
+    [self updateTimer];   // a click may have paused or resumed the panel
 }
 
 // notes §11

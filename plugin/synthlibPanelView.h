@@ -54,6 +54,10 @@ typedef struct {
 
     // Is a drop-down open? A bare mouse move repaints only then.
     bool (*menuActive)(void);
+    // OPTIONAL. True while the panel has asked for no repainting - the view then stops its timer as it does
+    // for a hidden window, and draws only after a click, so a click on the panel's own toggle resumes it.
+    // NULL means never paused, which is every panel written before this existed.
+    bool (*paused)(void * user);
 } tSynthLibPanel;
 
 // An NSView *, RETAINED (+1), as a void * - which is what SynthLib's createView() contract wants. The
