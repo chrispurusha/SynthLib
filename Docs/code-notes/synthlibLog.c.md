@@ -10,3 +10,10 @@ it is the entire cost when logging is OFF - which is almost always, and is exact
 must be free. Re-polled once a second so touching the file enables logging mid-session rather
 than needing a reload. Two threads may both re-poll at the turn of a second; both then store
 the same answer.
+
+## 2. Windows (2026-10-11)
+
+There is no /tmp on Windows and no getprogname(): the switch and the log live in %TEMP% (`%TEMP%\<name>-log`,
+`%TEMP%\<name>.log`), and a line names its process by pid alone. Both under `_WIN32`, so the Mac build is
+unchanged. G2 Alike's Windows plug-in is the first Windows build to link the log.
+

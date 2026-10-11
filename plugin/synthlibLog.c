@@ -31,7 +31,13 @@
 // Both paths come from the project's name, built on the stack each time rather than cached in a
 // static - there is then nothing for a first call to initialise, and so nothing to race over.
 static void log_path(char * out, size_t size, const char * suffix) {
+#if defined (_WIN32)
+    const char * temp = getenv("TEMP");   // no /tmp on Windows: %TEMP%\<name>-log
+
+    snprintf(out, size, "%s\\%s%s", (temp != NULL) ? temp : ".", gSynthLibLogName, suffix);
+#else
     snprintf(out, size, "/tmp/%s%s", gSynthLibLogName, suffix);
+#endif
 }
 
 void synthlib_log_line(const char * format, ...) {
@@ -65,7 +71,11 @@ void synthlib_log_line(const char * format, ...) {
     // The executable's own name, so a line from Live is told from one from a test harness at a
     // glance rather than by pid alone. Read each time: getprogname() returns a pointer the process
     // already holds, and caching it in a static was a (benign) data race.
+#if defined (_WIN32)
+    const char * name = NULL;   // no getprogname(); the pid still tells processes apart
+#else
     const char * name = getprogname();
+#endif
 
     fprintf(file, "[%s %d] ", (name != NULL) ? name : "?", (int)getpid());
 
