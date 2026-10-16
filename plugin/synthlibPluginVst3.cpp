@@ -680,7 +680,15 @@ public:
     }
 
     static FUnknown * createInstance(const tSynthLibPluginDesc * d) {
-        return (IAudioProcessor *)new SynthLibProcessor(d);
+        SynthLibProcessor * processor = new SynthLibProcessor(d);
+
+        // A plug-in that refused the instance (out of engines, say) is no instance at all: the host
+        // is told the load failed, rather than handed a processor with nothing behind it
+        if ((processor->inst == nullptr) && (d->cb.create != nullptr)) {
+            ((IAudioProcessor *)processor)->release();
+            return nullptr;
+        }
+        return (IAudioProcessor *)processor;
     }
 
 private:
