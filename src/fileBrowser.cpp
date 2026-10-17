@@ -85,10 +85,16 @@ tFileBrowserDirectoryChangedCallback sDirectoryChangedCallback = nullptr;
 tFileBrowserStartDirectoryProvider   sStartDirectoryProvider   = nullptr;
 
 const double                         kRowHeight                = STANDARD_TEXT_HEIGHT + 8.0;
-const int                            kVisibleRows              = 12;
+const int                            kMaxVisibleRows           = 12;
+const int                            kMinVisibleRows           = 4;
+// AS MANY ROWS AS THE WINDOW HOLDS, up to 12, set when the browser opens. The applications' windows take all 12;
+// a plug-in's editor can be far shorter (Pulse2Alike's is 300 logical units), and a fixed 12 ran off its bottom.
+int                                  sVisibleRows              = kMaxVisibleRows;
 const double                         kSidebarWidth             = 150.0;
 const double                         kPanelWidth               = 730.0;
-const double                         kPanelHeight              = 60.0 + (kRowHeight * kVisibleRows) + 70.0;
+double panel_height(void) {
+    return 60.0 + (kRowHeight * sVisibleRows) + 70.0;
+}
 
 // X origin every content-area element (path label, listing, filename field) hangs off — the
 // sidebar occupies the strip to its left.
@@ -259,11 +265,13 @@ void begin_browse(tFileBrowserMode mode, tFileBrowserCallback callback, const ch
 
     double renderW = get_render_width() / gGlobalGuiScale;
     double renderH = get_render_height() / gGlobalGuiScale;
+    int    fit     = (int)((renderH - 130.0 - 16.0) / kRowHeight);
 
+    sVisibleRows           = std::max(kMinVisibleRows, std::min(kMaxVisibleRows, fit));
     sState.panelRect       = (tRectangle){
         {
-            (renderW - kPanelWidth) / 2.0, (renderH - kPanelHeight) / 2.0
-        }, {kPanelWidth, kPanelHeight}
+            (renderW - kPanelWidth) / 2.0, (renderH - panel_height()) / 2.0
+        }, {kPanelWidth, panel_height()}
     };
 
     synthlib_request_redraw();
@@ -292,7 +300,7 @@ tRectangle list_area_rect(void) {
     return (tRectangle){
         {
             content_x(), sState.panelRect.coord.y + 60.0
-        }, {kPanelWidth - kSidebarWidth - 20.0, kRowHeight * kVisibleRows}
+        }, {kPanelWidth - kSidebarWidth - 20.0, kRowHeight * sVisibleRows}
     };
 }
 
@@ -300,7 +308,7 @@ tRectangle sidebar_rect(void) {
     return (tRectangle){
         {
             sState.panelRect.coord.x + 10.0, sState.panelRect.coord.y + 60.0
-        }, {kSidebarWidth - 10.0, kRowHeight * kVisibleRows}
+        }, {kSidebarWidth - 10.0, kRowHeight * sVisibleRows}
     };
 }
 
@@ -315,14 +323,14 @@ tRectangle sidebar_row_rect(int index) {
 }
 
 int32_t row_count_scrolled(void) {
-    return (int32_t)((sState.entries.size() > (size_t)kVisibleRows) ? (sState.entries.size() - (size_t)kVisibleRows) : 0);
+    return (int32_t)((sState.entries.size() > (size_t)sVisibleRows) ? (sState.entries.size() - (size_t)sVisibleRows) : 0);
 }
 
 // notes §2
 const double kButtonH = STANDARD_TEXT_HEIGHT;
 
 double button_row_y(void) {
-    return sState.panelRect.coord.y + kPanelHeight - 10.0 - kButtonH;
+    return sState.panelRect.coord.y + panel_height() - 10.0 - kButtonH;
 }
 
 // notes §3
@@ -352,7 +360,7 @@ tRectangle close_button_rect(void) {
 }
 
 tRectangle filename_field_rect(void) {
-    double y = sState.panelRect.coord.y + kPanelHeight - 70.0;
+    double y = sState.panelRect.coord.y + panel_height() - 70.0;
 
     // kButtonH + 12.0, not + 6.0 — extra headroom below the text baseline so descenders (g, y, p)
     // aren't clipped by the field's own border (same margin graphics.cpp's Patch Notes editor uses
@@ -481,7 +489,7 @@ void handle_file_browser_mouse_down(tCoord coord) {
     sState.closePressed   = within_rectangle(coord, close_button_rect());
     sState.cancelPressed  = within_rectangle(coord, draw_button_bounds(button_rect(1, button_row_y())));
     sState.confirmPressed = within_rectangle(coord, draw_button_bounds(button_rect(0, button_row_y())));
-    list_scrollbar_mouse_down(list_area_rect(), (int32_t)sState.entries.size(), kVisibleRows, sState.scrollOffset, coord);
+    list_scrollbar_mouse_down(list_area_rect(), (int32_t)sState.entries.size(), sVisibleRows, sState.scrollOffset, coord);
     synthlib_request_redraw();
 }
 
@@ -545,7 +553,7 @@ bool handle_file_browser_click(tCoord coord) {
         return true;
     }
     tRectangle listRect        = list_area_rect();
-    bool       hasScrollbar    = sState.entries.size() > (size_t)kVisibleRows;
+    bool       hasScrollbar    = sState.entries.size() > (size_t)sVisibleRows;
     double     scrollbarStripX = listRect.coord.x + listRect.size.w - LIST_SCROLLBAR_WIDTH;
 
     if (within_rectangle(coord, listRect) && !(hasScrollbar && (coord.x >= scrollbarStripX))) {
@@ -753,14 +761,14 @@ void render_file_browser(void) {
 
     // Directory listing
     tRectangle listRect     = list_area_rect();
-    bool       hasScrollbar = sState.entries.size() > (size_t)kVisibleRows;
+    bool       hasScrollbar = sState.entries.size() > (size_t)sVisibleRows;
 
     set_rgb_colour((tRgb)RGB_WHITE);
     render_rectangle(mainArea, listRect);
     set_rgb_colour((tRgb)RGB_GREY_5);
     render_rectangle_with_border(mainArea, listRect);
 
-    for (int row = 0; row < kVisibleRows; row++) {
+    for (int row = 0; row < sVisibleRows; row++) {
         int32_t                 index    = row + (int32_t)sState.scrollOffset;
 
         if ((index < 0) || (index >= (int32_t)sState.entries.size())) {
@@ -789,7 +797,7 @@ void render_file_browser(void) {
             }, truncate_to_width(label, rowRect.size.w - 12.0).c_str());
     }
 
-    render_list_scrollbar(listRect, (int32_t)sState.entries.size(), kVisibleRows, sState.scrollOffset);
+    render_list_scrollbar(listRect, (int32_t)sState.entries.size(), sVisibleRows, sState.scrollOffset);
 
     // notes §1a - an empty list that is really a refusal says so
     if (sState.accessDenied) {

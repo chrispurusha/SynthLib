@@ -382,6 +382,21 @@ static void cursor_release(void) {
     [self mouseDown:event];
 }
 
+- (void)scrollWheel:(NSEvent *)event {
+    NSPoint p = [self canvasPointFor:event];
+
+    if ((self.panel == NULL) || (self.panel->scroll == NULL)) {
+        [super scrollWheel:event];   // let the host scroll whatever it is scrolling
+        return;
+    }
+    // Lines from a wheel, points from a trackpad; both into logical units, downward positive.
+    double dy = -[event scrollingDeltaY] * ([event hasPreciseScrollingDeltas] ? [self logicalPerPoint] : 1.0);
+
+    [self sync];
+    self.panel->scroll(self.user, p.x, p.y, dy);
+    [self redraw];
+}
+
 - (void)removeFromSuperview {
     if (self.captured) {          // a host closing the editor mid-drag must not leave the pointer hidden
         self.captured = NO;

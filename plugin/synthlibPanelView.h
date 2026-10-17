@@ -68,6 +68,10 @@ typedef struct {
     bool (*press)(void * user, double x, double y);
     void (*dragBy)(void * user, double dx, double dy);
     void (*release)(void * user, double x, double y);
+
+    // OPTIONAL: the scroll wheel or a trackpad's two-finger scroll, in logical units at (x, y); dy is
+    // positive when the content should move up (scrolling down a list). NULL ignores scrolling.
+    void (*scroll)(void * user, double x, double y, double dy);
 } tSynthLibPanel;
 
 // An NSView *, RETAINED (+1), as a void * - which is what SynthLib's createView() contract wants. The
