@@ -58,6 +58,16 @@ typedef struct {
     // for a hidden window, and draws only after a click, so a click on the panel's own toggle resumes it.
     // NULL means never paused, which is every panel written before this existed.
     bool (*paused)(void * user);
+
+    // OPTIONAL: a real press, drag and release, for a panel with dials. With press set, a drag is no longer
+    // a stream of clicks: press says whether it grabbed something to drag, and if it did the pointer is
+    // hidden and held still, and dragBy reports the movement in logical units (y positive downward) until
+    // release, when the pointer reappears where it was. Shift and the other modifiers are kept current in
+    // SynthLib's inputState throughout, so dial_drag_pixels_for_full_range() slows a Shift-drag. NULL keeps
+    // the click-stream behaviour every panel before it was written for.
+    bool (*press)(void * user, double x, double y);
+    void (*dragBy)(void * user, double dx, double dy);
+    void (*release)(void * user, double x, double y);
 } tSynthLibPanel;
 
 // An NSView *, RETAINED (+1), as a void * - which is what SynthLib's createView() contract wants. The

@@ -24,6 +24,7 @@
 #import <QuartzCore/QuartzCore.h>
 
 #include "renderBackend.h"
+#include "inputState.h"
 #include "synthlibPanelView.h"
 
 #ifndef SYNTHLIB_PANEL_VIEW_CLASS
@@ -34,7 +35,59 @@
 @property (nonatomic, assign) const tSynthLibPanel * panel;
 @property (nonatomic, assign) void *                 user;
 @property (nonatomic, strong) NSTimer *              timer;
+@property (nonatomic, assign) BOOL                   captured;   // press() grabbed a control; the pointer is hidden
 @end
+
+static uint32_t modifier_bits_from_ns(NSEventModifierFlags flags) {
+    uint32_t bits = (uint32_t)eModifierNone;
+
+    if ((flags & NSEventModifierFlagShift) != 0) {
+        bits |= (uint32_t)eModifierShift;
+    }
+
+    if ((flags & NSEventModifierFlagCommand) != 0) {
+        bits |= (uint32_t)eModifierCmd;
+    }
+
+    if ((flags & NSEventModifierFlagOption) != 0) {
+        bits |= (uint32_t)eModifierAlt;
+    }
+
+    if ((flags & NSEventModifierFlagControl) != 0) {
+        bits |= (uint32_t)eModifierCtrl;
+    }
+    return bits;
+}
+
+// THE POINTER, HIDDEN AND HELD WHILE A DIAL IS DRAGGED, as G2 Alike's editor does it (plugin/g2View.m).
+// Cocoa reports the pointer from the bottom left of the main screen and CGWarpMouseCursorPosition() wants
+// the top left, hence the flip against the main screen's height. Process-wide: one drag at a time.
+static BOOL    gCursorHidden  = NO;
+static CGPoint gCursorRestore = {0.0, 0.0};
+
+static void cursor_capture(void) {
+    if (gCursorHidden) {
+        return;
+    }
+    NSPoint   here  = [NSEvent mouseLocation];
+    NSArray * all   = [NSScreen screens];
+    CGFloat   mainH = ([all count] > 0) ? NSMaxY([[all objectAtIndex:0] frame]) : 0.0;
+
+    gCursorRestore = CGPointMake(here.x, mainH - here.y);
+    gCursorHidden  = YES;
+    [NSCursor hide];
+    CGAssociateMouseAndMouseCursorPosition(false);
+}
+
+static void cursor_release(void) {
+    if (!gCursorHidden) {
+        return;
+    }
+    gCursorHidden = NO;
+    CGWarpMouseCursorPosition(gCursorRestore);
+    CGAssociateMouseAndMouseCursorPosition(true);
+    [NSCursor unhide];
+}
 
 @implementation SYNTHLIB_PANEL_VIEW_CLASS
 
@@ -217,12 +270,26 @@
     return NSMakePoint(local.x / scale, ([self bounds].size.height - local.y) / scale);
 }
 
+- (void)flagsChanged:(NSEvent *)event {
+    set_modifier_state(modifier_bits_from_ns([event modifierFlags]));
+    [super flagsChanged:event];
+}
+
+// Points to the canvas's logical units, for a movement rather than a position.
+- (double)logicalPerPoint {
+    double width = ((self.panel != NULL) && (self.panel->canvasWidth > 0.0)) ? self.panel->canvasWidth : 1.0;
+    double scale = [self bounds].size.width / width;
+
+    return (scale > 0.0) ? (1.0 / scale) : 1.0;
+}
+
 - (void)mouseDown:(NSEvent *)event {
     NSPoint p = [self canvasPointFor:event];
 
     if (self.panel == NULL) {
         return;
     }
+    set_modifier_state(modifier_bits_from_ns([event modifierFlags]));
 
     // notes §10
     [self sync];
@@ -231,11 +298,37 @@
         self.panel->pointer(p.x, p.y);   // a click is a position too, and a trackpad tap sends no move
     }
 
-    if (self.panel->click != NULL) {
+    if (self.panel->press != NULL) {
+        self.captured = self.panel->press(self.user, p.x, p.y) ? YES : NO;
+
+        if (self.captured) {
+            cursor_capture();
+        }
+    } else if (self.panel->click != NULL) {
         (void)self.panel->click(self.user, p.x, p.y);
     }
     [self redraw];
     [self updateTimer];   // a click may have paused or resumed the panel
+}
+
+- (void)mouseUp:(NSEvent *)event {
+    NSPoint p = [self canvasPointFor:event];
+
+    if ((self.panel == NULL) || (self.panel->press == NULL)) {
+        return;
+    }
+    set_modifier_state(modifier_bits_from_ns([event modifierFlags]));
+
+    if (self.captured) {
+        self.captured = NO;
+        cursor_release();
+    }
+
+    if (self.panel->release != NULL) {
+        [self sync];
+        self.panel->release(self.user, p.x, p.y);
+    }
+    [self redraw];
 }
 
 // notes §11
@@ -274,10 +367,26 @@
 // A drag is a stream of clicks: only continuous controls (GenBridge's trim) respond to one, and
 // routing it through the same hit test keeps that decision in one place.
 - (void)mouseDragged:(NSEvent *)event {
+    if ((self.panel != NULL) && (self.panel->press != NULL)) {
+        set_modifier_state(modifier_bits_from_ns([event modifierFlags]));
+
+        if (self.captured && (self.panel->dragBy != NULL)) {
+            double k = [self logicalPerPoint];
+
+            [self sync];
+            self.panel->dragBy(self.user, [event deltaX] * k, [event deltaY] * k);
+            [self redraw];
+        }
+        return;
+    }
     [self mouseDown:event];
 }
 
 - (void)removeFromSuperview {
+    if (self.captured) {          // a host closing the editor mid-drag must not leave the pointer hidden
+        self.captured = NO;
+        cursor_release();
+    }
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     [self.timer invalidate];        // the timer retains self; leaving it running leaks the view
     self.timer = nil;
