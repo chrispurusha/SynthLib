@@ -275,6 +275,47 @@ static void cursor_release(void) {
     [super flagsChanged:event];
 }
 
+// GLFW's codes for the editing keys, which is what SynthLib's popups read; written out so this file needs no
+// GLFW header. Every other key is passed as the character it typed.
+static int glfw_key_for_mac(unsigned short keyCode) {
+    switch (keyCode) {
+        case 53:  return 256;   // Escape
+        case 36:  return 257;   // Return
+        case 48:  return 258;   // Tab
+        case 51:  return 259;   // Backspace
+        case 117: return 261;   // Delete
+        case 124: return 262;   // Right
+        case 123: return 263;   // Left
+        case 125: return 264;   // Down
+        case 126: return 265;   // Up
+        case 116: return 266;   // Page Up
+        case 121: return 267;   // Page Down
+        case 115: return 268;   // Home
+        case 119: return 269;   // End
+        case 76:  return 335;   // keypad Enter
+        default:  return -1;
+    }
+}
+
+- (void)keyDown:(NSEvent *)event {
+    if ((self.panel == NULL) || (self.panel->key == NULL)) {
+        [super keyDown:event];
+        return;
+    }
+    NSString *   chars     = [event characters];
+    int          key       = glfw_key_for_mac([event keyCode]);
+    unsigned int codepoint = ((key == -1) && ([chars length] > 0)) ? (unsigned int)[chars characterAtIndex:0] : 0u;
+
+    set_modifier_state(modifier_bits_from_ns([event modifierFlags]));
+    [self sync];
+
+    if (self.panel->key(self.user, key, codepoint, [event isARepeat] == YES)) {
+        [self redraw];
+        return;
+    }
+    [super keyDown:event];
+}
+
 // Points to the canvas's logical units, for a movement rather than a position.
 - (double)logicalPerPoint {
     double width = ((self.panel != NULL) && (self.panel->canvasWidth > 0.0)) ? self.panel->canvasWidth : 1.0;
@@ -293,6 +334,11 @@ static void cursor_release(void) {
 
     // notes §10
     [self sync];
+
+    // the keyboard is claimed by a click IN the view, not when it opens, so a host keeps its own keys until then
+    if ((self.panel->key != NULL) && ([self window] != nil)) {
+        [[self window] makeFirstResponder:self];
+    }
 
     if (self.panel->pointer != NULL) {
         self.panel->pointer(p.x, p.y);   // a click is a position too, and a trackpad tap sends no move

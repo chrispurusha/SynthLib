@@ -56,6 +56,9 @@ typedef enum {
 #define SYNTHLIB_PARAM_HIDDEN     (1u << 0)
 #define SYNTHLIB_PARAM_LIST       (1u << 1)
 #define SYNTHLIB_PARAM_NO_SAVE    (1u << 2)
+// THE PROGRAM CHANGE PARAMETER (one per plug-in): normalized = program / 127. A VST3 host sets it as it would any
+// parameter flagged kIsProgramChange; the Audio Unit wrapper turns an incoming 0xC0 into a set of it.
+#define SYNTHLIB_PARAM_PROGRAM    (1u << 3)
 
 // notes §3
 #define SYNTHLIB_MIDI_NONE          (-1)

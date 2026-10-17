@@ -1172,6 +1172,10 @@ public:
             info.flags = ParameterInfo::kCanAutomate |
                          (((p.flags & SYNTHLIB_PARAM_LIST) != 0u) ? ParameterInfo::kIsList : 0);
         }
+
+        if ((p.flags & SYNTHLIB_PARAM_PROGRAM) != 0u) {
+            info.flags = ParameterInfo::kIsProgramChange | ParameterInfo::kIsList;   // the host's program changes
+        }
         copy_name(info.title, p.title);
         copy_name(info.shortTitle, (p.shortTitle[0] != '\0') ? p.shortTitle : p.title);
         copy_name(info.units, synthlib_param_units(p.unit));

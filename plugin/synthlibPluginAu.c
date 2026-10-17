@@ -1457,6 +1457,18 @@ static void deliver_midi(tSynthLibAu * au, const tQueuedEvent * e, uint32_t offs
             }
             break;
 
+        case 0xC0:      // program change, onto the parameter flagged SYNTHLIB_PARAM_PROGRAM, as a VST3 host does it
+            for (uint32_t i = 0; i < au->params.count; i++) {
+                tSynthLibParamDesc p;
+
+                if ((synthlib_param_describe(d, au->inst, i, &p) == true) && ((p.flags & SYNTHLIB_PARAM_PROGRAM) != 0u)) {
+                    point.value = (double)e->data1 / 127.0;
+                    deliver_points(au, p.id, &point, 1u);
+                    break;
+                }
+            }
+            break;
+
         case 0xD0:      // channel pressure
             if (map_control(au, channel, SYNTHLIB_MIDI_AFTERTOUCH, &id) == true) {
                 point.value = (double)e->data1 / 127.0;

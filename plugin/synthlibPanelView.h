@@ -72,6 +72,12 @@ typedef struct {
     // OPTIONAL: the scroll wheel or a trackpad's two-finger scroll, in logical units at (x, y); dy is
     // positive when the content should move up (scrolling down a list). NULL ignores scrolling.
     void (*scroll)(void * user, double x, double y, double dy);
+
+    // OPTIONAL: a key while the view has the keyboard (it takes it on a click). An editing key arrives as its GLFW
+    // key code (Escape, Return, Tab, Backspace, Delete, the arrows, Home/End, Page Up/Down) with codepoint 0; any
+    // other key as GLFW_KEY_UNKNOWN (-1) and the character it typed - the two SynthLib's popups take. True if
+    // the panel used it; otherwise the key goes on to the host. NULL leaves every key to the host.
+    bool (*key)(void * user, int glfwKey, unsigned int codepoint, bool isRepeat);
 } tSynthLibPanel;
 
 // An NSView *, RETAINED (+1), as a void * - which is what SynthLib's createView() contract wants. The
