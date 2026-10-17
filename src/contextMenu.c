@@ -122,8 +122,10 @@ static bool menu_row_visible(const tMenuFrame * frame, int index) {
     if (frame->visibleRows <= 0) {
         return true;
     }
+    // The WHOLE row inside the view. Scrolling is smooth, so scrollRow is usually fractional, and testing
+    // only the row's top let a row hang half past the bottom edge while scrolling down (Pulse2Alike, 2026-10-17).
     return ((double)row >= frame->scrollRow)
-           && ((double)row < (frame->scrollRow + (double)frame->visibleRows));
+           && (((double)row + 1.0) <= (frame->scrollRow + (double)frame->visibleRows + 1e-9));
 }
 
 // Returns the index of the item in frame that contains coord, or -1.
