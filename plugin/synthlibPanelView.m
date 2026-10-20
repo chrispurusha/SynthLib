@@ -36,6 +36,7 @@
 @property (nonatomic, assign) void *                 user;
 @property (nonatomic, strong) NSTimer *              timer;
 @property (nonatomic, assign) BOOL                   captured;   // press() grabbed a control; the pointer is hidden
+@property (nonatomic, assign) BOOL                   following;  // press() grabbed one that keeps the pointer (notes §12)
 @end
 
 static uint32_t modifier_bits_from_ns(NSEventModifierFlags flags) {
@@ -345,7 +346,12 @@ static int glfw_key_for_mac(unsigned short keyCode) {
     }
 
     if (self.panel->press != NULL) {
-        self.captured = self.panel->press(self.user, p.x, p.y) ? YES : NO;
+        BOOL grabbed = self.panel->press(self.user, p.x, p.y) ? YES : NO;
+        BOOL keeps   = grabbed && (self.panel->keepsPointer != NULL) && (self.panel->dragTo != NULL)
+                       && self.panel->keepsPointer(self.user);
+
+        self.following = keeps;
+        self.captured  = grabbed && !keeps;
 
         if (self.captured) {
             cursor_capture();
@@ -364,6 +370,8 @@ static int glfw_key_for_mac(unsigned short keyCode) {
         return;
     }
     set_modifier_state(modifier_bits_from_ns([event modifierFlags]));
+
+    self.following = NO;
 
     if (self.captured) {
         self.captured = NO;
@@ -416,7 +424,13 @@ static int glfw_key_for_mac(unsigned short keyCode) {
     if ((self.panel != NULL) && (self.panel->press != NULL)) {
         set_modifier_state(modifier_bits_from_ns([event modifierFlags]));
 
-        if (self.captured && (self.panel->dragBy != NULL)) {
+        if (self.following) {
+            NSPoint p = [self canvasPointFor:event];
+
+            [self sync];
+            self.panel->dragTo(self.user, p.x, p.y);
+            [self redraw];
+        } else if (self.captured && (self.panel->dragBy != NULL)) {
             double k = [self logicalPerPoint];
 
             [self sync];

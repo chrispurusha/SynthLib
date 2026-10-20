@@ -92,3 +92,10 @@ THE POINTER POSITION, for an open drop-down to highlight under.
 NSTrackingInVisibleRect means AppKit maintains the region itself as the view is resized, so this
 does not have to be torn down and rebuilt on every geometry change - which matters here, where the
 host owns the window and resizing is already the fiddliest part of this view.
+
+## 12. A drag that keeps the pointer
+A rotary dial is turned by pointing at the angle, so the pointer has to stay visible and move freely, which the
+sibling applications do in their Rotary mode. A panel that supplies `keepsPointer` and `dragTo` is asked at each
+grab; when it says yes, the pointer is left alone and every drag reports its position (`dragTo`) instead of its
+movement (`dragBy`). Both are optional and checked at the grab, so the panels written before them (GenBridge,
+MidiSyncTool) behave as they did. First user: Pulse2Alike's Rotary mode (2026-10-20).

@@ -73,6 +73,12 @@ typedef struct {
     // positive when the content should move up (scrolling down a list). NULL ignores scrolling.
     void (*scroll)(void * user, double x, double y, double dy);
 
+    // OPTIONAL: a drag that keeps the pointer, as a rotary dial wants. Asked at each grab: true leaves the pointer
+    // visible and free, and dragTo then reports where it is, in logical units, instead of dragBy. NULL (or a
+    // missing dragTo) keeps the hidden-pointer drag above.
+    bool (*keepsPointer)(void * user);
+    void (*dragTo)(void * user, double x, double y);
+
     // OPTIONAL: a key while the view has the keyboard (it takes it on a click). An editing key arrives as its GLFW
     // key code (Escape, Return, Tab, Backspace, Delete, the arrows, Home/End, Page Up/Down) with codepoint 0; any
     // other key as GLFW_KEY_UNKNOWN (-1) and the character it typed - the two SynthLib's popups take. True if
