@@ -2,11 +2,16 @@
 
 A shared C/C++ library for synthesizer editor applications. Common code and third-party dependencies extracted from the editor projects to avoid duplication and keep behaviour consistent across them.
 
+## Working with LLMs
+
+Development started as a solo project. As the project has evolved, I've recently incorporated LLM-assisted development into the workflow, using it as a tool for research, coding, debugging, and experimentation.
+
 ## Projects using SynthLib
 
 - [G2-Edit](https://github.com/chrispurusha/G2-Edit) — Nord G2 modular synthesizer editor
 - [EmuUtility](https://github.com/chrispurusha/EmuUtility) — Emu sampler utility
-- [Z1-Edit](https://github.com/chrispurusha/Z1-Edit) — Korg Z1 synthesizer editor
+- [Z1-Edit](https://github.com/chrispurusha/SynthEdit) — Synthesizer editor
+- ...and more in my repo list
 
 ## Structure
 
