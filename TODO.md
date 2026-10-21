@@ -228,7 +228,7 @@ G2-Edit has been migrated onto SynthLib's generic mac-style nested context
 menu (`contextMenu.h`/`contextMenu.c` — menu stack, hover-dwell submenu
 opening, click dispatch, rendering) and onto the `tSynthLibTheme` runtime
 mechanism in `utilsGraphics.h`/`.cpp` (replaces the old compile-time
-`G2_EDIT` macro dependency for the handful of values — `topBarHeight`,
+`G2ALIKE` macro dependency for the handful of values — `topBarHeight`,
 `orange1`, `orange2`, `greenOn`, `backgroundGrey` — that genuinely differ per
 app). SynthEdit's own copy of SynthLib is still pinned to a commit from
 before both of these existed, so SynthEdit hasn't picked them up yet.

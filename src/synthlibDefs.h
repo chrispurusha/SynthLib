@@ -88,7 +88,7 @@ void usb_log_text(const char * fmt, ...);
 // regions a single frame can register across every render function combined.
 #define MAX_CLICK_REGIONS            (4096)
 
-#ifdef G2_EDIT
+#ifdef G2ALIKE
 #define RGB_BLACK                    {0.0, 0.0, 0.0}
 #define RGB_WHITE                    {1.0, 1.0, 1.0}
 #define RGB_GREEN                    {0.0, 0.8, 0.0}
@@ -128,7 +128,7 @@ void usb_log_text(const char * fmt, ...);
 #define MODULE_SCROLLBAR_MARGIN    MODULE_SCROLLBAR_WIDTH
 
 // TODO - Might want to come up with another mechanism for switching these between projects
-#ifdef G2_EDIT
+#ifdef G2ALIKE
 #define TOP_BAR_HEIGHT           (80.0)
 // notes §4
 #define SCROLLBAR_WIDTH          (11.0)

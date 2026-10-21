@@ -28,10 +28,10 @@ diagonally, short enough that deliberately moving to a sibling still feels like 
 
 The MODULE CANVAS's own scrollbar metrics — deliberately OUTSIDE the per-app #ifdef below.
 
-utilsGraphics.c compiles WITHOUT G2_EDIT defined (see the note in draw_panel_close_button), so
+utilsGraphics.c compiles WITHOUT G2ALIKE defined (see the note in draw_panel_close_button), so
 anything inside that branch is invisible to it. That is exactly how the canvas came to reserve
 one width for the scrollbars while G2-Edit's split view drew them at another: module_area_for_pane()
-read the #else value and the app read the G2_EDIT one. Both sides read these instead.
+read the #else value and the app read the G2ALIKE one. Both sides read these instead.
 
 Matched to the Patch Window Split Bar's height (SPLIT_BAR_HEIGHT in G2-Edit's splitView.h) so the
 divider and the bars read as one family of furniture; if one changes, change the other.
@@ -48,7 +48,7 @@ both.
 Vertical scrollbar for list-style popups (bankBrowser.cpp, fileBrowser.cpp) — a proportional
 track+thumb, distinct from the main canvas's fixed-length pan scrollbar (SCROLLBAR_WIDTH above,
 which represents infinite-pan percent rather than a finite row count). Same width in both
-project variants, so it lives outside the G2_EDIT split above.
+project variants, so it lives outside the G2ALIKE split above.
 
 ## 6. `LIST_SCROLLBAR_MIN_THUMB`
 

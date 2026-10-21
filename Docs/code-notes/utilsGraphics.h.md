@@ -7,7 +7,7 @@ The longer comments from `utilsGraphics.h`, moved here 2026-09-12 so the code re
 The handful of visual values that genuinely differ between apps (colours,
 top bar height) and that this file's own drawing code needs — everything
 else app-specific stays a compile-time macro in each app's own defs.h,
-resolved normally since those files define G2_EDIT (or don't) for
+resolved normally since those files define G2ALIKE (or don't) for
 themselves. This is how utilsGraphics.cpp itself gets told which app it's
 drawing for, without including that app's defs.h (see configure_synthlib_theme()).
 

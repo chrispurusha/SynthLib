@@ -296,7 +296,7 @@ matching the numbers makes the box dominate the mark it exists to present.
 
 ## 31. in `draw_panel_close_button()`
 
-Deliberately NOT RGB_BACKGROUND_GREY. This file compiles without G2_EDIT defined, so that
+Deliberately NOT RGB_BACKGROUND_GREY. This file compiles without G2ALIKE defined, so that
 macro resolves to the dark 0.30 of synthlibDefs.h's other branch - the very same value as
 the RGB_GREY_3 title bar drawn below, which made the button vanish into the banner and left
 a black cross on dark grey. RGB_GREY_3 and RGB_GREY_7 are 0.30 and 0.70 in BOTH branches, so
