@@ -71,7 +71,7 @@ struct tFileBrowserState {
     uint32_t                       filenameCursor      = 0;
     bool                           filenameFocused     = false; // Only accepts keyboard input / shows a cursor once clicked
     bool                           overwriteArmed      = false; // Save mode: first click on an existing name arms a second confirm
-    tRectangle                     panelRect           = {0};
+    tRectangle                     panelRect           = {};
     bool                           closePressed        = false;
     bool                           cancelPressed       = false;
     bool                           confirmPressed      = false;
@@ -694,7 +694,7 @@ void render_file_browser(void) {
     if (!sState.active) {
         return;
     }
-    tCoord     mouseCoord     = {0};
+    tCoord     mouseCoord     = {};
 
     synthlib_host_mouse_coord(&mouseCoord);
 

@@ -84,7 +84,7 @@ struct tBankBrowserState {
     int32_t                      selectedRow       = -1;
     double                       scrollOffset      = 0.0;
 
-    tRectangle                   panelRect         = {0};
+    tRectangle                   panelRect         = {};
     bool                         closePressed      = false;
     bool                         cancelPressed     = false;
     bool                         confirmPressed    = false;
@@ -573,7 +573,7 @@ void update_bank_browser_hover(void) {
     if (!sState.active) {
         return;
     }
-    tCoord     mouseCoord      = {0};
+    tCoord     mouseCoord      = {};
 
     synthlib_host_mouse_coord(&mouseCoord);
 
