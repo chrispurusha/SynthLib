@@ -92,6 +92,7 @@ const int                            kMinVisibleRows           = 4;
 int                                  sVisibleRows              = kMaxVisibleRows;
 const double                         kSidebarWidth             = 150.0;
 const double                         kPanelWidth               = 730.0;
+
 double panel_height(void) {
     return 60.0 + (kRowHeight * sVisibleRows) + 70.0;
 }
