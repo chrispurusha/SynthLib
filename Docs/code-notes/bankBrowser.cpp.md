@@ -55,3 +55,9 @@ Drawn as four separate calls rather than one concatenated string, so the columns
 down the list. Name gets whatever space is left between the Loc and Category columns;
 Category is dropped from the layout entirely when the device has no categories, letting
 Name run the full remaining width instead of leaving a permanent empty gutter.
+
+## 8. Rows to fit the window
+The list shows as many rows as the window has room for, at most 18 and at least 4. The siblings' application
+windows have room for all 18, so nothing changes there. A plug-in's panel is far smaller (Pulse2Alike's is 320
+points tall), and a fixed 18 rows put the title and the Load / Cancel buttons outside it, where they could not be
+reached. Worked out each time the browser opens, from the render height then.

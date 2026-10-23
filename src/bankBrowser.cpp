@@ -66,6 +66,7 @@ struct tBankBrowserItemInternal {
 
 struct tBankBrowserState {
     bool                                  active   = false;
+    int                                   visibleRows = 18;   // notes §8: as many as fit the window, 4 to 18
     std::string                           title;
     std::string                           confirmLabel;
     tBankBrowserCallback                  callback = nullptr;
@@ -102,7 +103,8 @@ const double      kColLocX         = 56.0;
 const double      kColNameX        = 116.0;
 const double      kColCategoryW    = 104.0;
 const double      kColGap          = 8.0;
-const int         kVisibleRows     = 18; // taller list - the panel is vertically centred, so this grows it evenly up and down
+const int         kVisibleRowsMax  = 18; // taller list - the panel is vertically centred, so this grows it evenly up and down
+const int         kVisibleRowsMin  = 4;
 const double      kPanelWidth      = 480.0;
 const double      kTitleH          = 26.0;
 const double      kMessageLineH    = STANDARD_TEXT_HEIGHT + 4.0;
@@ -310,7 +312,7 @@ tRectangle list_area_rect(void) {
     return (tRectangle){
         {
             content_x(), y
-        }, {sState.panelRect.size.w - 20.0, kRowHeight * kVisibleRows}
+        }, {sState.panelRect.size.w - 20.0, kRowHeight * sState.visibleRows}
     };
 }
 
@@ -334,7 +336,7 @@ tRectangle button_rect(int fromRight, double y) {
 }
 
 int32_t row_count_scrolled(void) {
-    return (int32_t)((sState.rows.size() > (size_t)kVisibleRows) ? (sState.rows.size() - (size_t)kVisibleRows) : 0);
+    return (int32_t)((sState.rows.size() > (size_t)sState.visibleRows) ? (sState.rows.size() - (size_t)sState.visibleRows) : 0);
 }
 
 void finish_browse(bool confirmed, uint32_t bank1Indexed, uint32_t location1Indexed) {
@@ -426,11 +428,14 @@ void open_bank_browser(const char * title, const char * message, const char * co
     sState.messageLines = wrap_text((message != nullptr) ? message : "", kPanelWidth - 20.0);
 
     double messageH    = (double)sState.messageLines.size() * kMessageLineH;
-    double panelHeight = kTitleH + 10.0 + messageH + 8.0 + kSortControlH + 8.0 +
-                         (kRowHeight * kVisibleRows) + 10.0 + kButtonH + 10.0;
-
+    double fixedH      = kTitleH + 10.0 + messageH + 8.0 + kSortControlH + 8.0 + 10.0 + kButtonH + 10.0;
     double renderW     = get_render_width() / gGlobalGuiScale;
     double renderH     = get_render_height() / gGlobalGuiScale;
+    int    fits        = (int)((renderH - 8.0 - fixedH) / kRowHeight);
+
+    // notes §8
+    sState.visibleRows = (fits > kVisibleRowsMax) ? kVisibleRowsMax : ((fits < kVisibleRowsMin) ? kVisibleRowsMin : fits);
+    double panelHeight = fixedH + (kRowHeight * sState.visibleRows);
 
     sState.panelRect    = (tRectangle){
         {
@@ -453,7 +458,7 @@ void handle_bank_browser_mouse_down(tCoord coord) {
     sState.closePressed   = within_rectangle(coord, close_button_rect());
     sState.cancelPressed  = within_rectangle(coord, draw_button_bounds(button_rect(1, button_row_y())));
     sState.confirmPressed = within_rectangle(coord, draw_button_bounds(button_rect(0, button_row_y())));
-    list_scrollbar_mouse_down(list_area_rect(), (int32_t)sState.rows.size(), kVisibleRows, sState.scrollOffset, coord);
+    list_scrollbar_mouse_down(list_area_rect(), (int32_t)sState.rows.size(), sState.visibleRows, sState.scrollOffset, coord);
     synthlib_request_redraw();
 }
 
@@ -503,7 +508,7 @@ bool handle_bank_browser_click(tCoord coord) {
     }
 
     tRectangle listRect        = list_area_rect();
-    bool       hasScrollbar    = sState.rows.size() > (size_t)kVisibleRows;
+    bool       hasScrollbar    = sState.rows.size() > (size_t)sState.visibleRows;
     double     scrollbarStripX = listRect.coord.x + listRect.size.w - LIST_SCROLLBAR_WIDTH;
 
     if (within_rectangle(coord, listRect) && !(hasScrollbar && (coord.x >= scrollbarStripX))) {
@@ -579,7 +584,7 @@ void update_bank_browser_hover(void) {
 
     tRectangle listRect        = list_area_rect();
     int32_t    hovered         = -1;
-    bool       hasScrollbar    = sState.rows.size() > (size_t)kVisibleRows;
+    bool       hasScrollbar    = sState.rows.size() > (size_t)sState.visibleRows;
     double     scrollbarStripX = listRect.coord.x + listRect.size.w - LIST_SCROLLBAR_WIDTH;
 
     if (within_rectangle(mouseCoord, listRect) && !(hasScrollbar && (mouseCoord.x >= scrollbarStripX))) {
@@ -635,14 +640,14 @@ void render_bank_browser(void) {
 
     // List
     tRectangle               listRect       = list_area_rect();
-    bool                     hasScrollbar   = sState.rows.size() > (size_t)kVisibleRows;
+    bool                     hasScrollbar   = sState.rows.size() > (size_t)sState.visibleRows;
 
     set_rgb_colour((tRgb)RGB_WHITE);
     render_rectangle(mainArea, listRect);
     set_rgb_colour((tRgb)RGB_GREY_5);
     render_rectangle_with_border(mainArea, listRect);
 
-    for (int row = 0; row < kVisibleRows; row++) {
+    for (int row = 0; row < sState.visibleRows; row++) {
         int32_t               index         = row + (int32_t)sState.scrollOffset;
 
         if ((index < 0) || (index >= (int32_t)sState.rows.size())) {
@@ -706,7 +711,7 @@ void render_bank_browser(void) {
         }
     }
 
-    render_list_scrollbar(listRect, (int32_t)sState.rows.size(), kVisibleRows, sState.scrollOffset);
+    render_list_scrollbar(listRect, (int32_t)sState.rows.size(), sState.visibleRows, sState.scrollOffset);
 
     // Confirm / Cancel buttons — Confirm rightmost (primary action), Cancel to its left.
     double buttonY        = button_row_y();
