@@ -42,7 +42,7 @@ LITTLE-ENDIAN AND NATIVE DOUBLES, deliberately: every machine these run on is li
 them intact. Should a big-endian target ever appear this needs byte swapping and a bumped magic.
 
 A BLOB THAT DOES NOT START WITH EITHER MAGIC IS NOT AN ERROR. It is a project saved against an
-earlier build, when the state was nothing but the plug-in's own bytes - G2 Alike's was a bare
+earlier build, when the state was nothing but the plug-in's own bytes - G2Alike's was a bare
 patch path - so it is handed to the plug-in whole and the parameters stay at their defaults, or
 at whatever stateParams() says the bytes imply. That is what stops this from emptying a slot in
 somebody's existing project.

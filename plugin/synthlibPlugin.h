@@ -302,7 +302,7 @@ typedef struct {
 // ------------------------------------------------------------------------------------------------
 
 struct tSynthLibPluginDesc {
-    const char * name;                  // "G2 Alike" - what a host lists
+    const char * name;                  // "G2Alike" - what a host lists
     const char * vendor;
     const char * url;
     const char * email;

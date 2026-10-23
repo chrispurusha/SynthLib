@@ -13,5 +13,5 @@ its device differently. So the application supplies three things: what to do whe
 changes (reconnect), what Scan means (the identity scan it has always had), and one line of status.
 
 NOT BUILT IN TO THE COORDINATOR, unlike the alert and the browsers: it needs CoreMIDI, and
-synthlibPopups.c is linked into G2 Alike, which has no business linking CoreMIDI. An application
+synthlibPopups.c is linked into G2Alike, which has no business linking CoreMIDI. An application
 that wants the dialogue registers midi_port_dialog_popup() with synthlib_popups_register().

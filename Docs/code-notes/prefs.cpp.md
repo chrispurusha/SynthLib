@@ -34,7 +34,7 @@ std::ios::trunc, which put every saved setting at risk on every single write.
 
 A save writes only the keys THIS process has set (`written`), laid over the file as it is on disk at
 that moment (2026-09-17). Until then it wrote its whole in-memory copy, so two processes sharing a
-file - the G2-Edit application and its G2 Alike plug-in, which are often open together - quietly
+file - the G2-Edit application and its G2Alike plug-in, which are often open together - quietly
 threw away each other's settings, last writer wins for every key. Now it is last writer wins per
 key, and the copy in memory is refreshed from disk as a side effect. Re-reading costs one small file
 per save, and saves are rare.
@@ -42,6 +42,6 @@ per save, and saves are rare.
 ## 6. `prefs_set_string_in()` / `prefs_get_string_from()`
 
 One key in a named app's prefs.txt, for a setting two programs share. Both go to the file on every
-call and keep nothing, so each sees what the other last wrote. G2 Alike keeps the file browser's
+call and keep nothing, so each sees what the other last wrote. G2Alike keeps the file browser's
 last folder in G2-Edit's file this way, so the plug-in and the application open where either left
 off, while every other plug-in setting stays in its own file.

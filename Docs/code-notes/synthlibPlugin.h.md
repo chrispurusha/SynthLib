@@ -22,7 +22,7 @@ language both can call without ceremony is the one the shared description is wri
 here allocates, so a descriptor can be - and in practice is - a file-scope constant.
 
 EVERY INSTANCE IS ITS OWN (2026-09-11). The first version of this contract assumed one instance of
-each plug-in per process, because G2 Alike's engine is process-wide and nothing else had been
+each plug-in per process, because G2Alike's engine is process-wide and nothing else had been
 wrapped. GenBridge and MidiSyncTool are routinely loaded several times at once - one per synth,
 one per track - and a plug-in that asks the wrapper for something ("tell the host this moved")
 therefore always says WHICH instance it is asking for. See "What the plug-in may ask of the
@@ -174,7 +174,7 @@ place. `transport` is never NULL, but its `valid` is often false; see above.
 
 ON THE AUDIO THREAD, after blockBegin() and before process(), with the MIDI channel (0..15) and
 the frame within this block the event lands on. An engine that cannot place an event inside a
-block - G2 Alike's cannot - ignores both; one that can, uses them. An Audio Unit hands its MIDI
+block - G2Alike's cannot - ignores both; one that can, uses them. An Audio Unit hands its MIDI
 over before the render it belongs to, so that wrapper queues it and delivers it here, in the
 same place a VST3 host's event list is walked.
 
@@ -282,7 +282,7 @@ thread, as well as leaving the host to deliver it to the processor.
 
 VST3 keeps the two apart: a value set on the controller reaches the processor only because the
 host routes it there, in time order, inside a block. A bare test host does not route it at all,
-and G2 Alike - whose parameters are levels, where an early duplicate is harmless - sets this so
+and G2Alike - whose parameters are levels, where an early duplicate is harmless - sets this so
 a move on such a host's generic panel is still heard. A plug-in whose parameters are EVENTS must
 leave it false: GenBridge would otherwise send each controller to the hardware twice, the second
 copy out of order and unstamped.

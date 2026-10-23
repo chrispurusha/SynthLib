@@ -4,7 +4,7 @@
 
 `plugin/synthlibPlugin.h` was reworked before GenBridge or MidiSyncTool could
 move onto the shared wrappers, because the first version assumed ONE INSTANCE
-PER VARIANT - true of G2 Alike's process-wide engine, false of both siblings,
+PER VARIANT - true of G2Alike's process-wide engine, false of both siblings,
 which are routinely loaded once per synth or per track. With two copies loaded
 the VST3 controller found no instance at all (a per-variant global that went
 empty), editors opened blank, and every editor's edits went to whichever
@@ -37,7 +37,7 @@ controller was created last. The AU had the same with `gSoleAu`.
   AU fills `systemTime` from the render timestamp's host time.
 - **Saved state is "SLP2"**: (id, value) records for saved parameters only,
   then the plug-in's blob. SLP1 and pre-header blobs are still read.
-- `controllerAppliesParams` keeps G2 Alike's old behaviour of pushing the
+- `controllerAppliesParams` keeps G2Alike's old behaviour of pushing the
   controller's values straight into the instance; leave it false for a
   plug-in whose parameters are events (GenBridge's controller pass-throughs).
 
@@ -86,7 +86,7 @@ plug-in supplies, with its Objective-C class name taken from the build
 ## More than one output bus (2026-10-07)
 
 The VST3 wrapper hands `process()` every output bus's channels, one bus after another; a bus the host
-has not activated arrives as NULL channels (code-notes synthlibPlugin.h §12). First user: G2 Alike's
+has not activated arrives as NULL channels (code-notes synthlibPlugin.h §12). First user: G2Alike's
 "Out 3/4". Still to do: the Audio Unit wrapper advertises ONE output element whatever the descriptor
 says, because a host renders an AU one element at a time. Rendering the whole block at element 0
 (keyed on the timestamp's sample time) and copying out the held channels for the others would close it;

@@ -15,5 +15,5 @@ the same answer.
 
 There is no /tmp on Windows and no getprogname(): the switch and the log live in %TEMP% (`%TEMP%\<name>-log`,
 `%TEMP%\<name>.log`), and a line names its process by pid alone. Both under `_WIN32`, so the Mac build is
-unchanged. G2 Alike's Windows plug-in is the first Windows build to link the log.
+unchanged. G2Alike's Windows plug-in is the first Windows build to link the log.
 

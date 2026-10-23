@@ -7,7 +7,7 @@ The longer comments from `synthlibVersion.h`, moved here 2026-09-12 so the code 
 ── Which build is this? ────────────────────────────────────────────────────────────────────────
 
 The question the plug-in made urgent: a .vst3 in a host's plug-in folder carries nothing that
-says where it came from, and "G2 Alike" looks the same whether it was built this morning or three
+says where it came from, and "G2Alike" looks the same whether it was built this morning or three
 weeks ago. An About box is the only place that can say.
 
 THE VERSION COMES FROM GIT, and only when a build system that knows about git supplies it.

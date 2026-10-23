@@ -56,7 +56,7 @@ there is no sense in every open editor building its own.
 THIS FILE ASSUMES ARC, and without it every frame leaks. -newBufferWithBytes: in mtl_submit()
 returns an object the caller owns, and nothing here releases it by hand - ARC does, at the end of
 the function. G2-Edit's do-plugin compiled this file with its plain C flags, which have no
--fobjc-arc, so G2 Alike kept every vertex buffer it ever drew with: its editor grew from 1.7 GB to
+-fobjc-arc, so G2Alike kept every vertex buffer it ever drew with: its editor grew from 1.7 GB to
 12.7 GB in thirty seconds of pointer movement, and a frame went from 4 ms to 44 ms because creating
 a Metal buffer slows as the pile of live ones grows. The applications build it in Xcode with ARC,
 and GenBridge's and MidiSyncTool's scripts list it with their Objective-C sources, so none of them
@@ -132,7 +132,7 @@ Committed, not waited on. Only the read-back needs the GPU to have finished.
 ## 10. in `mtl_submit()`
 
 SMALL SUBMISSIONS GO IN THE COMMAND BUFFER ITSELF. A fresh MTLBuffer per submission was the
-plan here "until a profile says otherwise"; G2 Alike submits ~470 times a frame, averaging ~50
+plan here "until a profile says otherwise"; G2Alike submits ~470 times a frame, averaging ~50
 vertices, which is an allocation and a free per draw call for data a few hundred bytes long.
 setVertexBytes: copies up to 4 KB straight into the command buffer and allocates nothing -
 Apple's own advice for data that small - and only the occasional large batch still gets a

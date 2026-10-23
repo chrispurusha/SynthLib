@@ -112,7 +112,7 @@ static SpeakerArrangement arrangement_for(uint32_t channels) {
     }
 }
 
-// A whole IBStream, read into memory. A saved blob has no fixed length - G2 Alike's carries a patch
+// A whole IBStream, read into memory. A saved blob has no fixed length - G2Alike's carries a patch
 // path, GenBridge's a table of devices - and a single fixed-size read would silently truncate a long
 // one into something that does not parse.
 static std::vector<uint8_t> read_stream(IBStream * state) {
@@ -861,7 +861,7 @@ private:
             apply_param(values[i].id, values[i].value);
         }
 
-        // THE PLUG-IN'S OWN STATE LAST. For G2 Alike that is the patch path, and loading a patch
+        // THE PLUG-IN'S OWN STATE LAST. For G2Alike that is the patch path, and loading a patch
         // rebuilds the parameter snapshot - so the parameters have to already be where the project
         // left them when it happens, or the first block plays the patch at its defaults.
         if ((inst != nullptr) && (desc->cb.setState != nullptr)) {

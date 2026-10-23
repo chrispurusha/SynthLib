@@ -60,7 +60,7 @@ static uint32_t modifier_bits_from_ns(NSEventModifierFlags flags) {
     return bits;
 }
 
-// THE POINTER, HIDDEN AND HELD WHILE A DIAL IS DRAGGED, as G2 Alike's editor does it (plugin/g2View.m).
+// THE POINTER, HIDDEN AND HELD WHILE A DIAL IS DRAGGED, as G2Alike's editor does it (plugin/g2View.m).
 // Cocoa reports the pointer from the bottom left of the main screen and CGWarpMouseCursorPosition() wants
 // the top left, hence the flip against the main screen's height. Process-wide: one drag at a time.
 static BOOL    gCursorHidden  = NO;

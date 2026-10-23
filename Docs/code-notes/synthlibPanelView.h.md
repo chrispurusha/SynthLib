@@ -10,7 +10,7 @@ synthlibPluginAuView.m on an Audio Unit - and this is what both put inside.
 
 GenBridge and MidiSyncTool each had their own copy (gbView.m, msView.m), 91% the same and already
 drifting; since 2026-09-11 they share this. What differs between them is WHAT is drawn, so that is
-all a plug-in supplies: the draw calls below. G2 Alike's editor is not one of these - it is the
+all a plug-in supplies: the draw calls below. G2Alike's editor is not one of these - it is the
 application's own canvas, with input and redraw needs of its own (plugin/g2View.m in G2-Edit).
 
 THE OBJECTIVE-C CLASS NAME COMES FROM THE BUILD: -DSYNTHLIB_PANEL_VIEW_CLASS=<a name of the plug-in's

@@ -271,7 +271,7 @@ int32_t synthlib_params_index(const tSynthLibParamStore * store, uint32_t id) {
         return -1;
     }
 
-    // A STATIC TABLE'S IDS ARE ITS INDICES, so for G2 Alike this is all there is.
+    // A STATIC TABLE'S IDS ARE ITS INDICES, so for G2Alike this is all there is.
     if (store->identity == true) {
         return (id < store->count) ? (int32_t)id : -1;
     }
@@ -512,7 +512,7 @@ bool synthlib_state_read(const tSynthLibParamStore * layout, const void * data, 
 
         if (is_magic(p, '1') == true) {
             // SLP1 STORED POSITIONS, so the position is resolved against the layout this build has.
-            // For every plug-in that ever wrote SLP1 - G2 Alike alone - position and id are the same.
+            // For every plug-in that ever wrote SLP1 - G2Alike alone - position and id are the same.
             if ((layout == NULL) || (i >= layout->count)) {
                 break;
             }
