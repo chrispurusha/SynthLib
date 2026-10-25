@@ -65,11 +65,11 @@ struct tBankBrowserItemInternal {
 };
 
 struct tBankBrowserState {
-    bool                                  active   = false;
+    bool                                  active      = false;
     int                                   visibleRows = 18;   // notes §8: as many as fit the window, 4 to 18
     std::string                           title;
     std::string                           confirmLabel;
-    tBankBrowserCallback                  callback = nullptr;
+    tBankBrowserCallback                  callback    = nullptr;
 
     std::vector<tBankBrowserItemInternal> items;
     std::vector<std::string>              categoryNames;
@@ -80,17 +80,17 @@ struct tBankBrowserState {
     // a property of the app's category vocabulary, not of one browser invocation.
     std::vector<std::string>     priorityCategories;
 
-    int32_t                      sortMode          = 0;       // 0 = Bank/Loc, 1 = Category, 2 = A-Z
+    int32_t                      sortMode             = 0;    // 0 = Bank/Loc, 1 = Category, 2 = A-Z
     std::vector<tBankBrowserRow> rows;
-    int32_t                      selectedRow       = -1;
-    double                       scrollOffset      = 0.0;
+    int32_t                      selectedRow          = -1;
+    double                       scrollOffset         = 0.0;
 
-    tRectangle                   panelRect         = {};
-    bool                         closePressed      = false;
-    bool                         cancelPressed     = false;
-    bool                         confirmPressed    = false;
-    int32_t                      hoveredRow        = -1;
-    double                       lastClickTime     = 0.0;       // (get_time_ms() / 1000.0) of the last row click - double-click detection
+    tRectangle                   panelRect            = {};
+    bool                         closePressed         = false;
+    bool                         cancelPressed        = false;
+    bool                         confirmPressed       = false;
+    int32_t                      hoveredRow           = -1;
+    double                       lastClickTime        = 0.0;    // (get_time_ms() / 1000.0) of the last row click - double-click detection
 };
 
 tBankBrowserState sState;
@@ -434,7 +434,7 @@ void open_bank_browser(const char * title, const char * message, const char * co
     int    fits        = (int)((renderH - 8.0 - fixedH) / kRowHeight);
 
     // notes §8
-    sState.visibleRows = (fits > kVisibleRowsMax) ? kVisibleRowsMax : ((fits < kVisibleRowsMin) ? kVisibleRowsMin : fits);
+    sState.visibleRows  = (fits > kVisibleRowsMax) ? kVisibleRowsMax : ((fits < kVisibleRowsMin) ? kVisibleRowsMin : fits);
     double panelHeight = fixedH + (kRowHeight * sState.visibleRows);
 
     sState.panelRect    = (tRectangle){
