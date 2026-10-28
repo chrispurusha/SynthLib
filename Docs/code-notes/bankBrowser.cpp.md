@@ -61,3 +61,9 @@ The list shows as many rows as the window has room for, at most 18 and at least 
 windows have room for all 18, so nothing changes there. A plug-in's panel is far smaller (Pulse2Alike's is 320
 points tall), and a fixed 18 rows put the title and the Load / Cancel buttons outside it, where they could not be
 reached. Worked out each time the browser opens, from the render height then.
+
+## 9. An unbanked list
+A device whose slots are one numbered run rather than banks of locations (Pulse2Alike's presets 1-500) passes
+every item with bank 0 and its number as the location. The rows then show the number alone in the Bank column,
+with the name moved into the empty Loc column, and the first sort segment reads "Number". The callback still
+receives (0, number). Any item with a non-zero bank keeps the usual Bank/Loc display for the whole list.

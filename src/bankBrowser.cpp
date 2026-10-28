@@ -81,6 +81,7 @@ struct tBankBrowserState {
     std::vector<std::string>     priorityCategories;
 
     int32_t                      sortMode             = 0;    // 0 = Bank/Loc, 1 = Category, 2 = A-Z
+    bool                         unbanked             = false; // notes §9: every item's bank is 0 - one numbered list
     std::vector<tBankBrowserRow> rows;
     int32_t                      selectedRow          = -1;
     double                       scrollOffset         = 0.0;
@@ -266,8 +267,8 @@ void rebuild_rows(void) {
 
         r.kind      = rowNormal;
         r.itemIndex = idx;
-        r.bankText  = "Bank " + std::to_string(item.bank1Indexed);
-        r.locText   = "Loc " + std::to_string(item.location1Indexed);
+        r.bankText  = sState.unbanked ? std::to_string(item.location1Indexed) : ("Bank " + std::to_string(item.bank1Indexed));
+        r.locText   = sState.unbanked ? "" : ("Loc " + std::to_string(item.location1Indexed));
         r.nameText  = item.name;
 
         // Category mode already conveys it via the group header above — anywhere else (Bank/Loc,
@@ -397,8 +398,10 @@ void open_bank_browser(const char * title, const char * message, const char * co
 
     sState.items.clear();
     sState.items.reserve(itemCount);
+    sState.unbanked     = (itemCount > 0);
 
     for (uint32_t i = 0; i < itemCount; i++) {
+        sState.unbanked = sState.unbanked && (items[i].bank1Indexed == 0);
         sState.items.push_back({(items[i].name != nullptr) ? items[i].name : "", items[i].category,
                                 items[i].bank1Indexed, items[i].location1Indexed});
     }
@@ -635,7 +638,7 @@ void render_bank_browser(void) {
         bool active   = (sState.sortMode == i) && !disabled;
         tRgb colour   = disabled ? (tRgb)RGB_GREY_5 : (active ? (tRgb)RGB_GREEN_ON : (tRgb)RGB_BACKGROUND_GREY);
 
-        draw_button(mainArea, sort_button_rect(i), kSortLabels[i], colour);
+        draw_button(mainArea, sort_button_rect(i), ((i == 0) && sState.unbanked) ? "Number" : kSortLabels[i], colour);
     }
 
     // List
@@ -690,8 +693,9 @@ void render_bank_browser(void) {
         double                textY         = rowRect.coord.y + 4.0;
         bool                  haveCategory  = !r.categoryText.empty();
         double                categoryX     = rowRect.coord.x + rowRect.size.w - kColCategoryW;
+        double                nameX         = sState.unbanked ? kColLocX : kColNameX;
         double                nameLimit     = (haveCategory ? categoryX : (rowRect.coord.x + rowRect.size.w - kColGap))
-                                              - (rowRect.coord.x + kColNameX) - kColGap;
+                                              - (rowRect.coord.x + nameX) - kColGap;
 
         set_rgb_colour((tRgb)RGB_BLACK);
         render_text(mainArea, (tRectangle){
@@ -701,7 +705,7 @@ void render_bank_browser(void) {
                 {rowRect.coord.x + kColLocX, textY}, {BLANK_SIZE, STANDARD_TEXT_HEIGHT}
             }, r.locText.c_str());
         render_text(mainArea, (tRectangle){
-                {rowRect.coord.x + kColNameX, textY}, {BLANK_SIZE, STANDARD_TEXT_HEIGHT}
+                {rowRect.coord.x + nameX, textY}, {BLANK_SIZE, STANDARD_TEXT_HEIGHT}
             }, truncate_to_width(r.nameText, nameLimit).c_str());
 
         if (haveCategory) {
