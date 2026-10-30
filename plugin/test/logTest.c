@@ -19,7 +19,6 @@
 
 #include "synthlibLog.h"
 
-const char gSynthLibLogName[] = "synthlib-logtest";
 
 #define GATE_PATH        "/tmp/synthlib-logtest-log"
 #define LOG_PATH         "/tmp/synthlib-logtest.log"
@@ -100,6 +99,7 @@ static void * writer(void * arg) {
 }
 
 int main(void) {
+    synthlib_log_set_name("synthlib-logtest");
     char      prefix[128];
     bool      seen[THREADS * LINES_PER_THREAD] = {false};
     int       hello                            = 0;

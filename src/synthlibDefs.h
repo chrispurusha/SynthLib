@@ -26,52 +26,60 @@
 extern "C" {
 #endif
 
-#ifdef ENABLE_USB_LOG
-void usb_log_text(const char * fmt, ...);
-#define _USB_LOG(fmt, ...)    usb_log_text(fmt, ## __VA_ARGS__)
-#else
-#define _USB_LOG(fmt, ...)    ((void)0)
-#endif
+#include <stddef.h>
+
+// The log level is set at run time, so the one build of SynthLib serves Debug and Release alike. An
+// application sets it at start-up with SYNTHLIB_LOG_INIT() (synthlibVersion.h). A level includes those
+// below it.
+typedef enum {
+    eSynthLibLogNormal = 0,     // errors, warnings and information
+    eSynthLibLogDebug,          // and LOG_DEBUG
+    eSynthLibLogModuleData      // and LOG_MODULE_DATA
+} tSynthLibLogLevel;
+
+typedef void (*tSynthLibLogSink)(const char * fmt, ...);
+
+// Defined here rather than in a source file because every target that logs needs them, including
+// the small tools that compile a single SynthLib file. Weak, so a link merges them into one; hidden,
+// so two plug-ins in one host keep their own.
+#define SYNTHLIB_LOG_STATE    __attribute__((weak, visibility("hidden")))
+extern int                          gSynthLibLogLevel;
+extern tSynthLibLogSink             gSynthLibLogSink;  // an extra destination for every message, or NULL
+SYNTHLIB_LOG_STATE int              gSynthLibLogLevel = eSynthLibLogNormal;
+SYNTHLIB_LOG_STATE tSynthLibLogSink gSynthLibLogSink  = NULL;
+
+#define _LOG_SINK(fmt, ...) \
+   do {if (gSynthLibLogSink != NULL) {gSynthLibLogSink(fmt, ## __VA_ARGS__);}} while (0)
 
 #define LOG_ERROR(fmt, ...)                                      \
    do {fprintf(stderr, "E %s() " fmt, __func__, ## __VA_ARGS__); \
-       _USB_LOG("E %s() " fmt, __func__, ## __VA_ARGS__);} while (0)
+       _LOG_SINK("E %s() " fmt, __func__, ## __VA_ARGS__);} while (0)
 #define LOG_WARNING(fmt, ...)                                    \
    do {fprintf(stderr, "W %s() " fmt, __func__, ## __VA_ARGS__); \
-       _USB_LOG("W %s() " fmt, __func__, ## __VA_ARGS__);} while (0)
+       _LOG_SINK("W %s() " fmt, __func__, ## __VA_ARGS__);} while (0)
 #define LOG_INFO(fmt, ...)                                       \
    do {fprintf(stdout, "I %s() " fmt, __func__, ## __VA_ARGS__); \
-       _USB_LOG("I %s() " fmt, __func__, ## __VA_ARGS__);} while (0)
-#ifdef ENABLE_LOG_DEBUG
-#define LOG_DEBUG(fmt, ...)                                      \
-   do {fprintf(stdout, "D %s() " fmt, __func__, ## __VA_ARGS__); \
-       _USB_LOG("D %s() " fmt, __func__, ## __VA_ARGS__);} while (0)
-#define LOG_DEBUG_DIRECT(fmt, ...)           \
-   do {fprintf(stdout, fmt, ## __VA_ARGS__); \
-       _USB_LOG(fmt, ## __VA_ARGS__);} while (0)
-#else
-// notes §1
-#define LOG_DEBUG(fmt, ...) \
-   do {if (0) {fprintf(stdout, "D %s() " fmt, __func__, ## __VA_ARGS__);}} while (0)
-#define LOG_DEBUG_DIRECT(fmt, ...) \
-   do {if (0) {fprintf(stdout, fmt, ## __VA_ARGS__);}} while (0)
-#endif
-#ifdef ENABLE_LOG_MODULE_DATA
-#define LOG_MODULE_DATA(fmt, ...)                                \
-   do {fprintf(stdout, "D %s() " fmt, __func__, ## __VA_ARGS__); \
-       _USB_LOG("D %s() " fmt, __func__, ## __VA_ARGS__);} while (0)
-#define LOG_MODULE_DATA_DIRECT(fmt, ...)     \
-   do {fprintf(stdout, fmt, ## __VA_ARGS__); \
-       _USB_LOG(fmt, ## __VA_ARGS__);} while (0)
-#else
-// Same treatment as LOG_DEBUG above, and for the same reason — ENABLE_LOG_MODULE_DATA is defined by no
-// configuration at all, so without this every variable that exists only to be logged here is unused in
-// every build.
-#define LOG_MODULE_DATA(fmt, ...) \
-   do {if (0) {fprintf(stdout, "D %s() " fmt, __func__, ## __VA_ARGS__);}} while (0)
-#define LOG_MODULE_DATA_DIRECT(fmt, ...) \
-   do {if (0) {fprintf(stdout, fmt, ## __VA_ARGS__);}} while (0)
-#endif
+       _LOG_SINK("I %s() " fmt, __func__, ## __VA_ARGS__);} while (0)
+#define LOG_DEBUG(fmt, ...)                                          \
+   do {if (gSynthLibLogLevel >= eSynthLibLogDebug) {                 \
+           fprintf(stdout, "D %s() " fmt, __func__, ## __VA_ARGS__); \
+           _LOG_SINK("D %s() " fmt, __func__, ## __VA_ARGS__);}      \
+   } while (0)
+#define LOG_DEBUG_DIRECT(fmt, ...)                   \
+   do {if (gSynthLibLogLevel >= eSynthLibLogDebug) { \
+           fprintf(stdout, fmt, ## __VA_ARGS__);     \
+           _LOG_SINK(fmt, ## __VA_ARGS__);}          \
+   } while (0)
+#define LOG_MODULE_DATA(fmt, ...)                                    \
+   do {if (gSynthLibLogLevel >= eSynthLibLogModuleData) {            \
+           fprintf(stdout, "D %s() " fmt, __func__, ## __VA_ARGS__); \
+           _LOG_SINK("D %s() " fmt, __func__, ## __VA_ARGS__);}      \
+   } while (0)
+#define LOG_MODULE_DATA_DIRECT(fmt, ...)                  \
+   do {if (gSynthLibLogLevel >= eSynthLibLogModuleData) { \
+           fprintf(stdout, fmt, ## __VA_ARGS__);          \
+           _LOG_SINK(fmt, ## __VA_ARGS__);}               \
+   } while (0)
 
 #define MAX_GLYPH_CHAR    (127)
 
@@ -86,94 +94,46 @@ void usb_log_text(const char * fmt, ...);
 
 // Clickable-rectangle registry (see clickRegion.h) — upper bound on how many
 // regions a single frame can register across every render function combined.
-#define MAX_CLICK_REGIONS            (4096)
+#define MAX_CLICK_REGIONS           (4096)
 
-#ifdef G2ALIKE
-#define RGB_BLACK                    {0.0, 0.0, 0.0}
-#define RGB_WHITE                    {1.0, 1.0, 1.0}
-#define RGB_GREEN                    {0.0, 0.8, 0.0}
-#define RGB_BACKGROUND_GREY          {0.8, 0.8, 0.8}
-#define RGB_GREY_2                   {0.2, 0.2, 0.2}
-#define RGB_GREY_3                   {0.3, 0.3, 0.3}
-#define RGB_GREY_5                   {0.5, 0.5, 0.5}
-#define RGB_GREY_7                   {0.7, 0.7, 0.7}
-#define RGB_GREY_9                   {0.9, 0.9, 0.9}
-#define RGB_GREEN_ON                 {0.3, 0.7, 0.3}
-#define RGB_GREEN_3                  {0.0, 0.3, 0.0}
-#define RGB_GREEN_7                  {0.0, 0.7, 0.0}
-#define RGB_CONTEXT_MENU_GREEN       {0.2, 0.6, 0.2}
-#define RGB_YELLOW_7                 {0.7, 0.7, 0.0}
-#define RGB_RED_7                    {0.7, 0.0, 0.0}
-#define RGB_RED_5                    {0.7, 0.2, 0.2}
-#define RGB_ORANGE_0                 {0.8, 0.7, 0.5}
-#define RGB_ORANGE_1                 {0.8, 0.3, 0.1}
-#define RGB_ORANGE_2                 {0.8, 0.5, 0.2}
-#define RGBA_BLACK_ON_TRANSPARENT    {0.0, 0.0, 0.0, 1.0}
-#else
-#define RGB_WHITE                    {1.0, 1.0, 1.0}
-#define RGB_BLACK                    {0.0, 0.0, 0.0}
-#define RGB_GREY                     {0.5, 0.5, 0.5}
-#define RGB_BACKGROUND_GREY          {0.30, 0.30, 0.30}
-#define RGB_GREY_2                   {0.20, 0.20, 0.20}
-#define RGB_GREY_3                   {0.30, 0.30, 0.30}
-#define RGB_GREY_5                   {0.50, 0.50, 0.50}
-#define RGB_GREY_7                   {0.70, 0.70, 0.70}
-#define RGB_GREEN_ON                 {0.00, 0.80, 0.00}
-#define RGB_ORANGE_1                 {1.00, 0.50, 0.00}
-#define RGB_ORANGE_2                 {1.00, 0.70, 0.00}
-#endif
+#define RGB_WHITE                   {1.0, 1.0, 1.0}
+#define RGB_BLACK                   {0.0, 0.0, 0.0}
+#define RGB_GREY                    {0.5, 0.5, 0.5}
+#define RGB_BACKGROUND_GREY         {0.30, 0.30, 0.30}
+#define RGB_GREY_2                  {0.20, 0.20, 0.20}
+#define RGB_GREY_3                  {0.30, 0.30, 0.30}
+#define RGB_GREY_5                  {0.50, 0.50, 0.50}
+#define RGB_GREY_7                  {0.70, 0.70, 0.70}
+#define RGB_GREEN_ON                {0.00, 0.80, 0.00}
+#define RGB_ORANGE_1                {1.00, 0.50, 0.00}
+#define RGB_ORANGE_2                {1.00, 0.70, 0.00}
 
 // notes §3
-#define MODULE_SCROLLBAR_WIDTH     (11.0)
-#define MODULE_SCROLLBAR_MARGIN    MODULE_SCROLLBAR_WIDTH
+#define MODULE_SCROLLBAR_WIDTH      (11.0)
+#define MODULE_SCROLLBAR_MARGIN     MODULE_SCROLLBAR_WIDTH
 
-// TODO - Might want to come up with another mechanism for switching these between projects
-#ifdef G2ALIKE
-#define TOP_BAR_HEIGHT           (80.0)
-// notes §4
-#define SCROLLBAR_WIDTH          (11.0)
-#define SCROLLBAR_LENGTH         (100.0)
-#define SCROLLBAR_MARGIN         SCROLLBAR_WIDTH
-
-#define MODULE_WIDTH             (350.0)
-#define MODULE_X_GAP             (10.0)
-#define MODULE_X_SPAN            (MODULE_WIDTH + MODULE_X_GAP)
-#define MODULE_TITLE_X_OFFSET    (3.0)
-#define MODULE_HEIGHT            (38.0)             // 1 row
-#define MODULE_MARGIN            (5.0)
-#define MODULE_Y_GAP             (5.0)
-#define MODULE_Y_SPAN            (MODULE_HEIGHT + MODULE_Y_GAP)
-#define MODULE_TITLE_Y_OFFSET    (20.0)
-#define MODULE_AREA_X_MARGINS    ((MODULE_MARGIN * 2.0) + SCROLLBAR_WIDTH)
-#define MODULE_AREA_Y_MARGINS    ((MODULE_MARGIN * 2.0) + TOP_BAR_HEIGHT + SCROLLBAR_WIDTH)
-#define MODULE_AREA_X_WIDTH      ((double)renderWidth - (MODULE_AREA_X_MARGINS))
-#define MODULE_AREA_Y_HEIGHT     ((double)renderHeight - (MODULE_AREA_Y_MARGINS))
-#define NO_ZOOM                  (1.0)
-#define ZOOM_DELTA               (0.1)
-#else
-#define TOP_BAR_HEIGHT           (0.0)
-#define MODULE_MARGIN            (5.0)
-#define MODULE_WIDTH             (350.0)
-#define MODULE_HEIGHT            (38.0)
-#define MAX_ROWS                 (127)
-#define MAX_ROWS_MODULE          (12)
-#define MODULE_WIDTH             (350.0)
-#define MODULE_X_GAP             (10.0)
-#define MODULE_X_SPAN            (MODULE_WIDTH + MODULE_X_GAP)
-#define MODULE_Y_GAP             (5.0)
-#define MODULE_Y_SPAN            (MODULE_HEIGHT + MODULE_Y_GAP)
-#define BORDER_LINE_WIDTH        (2.0)
-#define DRAW_BUTTON_MARGIN       (2.0)   // padding draw_button() adds around a button's text (see draw_button_bounds)
-#define STANDARD_TEXT_HEIGHT     (12.0)
-#define BLANK_SIZE               (0.0)
-#define SCROLLBAR_WIDTH          (15.0)
-#define SCROLLBAR_LENGTH         (100.0)
-#define SCROLLBAR_MARGIN         SCROLLBAR_WIDTH
-#define NO_ZOOM                  (1.0)
-#define MAX_COLUMNS              (127)
-#define NO_ZOOM                  (1.0)
-#define ZOOM_DELTA               (0.1)
-#endif
+#define TOP_BAR_HEIGHT              (0.0)
+#define MODULE_MARGIN               (5.0)
+#define MODULE_WIDTH                (350.0)
+#define MODULE_HEIGHT               (38.0)
+#define MAX_ROWS                    (127)
+#define MAX_ROWS_MODULE             (12)
+#define MODULE_WIDTH                (350.0)
+#define MODULE_X_GAP                (10.0)
+#define MODULE_X_SPAN               (MODULE_WIDTH + MODULE_X_GAP)
+#define MODULE_Y_GAP                (5.0)
+#define MODULE_Y_SPAN               (MODULE_HEIGHT + MODULE_Y_GAP)
+#define BORDER_LINE_WIDTH           (2.0)
+#define DRAW_BUTTON_MARGIN          (2.0) // padding draw_button() adds around a button's text (see draw_button_bounds)
+#define STANDARD_TEXT_HEIGHT        (12.0)
+#define BLANK_SIZE                  (0.0)
+#define SCROLLBAR_WIDTH             (15.0)
+#define SCROLLBAR_LENGTH            (100.0)
+#define SCROLLBAR_MARGIN            SCROLLBAR_WIDTH
+#define NO_ZOOM                     (1.0)
+#define MAX_COLUMNS                 (127)
+#define NO_ZOOM                     (1.0)
+#define ZOOM_DELTA                  (0.1)
 
 // notes §5
 #define LIST_SCROLLBAR_WIDTH        (8.0)

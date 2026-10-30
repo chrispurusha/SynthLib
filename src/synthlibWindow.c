@@ -49,6 +49,25 @@ extern "C" {
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Weverything"
 #include <GLFW/glfw3native.h>
+
+void synthlib_load_window_and_dial_mode(int targetFrameBuffWidth, int targetFrameBuffHeight) {
+    synthlib_set_dial_mode((tDialMode)prefs_get_int("dialMode", (long)synthlib_dial_mode()));
+
+    long savedW = prefs_get_int("windowWidth", 0);
+
+    if (savedW > 0) {
+        int savedH = (int)savedW * targetFrameBuffHeight / targetFrameBuffWidth;
+
+        glfwSetWindowSize((GLFWwindow *)synthlib_window(), (int)savedW, savedH);
+    }
+
+    if (prefs_has_key("windowX") && prefs_has_key("windowY")) {
+        int savedX = (int)prefs_get_int("windowX", 0);
+        int savedY = (int)prefs_get_int("windowY", 0);
+
+        glfwSetWindowPos((GLFWwindow *)synthlib_window(), savedX, savedY);
+    }
+}
 #pragma clang diagnostic pop
 #endif
 
@@ -300,6 +319,7 @@ void * synthlib_window_create(const tSynthLibWindowConfig * config, const tSynth
     }
     window = glfwCreateWindow(config->targetWidth / minDivisor, config->targetHeight / minDivisor,
                               config->title, NULL, NULL);
+    synthlib_set_redraw_hook(glfwPostEmptyEvent);
     synthlib_set_window((void *)window);
 
     if (window == NULL) {

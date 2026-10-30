@@ -37,8 +37,7 @@ typedef struct {
 } tSynthLibTheme;
 
 // Call once, early at startup (before any rendering), with values built from
-// the calling app's own macros — e.g. G2-Edit's init_graphics() passes
-// TOP_BAR_HEIGHT/RGB_ORANGE_1/etc from its own defs.h.
+// the calling app's own macros, e.g. its top-bar height and colours.
 void configure_synthlib_theme(tSynthLibTheme theme);
 
 // Dims the whole canvas behind a modal panel.

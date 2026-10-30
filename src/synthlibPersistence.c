@@ -21,9 +21,6 @@
 extern "C" {
 #endif
 
-#define GL_SILENCE_DEPRECATION    1
-#include <GLFW/glfw3.h>
-
 #include "prefs.h"
 #include "synthlibGlobals.h"
 #include "synthlibPersistence.h"
@@ -39,25 +36,6 @@ void synthlib_save_window_size(int width) {
 void synthlib_save_window_pos(int x, int y) {
     prefs_set_int("windowX", x);
     prefs_set_int("windowY", y);
-}
-
-void synthlib_load_window_and_dial_mode(int targetFrameBuffWidth, int targetFrameBuffHeight) {
-    synthlib_set_dial_mode((tDialMode)prefs_get_int("dialMode", (long)synthlib_dial_mode()));
-
-    long savedW = prefs_get_int("windowWidth", 0);
-
-    if (savedW > 0) {
-        int savedH = (int)savedW * targetFrameBuffHeight / targetFrameBuffWidth;
-
-        glfwSetWindowSize((GLFWwindow *)synthlib_window(), (int)savedW, savedH);
-    }
-
-    if (prefs_has_key("windowX") && prefs_has_key("windowY")) {
-        int savedX = (int)prefs_get_int("windowX", 0);
-        int savedY = (int)prefs_get_int("windowY", 0);
-
-        glfwSetWindowPos((GLFWwindow *)synthlib_window(), savedX, savedY);
-    }
 }
 
 #ifdef __cplusplus

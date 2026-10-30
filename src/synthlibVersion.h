@@ -21,12 +21,33 @@
 #ifndef SYNTHLIB_VERSION_H
 #define SYNTHLIB_VERSION_H
 
-// notes §1
+#include "synthlibDefs.h"
+
+// Set by the application, not at SynthLib's compile time - see SYNTHLIB_APP_INIT() below.
+void synthlib_set_app_info(const char * version, const char * built);
+
+// notes §2
+const char * synthlib_about_text(const char * appName);
+
+// Both macros are expanded in the APPLICATION'S source, so these #ifdefs read the application's own
+// settings. Call one early at start-up. The version comes from SYNTHLIB_VERSION_STRING where the
+// application's build defines it; do-release does.
 #ifndef SYNTHLIB_VERSION_STRING
 #define SYNTHLIB_VERSION_STRING    "development build"
 #endif
 
-// notes §2
-const char * synthlib_about_text(const char * appName);
+#if defined (ENABLE_LOG_MODULE_DATA)
+#define SYNTHLIB_APP_LOG_LEVEL    eSynthLibLogModuleData
+#elif defined (ENABLE_LOG_DEBUG)
+#define SYNTHLIB_APP_LOG_LEVEL    eSynthLibLogDebug
+#else
+#define SYNTHLIB_APP_LOG_LEVEL    eSynthLibLogNormal
+#endif
+
+#define SYNTHLIB_LOG_INIT()    do {gSynthLibLogLevel = SYNTHLIB_APP_LOG_LEVEL;} while (0)
+
+#define SYNTHLIB_APP_INIT()                                                   \
+   do {synthlib_set_app_info(SYNTHLIB_VERSION_STRING, __DATE__ " " __TIME__); \
+       SYNTHLIB_LOG_INIT();} while (0)
 
 #endif // SYNTHLIB_VERSION_H

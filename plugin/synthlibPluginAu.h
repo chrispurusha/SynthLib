@@ -31,6 +31,7 @@ extern "C" {
 
 // notes §1
 CFStringRef synthlib_au_view_class_name(void);
+void synthlib_au_set_view_class_name(const char * name);
 
 // notes §2
 typedef struct {

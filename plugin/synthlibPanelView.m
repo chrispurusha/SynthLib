@@ -26,18 +26,41 @@
 #include "renderBackend.h"
 #include "inputState.h"
 #include "synthlibPanelView.h"
+#include "synthlibRuntimeClass.h"
 
-#ifndef SYNTHLIB_PANEL_VIEW_CLASS
-#error "SYNTHLIB_PANEL_VIEW_CLASS must name this plug-in's own panel view class - see synthlibPanelView.h"
-#endif
 
-@interface SYNTHLIB_PANEL_VIEW_CLASS : NSView
-@property (nonatomic, assign) const tSynthLibPanel * panel;
-@property (nonatomic, assign) void *                 user;
-@property (nonatomic, strong) NSTimer *              timer;
-@property (nonatomic, assign) BOOL                   captured;   // press() grabbed a control; the pointer is hidden
-@property (nonatomic, assign) BOOL                   following;  // press() grabbed one that keeps the pointer (notes §12)
+// A run-time class - see synthlibRuntimeClass.h. This declares the selectors of the two methods
+// added to it that NSView doesn't have, and compiles to nothing.
+@protocol SynthLibPanelViewMethods
+- (void)tick:(NSTimer *)timer;
+- (void)occlusionChanged:(NSNotification *)note;
 @end
+
+typedef struct {
+    const tSynthLibPanel * panel;
+    void *                 user;
+    BOOL                   captured;   // press() grabbed a control; the pointer is hidden and held
+    BOOL                   following;  // press() grabbed one that keeps the pointer visible
+} tPanelState;
+
+static Class gPanelViewClass = Nil;
+static char  gTimerKey       = 0;
+
+static tPanelState * panel_state(NSView * self) {
+    return (tPanelState *)synthlib_runtime_class_state(gPanelViewClass, self);
+}
+
+static NSTimer * panel_timer(NSView * self) {
+    return objc_getAssociatedObject(self, &gTimerKey);
+}
+
+static void panel_set_timer(NSView * self, NSTimer * timer) {
+    objc_setAssociatedObject(self, &gTimerKey, timer, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
+static void panel_redraw(NSView * self);
+static void panel_sync(NSView * self);
+static void panel_update_timer(NSView * self);
 
 static uint32_t modifier_bits_from_ns(NSEventModifierFlags flags) {
     uint32_t bits = (uint32_t)eModifierNone;
@@ -90,168 +113,152 @@ static void cursor_release(void) {
     [NSCursor unhide];
 }
 
-@implementation SYNTHLIB_PANEL_VIEW_CLASS
-
-- (instancetype)initWithFrame:(NSRect)frame {
-    self = [super initWithFrame:frame];
-
-    if (self == nil) {
-        return nil;
-    }
-
-    // The application chooses its backend from a saved setting at start-up; a plug-in has no such
-    // setting and no window of its own, so the choice is asserted here before anything touches it.
-    gfx_backend_choose(eRenderBackendMetal);
-
-    // notes §2
-    gfx_attach_window((__bridge void *)self);
-
-    // NO TIMER YET. There is no window at this point, so there is nothing to repaint for;
-    // -viewDidMoveToWindow starts one once there is. See -updateTimer.
-    return self;
-}
-
 // notes §3
-- (BOOL)shouldRepaint {
+static BOOL panel_should_repaint(NSView * self) {
     NSWindow * window = [self window];
 
     if ((window == nil) || [self isHiddenOrHasHiddenAncestor]) {
         return NO;
     }
 
-    if ((self.panel != NULL) && (self.panel->paused != NULL) && self.panel->paused(self.user)) {
+    if ((panel_state(self)->panel != NULL) && (panel_state(self)->panel->paused != NULL) && panel_state(self)->panel->paused(panel_state(self)->user)) {
         return NO;    // the panel asked for no repainting - see tSynthLibPanel.paused
     }
-
     return ([window occlusionState] & NSWindowOcclusionStateVisible) != 0;
 }
 
 // notes §4
-- (void)updateTimer {
-    BOOL wanted = [self shouldRepaint];
+static void panel_update_timer(NSView * self) {
+    BOOL wanted = panel_should_repaint(self);
 
-    if (wanted && (self.timer == nil)) {
+    if (wanted && (panel_timer(self) == nil)) {
         // notes §5
-        self.timer = [NSTimer scheduledTimerWithTimeInterval:(1.0 / 30.0)
-                                                      target:self
-                                                    selector:@selector(tick:)
-                                                    userInfo:nil
-                                                     repeats:YES];
+        panel_set_timer(self, [NSTimer scheduledTimerWithTimeInterval:(1.0 / 30.0)
+                               target:self
+                               selector:@selector(tick:)
+                               userInfo:nil
+                               repeats:YES]);
 
         // Without this the timer stops while a menu is tracking or the window is being resized, and
         // the meters freeze at whatever they last showed - which reads as the plug-in having crashed.
-        [[NSRunLoop currentRunLoop] addTimer:self.timer forMode:NSRunLoopCommonModes];
+        [[NSRunLoop currentRunLoop] addTimer:panel_timer(self) forMode:NSRunLoopCommonModes];
 
         // At once, rather than up to a thirtieth of a second later: coming back to an uncovered
         // window should not show a frame of whatever the meters read when it was covered.
-        [self redraw];
-    } else if (!wanted && (self.timer != nil)) {
-        [self.timer invalidate];    // the timer retains self, so this is also what lets the view go
-        self.timer = nil;
+        panel_redraw(self);
+    } else if (!wanted && (panel_timer(self) != nil)) {
+        [panel_timer(self) invalidate];    // the timer retains self, so this is also what lets the view go
+        panel_set_timer(self, nil);
     }
 }
 
 // PER WINDOW, not once: the notification is observed against a specific window and a plug-in view is
 // moved between them - re-parented as a host opens the editor in a floating window, docks it in a
 // rack, or closes it. Registering against nil instead would catch every window in the host.
-- (void)viewDidMoveToWindow {
-    [super viewDidMoveToWindow];
+static void panel_viewDidMoveToWindow(NSView * self, SEL _cmd) {
+    SYNTHLIB_SUPER_VOID(self, _cmd);
 
     [[NSNotificationCenter defaultCenter] removeObserver:self
-                                                    name:NSWindowDidChangeOcclusionStateNotification
-                                                  object:nil];
+     name:NSWindowDidChangeOcclusionStateNotification
+     object:nil];
 
     if ([self window] != nil) {
         [[NSNotificationCenter defaultCenter] addObserver:self
-                                                 selector:@selector(occlusionChanged:)
-                                                     name:NSWindowDidChangeOcclusionStateNotification
-                                                   object:[self window]];
+         selector:@selector(occlusionChanged:)
+         name:NSWindowDidChangeOcclusionStateNotification
+         object:[self window]];
     }
-
-    [self updateTimer];
+    panel_update_timer(self);
 }
 
-- (void)occlusionChanged:(NSNotification *)note {
+static void panel_occlusionChanged(NSView * self, SEL _cmd, NSNotification * note) {
+    (void)_cmd;
     (void)note;
-    [self updateTimer];
+    panel_update_timer(self);
 }
 
-- (void)viewDidHide {
-    [super viewDidHide];
-    [self updateTimer];
+static void panel_viewDidHide(NSView * self, SEL _cmd) {
+    SYNTHLIB_SUPER_VOID(self, _cmd);
+    panel_update_timer(self);
 }
 
-- (void)viewDidUnhide {
-    [super viewDidUnhide];
-    [self updateTimer];
+static void panel_viewDidUnhide(NSView * self, SEL _cmd) {
+    SYNTHLIB_SUPER_VOID(self, _cmd);
+    panel_update_timer(self);
 }
 
-- (BOOL)isOpaque {
+static BOOL panel_isOpaque(NSView * self, SEL _cmd) {
+    (void)self;
+    (void)_cmd;
     return YES;
 }
 
-- (BOOL)acceptsFirstResponder {
+static BOOL panel_acceptsFirstResponder(NSView * self, SEL _cmd) {
+    (void)self;
+    (void)_cmd;
     return YES;
 }
 
 // A host click that lands on the plug-in's window should reach the control it hit, rather than
 // being swallowed as the click that merely focuses the window.
-- (BOOL)acceptsFirstMouse:(NSEvent *)event {
+static BOOL panel_acceptsFirstMouse(NSView * self, SEL _cmd, NSEvent * event) {
+    (void)self;
+    (void)_cmd;
     (void)event;
     return YES;
 }
 
 // notes §6
-- (void)setFrameSize:(NSSize)newSize {
-    [super setFrameSize:newSize];
-    [self redraw];
+static void panel_setFrameSize(NSView * self, SEL _cmd, NSSize newSize) {
+    SYNTHLIB_SUPER_ARG(self, _cmd, NSSize, newSize);
+    panel_redraw(self);
 }
 
 // One more once the drag stops, because the tick stood down for the duration and the last
 // -setFrameSize: may have arrived mid-frame.
-- (void)viewDidEndLiveResize {
-    [super viewDidEndLiveResize];
-    [self redraw];
+static void panel_viewDidEndLiveResize(NSView * self, SEL _cmd) {
+    SYNTHLIB_SUPER_VOID(self, _cmd);
+    panel_redraw(self);
 }
 
-- (void)tick:(NSTimer *)timer {
+static void panel_tick(NSView * self, SEL _cmd, NSTimer * timer) {
+    (void)_cmd;
     (void)timer;
 
     // notes §7
     if ([self inLiveResize]) {
         return;
     }
-    [self redraw];
+    panel_redraw(self);
 }
 
 // This editor's instance into the draw layer - see tSynthLibPanel.sync.
-- (void)sync {
-    if ((self.panel != NULL) && (self.panel->sync != NULL)) {
-        self.panel->sync(self.user);
+static void panel_sync(NSView * self) {
+    if ((panel_state(self)->panel != NULL) && (panel_state(self)->panel->sync != NULL)) {
+        panel_state(self)->panel->sync(panel_state(self)->user);
     }
 }
 
-- (void)redraw {
+static void panel_redraw(NSView * self) {
     NSRect backing = [self convertRectToBacking:[self bounds]];
 
     // A view with no window has no drawable behind it, and a zero-sized one would ask the backend for
     // render targets it cannot make. Both are reachable: -redraw is called from -mouseDown: and from
     // -updateTimer as well as from the tick.
-    if (([self window] == nil) || (backing.size.width < 1.0) || (backing.size.height < 1.0)
-       || (self.panel == NULL) || (self.panel->frame == NULL)) {
+    if (  ([self window] == nil) || (backing.size.width < 1.0) || (backing.size.height < 1.0)
+       || (panel_state(self)->panel == NULL) || (panel_state(self)->panel->frame == NULL)) {
         return;
     }
-
     // notes §8
     gfx_attach_window((__bridge void *)self);
 
-    [self sync];
+    panel_sync(self);
 
     // notes §9
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
 
-    self.panel->frame(self.user, (int)backing.size.width, (int)backing.size.height);
+    panel_state(self)->panel->frame(panel_state(self)->user, (int)backing.size.width, (int)backing.size.height);
     gfx_present();
 
     [CATransaction commit];
@@ -260,9 +267,9 @@ static void cursor_release(void) {
 // AppKit's origin is bottom left and the canvas's is top left, so y is flipped here rather than in
 // the drawing code - the renderer's coordinate space is shared with the applications and must not be
 // bent to suit one host view.
-- (NSPoint)canvasPointFor:(NSEvent *)event {
+static NSPoint panel_canvas_point(NSView * self, NSEvent * event) {
     NSPoint local = [self convertPoint:[event locationInWindow] fromView:nil];
-    double  width = ((self.panel != NULL) && (self.panel->canvasWidth > 0.0)) ? self.panel->canvasWidth : 1.0;
+    double  width = ((panel_state(self)->panel != NULL) && (panel_state(self)->panel->canvasWidth > 0.0)) ? panel_state(self)->panel->canvasWidth : 1.0;
     double  scale = [self bounds].size.width / width;
 
     if (scale <= 0.0) {
@@ -271,9 +278,9 @@ static void cursor_release(void) {
     return NSMakePoint(local.x / scale, ([self bounds].size.height - local.y) / scale);
 }
 
-- (void)flagsChanged:(NSEvent *)event {
+static void panel_flagsChanged(NSView * self, SEL _cmd, NSEvent * event) {
     set_modifier_state(modifier_bits_from_ns([event modifierFlags]));
-    [super flagsChanged:event];
+    SYNTHLIB_SUPER_ARG(self, _cmd, NSEvent *, event);
 }
 
 // GLFW's codes for the editing keys, which is what SynthLib's popups read; written out so this file needs no
@@ -281,26 +288,40 @@ static void cursor_release(void) {
 static int glfw_key_for_mac(unsigned short keyCode) {
     switch (keyCode) {
         case 53:  return 256;   // Escape
+
         case 36:  return 257;   // Return
+
         case 48:  return 258;   // Tab
+
         case 51:  return 259;   // Backspace
+
         case 117: return 261;   // Delete
+
         case 124: return 262;   // Right
+
         case 123: return 263;   // Left
+
         case 125: return 264;   // Down
+
         case 126: return 265;   // Up
+
         case 116: return 266;   // Page Up
+
         case 121: return 267;   // Page Down
+
         case 115: return 268;   // Home
+
         case 119: return 269;   // End
+
         case 76:  return 335;   // keypad Enter
+
         default:  return -1;
     }
 }
 
-- (void)keyDown:(NSEvent *)event {
-    if ((self.panel == NULL) || (self.panel->key == NULL)) {
-        [super keyDown:event];
+static void panel_keyDown(NSView * self, SEL _cmd, NSEvent * event) {
+    if ((panel_state(self)->panel == NULL) || (panel_state(self)->panel->key == NULL)) {
+        SYNTHLIB_SUPER_ARG(self, _cmd, NSEvent *, event);
         return;
     }
     NSString *   chars     = [event characters];
@@ -308,183 +329,232 @@ static int glfw_key_for_mac(unsigned short keyCode) {
     unsigned int codepoint = ((key == -1) && ([chars length] > 0)) ? (unsigned int)[chars characterAtIndex:0] : 0u;
 
     set_modifier_state(modifier_bits_from_ns([event modifierFlags]));
-    [self sync];
+    panel_sync(self);
 
-    if (self.panel->key(self.user, key, codepoint, [event isARepeat] == YES)) {
-        [self redraw];
+    if (panel_state(self)->panel->key(panel_state(self)->user, key, codepoint, [event isARepeat] == YES)) {
+        panel_redraw(self);
         return;
     }
-    [super keyDown:event];
+    SYNTHLIB_SUPER_ARG(self, _cmd, NSEvent *, event);
 }
 
 // Points to the canvas's logical units, for a movement rather than a position.
-- (double)logicalPerPoint {
-    double width = ((self.panel != NULL) && (self.panel->canvasWidth > 0.0)) ? self.panel->canvasWidth : 1.0;
+static double panel_logical_per_point(NSView * self) {
+    double width = ((panel_state(self)->panel != NULL) && (panel_state(self)->panel->canvasWidth > 0.0)) ? panel_state(self)->panel->canvasWidth : 1.0;
     double scale = [self bounds].size.width / width;
 
     return (scale > 0.0) ? (1.0 / scale) : 1.0;
 }
 
-- (void)mouseDown:(NSEvent *)event {
-    NSPoint p = [self canvasPointFor:event];
+static void panel_mouseDown(NSView * self, SEL _cmd, NSEvent * event) {
+    (void)_cmd;
+    NSPoint p = panel_canvas_point(self, event);
 
-    if (self.panel == NULL) {
+    if (panel_state(self)->panel == NULL) {
         return;
     }
     set_modifier_state(modifier_bits_from_ns([event modifierFlags]));
 
     // notes §10
-    [self sync];
+    panel_sync(self);
 
     // the keyboard is claimed by a click IN the view, not when it opens, so a host keeps its own keys until then
-    if ((self.panel->key != NULL) && ([self window] != nil)) {
+    if ((panel_state(self)->panel->key != NULL) && ([self window] != nil)) {
         [[self window] makeFirstResponder:self];
     }
 
-    if (self.panel->pointer != NULL) {
-        self.panel->pointer(p.x, p.y);   // a click is a position too, and a trackpad tap sends no move
+    if (panel_state(self)->panel->pointer != NULL) {
+        panel_state(self)->panel->pointer(p.x, p.y);   // a click is a position too, and a trackpad tap sends no move
     }
 
-    if (self.panel->press != NULL) {
-        BOOL grabbed = self.panel->press(self.user, p.x, p.y) ? YES : NO;
-        BOOL keeps   = grabbed && (self.panel->keepsPointer != NULL) && (self.panel->dragTo != NULL)
-                       && self.panel->keepsPointer(self.user);
+    if (panel_state(self)->panel->press != NULL) {
+        BOOL grabbed = panel_state(self)->panel->press(panel_state(self)->user, p.x, p.y) ? YES : NO;
+        BOOL keeps   = grabbed && (panel_state(self)->panel->keepsPointer != NULL) && (panel_state(self)->panel->dragTo != NULL)
+                       && panel_state(self)->panel->keepsPointer(panel_state(self)->user);
 
-        self.following = keeps;
-        self.captured  = grabbed && !keeps;
+        panel_state(self)->following = keeps;
+        panel_state(self)->captured  = grabbed && !keeps;
 
-        if (self.captured) {
+        if (panel_state(self)->captured) {
             cursor_capture();
         }
-    } else if (self.panel->click != NULL) {
-        (void)self.panel->click(self.user, p.x, p.y);
+    } else if (panel_state(self)->panel->click != NULL) {
+        (void)panel_state(self)->panel->click(panel_state(self)->user, p.x, p.y);
     }
-    [self redraw];
-    [self updateTimer];   // a click may have paused or resumed the panel
+    panel_redraw(self);
+    panel_update_timer(self);   // a click may have paused or resumed the panel
 }
 
-- (void)mouseUp:(NSEvent *)event {
-    NSPoint p = [self canvasPointFor:event];
+static void panel_mouseUp(NSView * self, SEL _cmd, NSEvent * event) {
+    (void)_cmd;
+    NSPoint p = panel_canvas_point(self, event);
 
-    if ((self.panel == NULL) || (self.panel->press == NULL)) {
+    if ((panel_state(self)->panel == NULL) || (panel_state(self)->panel->press == NULL)) {
         return;
     }
     set_modifier_state(modifier_bits_from_ns([event modifierFlags]));
 
-    self.following = NO;
+    panel_state(self)->following = NO;
 
-    if (self.captured) {
-        self.captured = NO;
+    if (panel_state(self)->captured) {
+        panel_state(self)->captured = NO;
         cursor_release();
     }
 
-    if (self.panel->release != NULL) {
-        [self sync];
-        self.panel->release(self.user, p.x, p.y);
+    if (panel_state(self)->panel->release != NULL) {
+        panel_sync(self);
+        panel_state(self)->panel->release(panel_state(self)->user, p.x, p.y);
     }
-    [self redraw];
+    panel_redraw(self);
 }
 
 // notes §11
-- (void)updateTrackingAreas {
-    [super updateTrackingAreas];
+static void panel_updateTrackingAreas(NSView * self, SEL _cmd) {
+    SYNTHLIB_SUPER_VOID(self, _cmd);
 
     for (NSTrackingArea * area in [self trackingAreas]) {
         [self removeTrackingArea:area];
     }
+
     NSTrackingArea * area =
         [[NSTrackingArea alloc] initWithRect:[self bounds]
-                                     options:(NSTrackingMouseMoved | NSTrackingActiveInActiveApp |
-                                              NSTrackingInVisibleRect)
-                                       owner:self
-                                    userInfo:nil];
+         options:(NSTrackingMouseMoved | NSTrackingActiveInActiveApp |
+                  NSTrackingInVisibleRect)
+         owner:self
+         userInfo:nil];
 
     [self addTrackingArea:area];
 }
 
-- (void)mouseMoved:(NSEvent *)event {
-    NSPoint p = [self canvasPointFor:event];
+static void panel_mouseMoved(NSView * self, SEL _cmd, NSEvent * event) {
+    (void)_cmd;
+    NSPoint p = panel_canvas_point(self, event);
 
-    if ((self.panel == NULL) || (self.panel->pointer == NULL)) {
+    if ((panel_state(self)->panel == NULL) || (panel_state(self)->panel->pointer == NULL)) {
         return;
     }
-    self.panel->pointer(p.x, p.y);
+    panel_state(self)->panel->pointer(p.x, p.y);
 
     // ONLY WHILE A MENU IS OPEN. Nothing else on these panels responds to a bare mouse move, and
     // repainting on every one would put a 60-plus Hz redraw under the host's cursor for no visible
     // change. The 30 Hz timer covers everything else.
-    if ((self.panel->menuActive != NULL) && self.panel->menuActive()) {
-        [self redraw];
+    if ((panel_state(self)->panel->menuActive != NULL) && panel_state(self)->panel->menuActive()) {
+        panel_redraw(self);
     }
 }
 
 // A drag is a stream of clicks: only continuous controls (GenBridge's trim) respond to one, and
 // routing it through the same hit test keeps that decision in one place.
-- (void)mouseDragged:(NSEvent *)event {
-    if ((self.panel != NULL) && (self.panel->press != NULL)) {
+static void panel_mouseDragged(NSView * self, SEL _cmd, NSEvent * event) {
+    (void)_cmd;
+
+    if ((panel_state(self)->panel != NULL) && (panel_state(self)->panel->press != NULL)) {
         set_modifier_state(modifier_bits_from_ns([event modifierFlags]));
 
-        if (self.following) {
-            NSPoint p = [self canvasPointFor:event];
+        if (panel_state(self)->following) {
+            NSPoint p = panel_canvas_point(self, event);
 
-            [self sync];
-            self.panel->dragTo(self.user, p.x, p.y);
-            [self redraw];
-        } else if (self.captured && (self.panel->dragBy != NULL)) {
-            double k = [self logicalPerPoint];
+            panel_sync(self);
+            panel_state(self)->panel->dragTo(panel_state(self)->user, p.x, p.y);
+            panel_redraw(self);
+        } else if (panel_state(self)->captured && (panel_state(self)->panel->dragBy != NULL)) {
+            double k = panel_logical_per_point(self);
 
-            [self sync];
-            self.panel->dragBy(self.user, [event deltaX] * k, [event deltaY] * k);
-            [self redraw];
+            panel_sync(self);
+            panel_state(self)->panel->dragBy(panel_state(self)->user, [event deltaX] * k, [event deltaY] * k);
+            panel_redraw(self);
         }
         return;
     }
     [self mouseDown:event];
 }
 
-- (void)scrollWheel:(NSEvent *)event {
-    NSPoint p = [self canvasPointFor:event];
+static void panel_scrollWheel(NSView * self, SEL _cmd, NSEvent * event) {
+    NSPoint p  = panel_canvas_point(self, event);
 
-    if ((self.panel == NULL) || (self.panel->scroll == NULL)) {
-        [super scrollWheel:event];   // let the host scroll whatever it is scrolling
+    if ((panel_state(self)->panel == NULL) || (panel_state(self)->panel->scroll == NULL)) {
+        SYNTHLIB_SUPER_ARG(self, _cmd, NSEvent *, event);   // let the host scroll whatever it is scrolling
         return;
     }
     // Lines from a wheel, points from a trackpad; both into logical units, downward positive.
-    double dy = -[event scrollingDeltaY] * ([event hasPreciseScrollingDeltas] ? [self logicalPerPoint] : 1.0);
+    double  dy = -[event scrollingDeltaY] * ([event hasPreciseScrollingDeltas] ? panel_logical_per_point(self) : 1.0);
 
-    [self sync];
-    self.panel->scroll(self.user, p.x, p.y, dy);
-    [self redraw];
+    panel_sync(self);
+    panel_state(self)->panel->scroll(panel_state(self)->user, p.x, p.y, dy);
+    panel_redraw(self);
 }
 
-- (void)removeFromSuperview {
-    if (self.captured) {          // a host closing the editor mid-drag must not leave the pointer hidden
-        self.captured = NO;
+static void panel_removeFromSuperview(NSView * self, SEL _cmd) {
+    if (panel_state(self)->captured) {          // a host closing the editor mid-drag must not leave the pointer hidden
+        panel_state(self)->captured = NO;
         cursor_release();
     }
     [[NSNotificationCenter defaultCenter] removeObserver:self];
-    [self.timer invalidate];        // the timer retains self; leaving it running leaks the view
-    self.timer = nil;
+    [panel_timer(self) invalidate];        // the timer retains self; leaving it running leaks the view
+    panel_set_timer(self, nil);
 
     // Hand back the layer and render targets. Without this a host that opens and closes editors
     // would exhaust the backend's window slots, since every new view is a different pointer.
     gfx_detach_window((__bridge void *)self);
 
-    [super removeFromSuperview];
+    SYNTHLIB_SUPER_VOID(self, _cmd);
 }
-
-@end
 
 // RETAINED (+1), as SynthLib's createView() contract requires: the wrapper owns the view from here and
 // releases it after taking it out of the window - -removeFromSuperview is where it lets go of its
 // timer and its drawing surface.
+static void panel_make_class(void) {
+    Class cls = synthlib_runtime_class_begin([NSView class], "SynthLibPanelView", sizeof(tPanelState),
+                                             (const void *)&gPanelViewClass);
+
+    synthlib_runtime_class_override(cls, @selector(setFrameSize:), panel_setFrameSize);
+    synthlib_runtime_class_override(cls, @selector(viewDidMoveToWindow), panel_viewDidMoveToWindow);
+    synthlib_runtime_class_override(cls, @selector(viewDidHide), panel_viewDidHide);
+    synthlib_runtime_class_override(cls, @selector(viewDidUnhide), panel_viewDidUnhide);
+    synthlib_runtime_class_override(cls, @selector(viewDidEndLiveResize), panel_viewDidEndLiveResize);
+    synthlib_runtime_class_override(cls, @selector(isOpaque), panel_isOpaque);
+    synthlib_runtime_class_override(cls, @selector(acceptsFirstResponder), panel_acceptsFirstResponder);
+    synthlib_runtime_class_override(cls, @selector(acceptsFirstMouse:), panel_acceptsFirstMouse);
+    synthlib_runtime_class_override(cls, @selector(flagsChanged:), panel_flagsChanged);
+    synthlib_runtime_class_override(cls, @selector(keyDown:), panel_keyDown);
+    synthlib_runtime_class_override(cls, @selector(mouseDown:), panel_mouseDown);
+    synthlib_runtime_class_override(cls, @selector(mouseUp:), panel_mouseUp);
+    synthlib_runtime_class_override(cls, @selector(mouseMoved:), panel_mouseMoved);
+    synthlib_runtime_class_override(cls, @selector(mouseDragged:), panel_mouseDragged);
+    synthlib_runtime_class_override(cls, @selector(scrollWheel:), panel_scrollWheel);
+    synthlib_runtime_class_override(cls, @selector(updateTrackingAreas), panel_updateTrackingAreas);
+    synthlib_runtime_class_override(cls, @selector(removeFromSuperview), panel_removeFromSuperview);
+
+    // The two NSView doesn't have: what the timer and the notification call.
+    class_addMethod(cls, @selector(tick:), (IMP)panel_tick, "v@:@");
+    class_addMethod(cls, @selector(occlusionChanged:), (IMP)panel_occlusionChanged, "v@:@");
+
+    objc_registerClassPair(cls);
+    gPanelViewClass = cls;
+}
+
 void * synthlib_panel_view_create(const tSynthLibPanel * panel, void * user, double width, double height) {
-    SYNTHLIB_PANEL_VIEW_CLASS * view = [[SYNTHLIB_PANEL_VIEW_CLASS alloc] initWithFrame:NSMakeRect(0.0, 0.0, width, height)];
+    static dispatch_once_t once = 0;
+    NSView *               view = nil;
 
-    view.panel = panel;
-    view.user  = user;
+    dispatch_once(&once, ^{
+        panel_make_class();
+    });
+    view                     = [[gPanelViewClass alloc] initWithFrame:NSMakeRect(0.0, 0.0, width, height)];
+    panel_state(view)->panel = panel;
+    panel_state(view)->user  = user;
 
-    // AFTER the surface exists (-initWithFrame: attached it), as the per-project views did.
+    // The application chooses its backend from a saved setting at start-up; a plug-in has no such
+    // setting and no window of its own, so the choice is asserted here before anything touches it.
+    gfx_backend_choose(eRenderBackendMetal);
+
+    // notes §2
+    gfx_attach_window((__bridge void *)view);
+
+    // NO TIMER YET. There is no window at this point, so there is nothing to repaint for;
+    // viewDidMoveToWindow starts one once there is. See panel_update_timer().
+
+    // AFTER the surface exists, as the per-project views did.
     if ((panel != NULL) && (panel->init != NULL)) {
         panel->init();
     }

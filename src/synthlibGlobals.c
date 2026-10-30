@@ -25,9 +25,6 @@ extern "C" {
 #include <stddef.h>
 #include <stdatomic.h>
 
-#define GL_SILENCE_DEPRECATION    1
-#include <GLFW/glfw3.h>
-
 #include "synthlibGlobals.h"
 
 static _Atomic bool sQuitAll  = false;
@@ -35,6 +32,8 @@ static _Atomic bool sReDraw   = true;
 static void *       sWindow   = NULL;
 // notes §1
 static tDialMode    sDialMode = eDialModeVertical;
+static void         (*sRedrawHook)(void) = NULL;
+static void         (*sDialModeHook)(tDialMode mode) = NULL;
 
 void synthlib_request_quit(void) {
     sQuitAll = true;
@@ -46,7 +45,14 @@ bool synthlib_quit_requested(void) {
 
 void synthlib_request_redraw(void) {
     sReDraw = true;
-    glfwPostEmptyEvent(); // safe to call unconditionally from any thread once GLFW is initialised
+
+    if (sRedrawHook != NULL) {
+        sRedrawHook();
+    }
+}
+
+void synthlib_set_redraw_hook(void ( *hook )(void)) {
+    sRedrawHook = hook;
 }
 
 void synthlib_clear_redraw(void) {
@@ -67,6 +73,14 @@ void * synthlib_window(void) {
 
 void synthlib_set_dial_mode(tDialMode mode) {
     sDialMode = mode;
+
+    if (sDialModeHook != NULL) {
+        sDialModeHook(mode);
+    }
+}
+
+void synthlib_set_dial_mode_hook(void ( *hook )(tDialMode mode)) {
+    sDialModeHook = hook;
 }
 
 tDialMode synthlib_dial_mode(void) {

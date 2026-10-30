@@ -26,7 +26,8 @@ extern "C" {
 #endif
 
 // notes §1
-extern const char gSynthLibLogName[];
+// Names the log files. Set by SYNTHLIB_PLUGIN_REGISTER() - see synthlibPlugin.h.
+void synthlib_log_set_name(const char * name);
 
 void synthlib_log_line(const char * format, ...) __attribute__((format(printf, 1, 2)));
 

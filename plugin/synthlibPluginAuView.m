@@ -26,19 +26,8 @@
 
 #include "synthlibPlugin.h"
 #include "synthlibPluginAu.h"
-
-#ifndef SYNTHLIB_AU_VIEW_CLASS
-#error "SYNTHLIB_AU_VIEW_CLASS must name this plug-in's own Cocoa view class - see the note above"
-#endif
-
-// Two levels, because a single-level paste or stringify would produce the MACRO's name rather than
-// the name it expands to.
-#define SL_PASTE2(a, b)     a ## b
-#define SL_PASTE(a, b)      SL_PASTE2(a, b)
-#define SL_STRINGIFY2(x)    #x
-#define SL_STRINGIFY(x)     SL_STRINGIFY2(x)
-
-#define SYNTHLIB_AU_CONTAINER_CLASS   SL_PASTE(SYNTHLIB_AU_VIEW_CLASS, Container)
+#include "synthlibAuViewFactory.h"
+#include "synthlibRuntimeClass.h"
 
 // Only for the things that are true of the whole BINARY rather than of one plug-in in it - the view
 // class name, and the description string. Anything per-plug-in comes from the handle the AudioUnit
@@ -47,14 +36,14 @@ static const tSynthLibPluginDesc * first_variant(void) {
     return &synthlib_plugin_variants()->variants[0];
 }
 
-CFStringRef synthlib_au_view_class_name(void) {
-    static CFStringRef name = NULL;
+static CFStringRef gViewClassName = NULL;
 
-    if (name == NULL) {
-        name = CFStringCreateWithCString(NULL, SL_STRINGIFY(SYNTHLIB_AU_VIEW_CLASS),
-                                         kCFStringEncodingUTF8);
-    }
-    return name;        // +0; the caller copies it if it wants to keep it
+void synthlib_au_set_view_class_name(const char * name) {
+    gViewClassName = CFStringCreateWithCString(NULL, name, kCFStringEncodingUTF8);
+}
+
+CFStringRef synthlib_au_view_class_name(void) {
+    return gViewClassName;      // +0; the caller copies it if it wants to keep it
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -62,19 +51,32 @@ CFStringRef synthlib_au_view_class_name(void) {
 // ------------------------------------------------------------------------------------------------
 
 // notes §2
-@interface SYNTHLIB_AU_CONTAINER_CLASS : NSView
-@property (assign, nonatomic) const tSynthLibPluginDesc * pluginDesc;
-@property (assign, nonatomic) void * pluginInstance;
-@property (strong, nonatomic) NSView * editorView;
-@end
+// A run-time class - see synthlibRuntimeClass.h.
+typedef struct {
+    const tSynthLibPluginDesc * pluginDesc;
+    void *                      pluginInstance;
+} tContainerState;
 
-@implementation SYNTHLIB_AU_CONTAINER_CLASS
+static Class gContainerClass = Nil;
+static char  gEditorKey      = 0;
 
-- (void)setFrameSize:(NSSize)newSize {
-    const tSynthLibPluginDesc * d = self.pluginDesc;
+static tContainerState * container_state(NSView * self) {
+    return (tContainerState *)synthlib_runtime_class_state(gContainerClass, self);
+}
+
+static NSView * container_editor(NSView * self) {
+    return objc_getAssociatedObject(self, &gEditorKey);
+}
+
+static void container_set_editor(NSView * self, NSView * editor) {
+    objc_setAssociatedObject(self, &gEditorKey, editor, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
+static void container_setFrameSize(NSView * self, SEL _cmd, NSSize newSize) {
+    const tSynthLibPluginDesc * d = container_state(self)->pluginDesc;
 
     if (d == NULL) {
-        [super setFrameSize:newSize];
+        SYNTHLIB_SUPER_ARG(self, _cmd, NSSize, newSize);
         return;
     }
 
@@ -89,13 +91,13 @@ CFStringRef synthlib_au_view_class_name(void) {
     if (d->editorAspect > 0.0) {
         newSize.height = newSize.width / d->editorAspect;
     }
-    [super setFrameSize:newSize];
+    SYNTHLIB_SUPER_ARG(self, _cmd, NSSize, newSize);
 
-    if (self.editorView != nil) {
-        [self.editorView setFrame:NSMakeRect(0.0, 0.0, newSize.width, newSize.height)];
+    if (container_editor(self) != nil) {
+        [container_editor(self) setFrame:NSMakeRect(0.0, 0.0, newSize.width, newSize.height)];
 
         if (d->cb.viewResized != NULL) {
-            d->cb.viewResized(self.pluginInstance, (__bridge void *)self.editorView,
+            d->cb.viewResized(container_state(self)->pluginInstance, (__bridge void *)container_editor(self),
                               newSize.width, newSize.height);
         }
     }
@@ -108,59 +110,64 @@ CFStringRef synthlib_au_view_class_name(void) {
 }
 
 // The host is taking the window away.
-- (void)viewWillMoveToSuperview:(NSView *)newSuperview {
-    const tSynthLibPluginDesc * d = self.pluginDesc;
+static void container_viewWillMoveToSuperview(NSView * self, SEL _cmd, NSView * newSuperview) {
+    const tSynthLibPluginDesc * d = container_state(self)->pluginDesc;
 
-    if ((newSuperview == nil) && (self.editorView != nil) && (d != NULL)) {
+    if ((newSuperview == nil) && (container_editor(self) != nil) && (d != NULL)) {
         if (d->cb.destroyView != NULL) {
-            d->cb.destroyView(self.pluginInstance, (__bridge void *)self.editorView);
+            d->cb.destroyView(container_state(self)->pluginInstance, (__bridge void *)container_editor(self));
         }
-        [self.editorView removeFromSuperview];
-        self.editorView = nil;
+        [container_editor(self) removeFromSuperview];
+        container_set_editor(self, nil);
     }
-    [super viewWillMoveToSuperview:newSuperview];
+    SYNTHLIB_SUPER_ARG(self, _cmd, NSView *, newSuperview);
 }
 
-@end
+static void container_make_class(void) {
+    Class cls = synthlib_runtime_class_begin([NSView class], "SynthLibAuContainer", sizeof(tContainerState),
+                                             (const void *)&gContainerClass);
 
-// ------------------------------------------------------------------------------------------------
-// The factory class the host names
-// ------------------------------------------------------------------------------------------------
-
-@interface SYNTHLIB_AU_VIEW_CLASS : NSObject <AUCocoaUIBase>
-@end
-
-@implementation SYNTHLIB_AU_VIEW_CLASS
-
-- (unsigned)interfaceVersion {
-    return 0;
+    synthlib_runtime_class_override(cls, @selector(setFrameSize:), container_setFrameSize);
+    synthlib_runtime_class_override(cls, @selector(viewWillMoveToSuperview:), container_viewWillMoveToSuperview);
+    objc_registerClassPair(cls);
+    gContainerClass = cls;
 }
 
-- (NSString *)description {
+// ------------------------------------------------------------------------------------------------
+// What the factory class forwards to - see synthlibAuViewFactory.h
+// ------------------------------------------------------------------------------------------------
+
+NSString * synthlib_au_view_description(void) {
     return [NSString stringWithUTF8String:first_variant()->name];
 }
 
-- (NSView *)uiViewForAudioUnit:(AudioUnit)inAU withSize:(NSSize)inPreferredSize {
+NSView * synthlib_au_view_create(AudioUnit inAU, NSSize inPreferredSize) {
+    static dispatch_once_t      once      = 0;
+
+    dispatch_once(&once, ^{
+        container_make_class();
+    });
+
     // BACK FROM AN AudioUnit TO OUR OWN INSTANCE. A Cocoa view factory is handed the AudioUnit and
     // nothing else, so the wrapper publishes both the instance and WHICH PLUG-IN IT IS as a private
     // property, and this is the only way across - see kSynthLibAuProperty_Instance.
-    tSynthLibAuHandle handle = { NULL, NULL };
-    UInt32            size   = (UInt32)sizeof(handle);
-    OSStatus          err    = AudioUnitGetProperty(inAU, kSynthLibAuProperty_Instance,
-                                                    kAudioUnitScope_Global, 0, &handle, &size);
+    tSynthLibAuHandle           handle    = {NULL, NULL};
+    UInt32                      size      = (UInt32)sizeof(handle);
+    OSStatus                    err       = AudioUnitGetProperty(inAU, kSynthLibAuProperty_Instance,
+                                                                 kAudioUnitScope_Global, 0, &handle, &size);
 
     if ((err != noErr) || (handle.desc == NULL) || (handle.inst == NULL)) {
         return nil;
     }
-    const tSynthLibPluginDesc * d    = handle.desc;
-    void *                      inst = handle.inst;
+    const tSynthLibPluginDesc * d         = handle.desc;
+    void *                      inst      = handle.inst;
 
     if (d->cb.createView == NULL) {
         return nil;
     }
     // The host's preferred size is usually zero, meaning "whatever you like". The remembered width
     // wins over the default when there is one, exactly as it does on the VST3 side.
-    double width = d->editorDefaultWidth;
+    double                      width     = d->editorDefaultWidth;
 
     if (d->editorWidthLoad != NULL) {
         double saved = (double)d->editorWidthLoad();
@@ -177,24 +184,21 @@ CFStringRef synthlib_au_view_class_name(void) {
     if ((d->editorMaxWidth > 0.0) && (width > d->editorMaxWidth)) {
         width = d->editorMaxWidth;
     }
-    double height = (d->editorAspect > 0.0) ? (width / d->editorAspect) : width;
+    double                      height    = (d->editorAspect > 0.0) ? (width / d->editorAspect) : width;
 
     // createView() hands its view back RETAINED - see the note in synthlibPlugin.h - so the bridge
     // that takes ownership is __bridge_transfer, and ARC releases it with the container.
-    NSView * editor = (__bridge_transfer NSView *)d->cb.createView(d, inst, width, height);
+    NSView *                    editor    = (__bridge_transfer NSView *)d->cb.createView(d, inst, width, height);
 
     if (editor == nil) {
         return nil;
     }
-    SYNTHLIB_AU_CONTAINER_CLASS * container =
-        [[SYNTHLIB_AU_CONTAINER_CLASS alloc] initWithFrame:NSMakeRect(0.0, 0.0, width, height)];
+    NSView *                    container = [[gContainerClass alloc] initWithFrame:NSMakeRect(0.0, 0.0, width, height)];
 
-    container.pluginDesc     = d;
-    container.pluginInstance = inst;
-    container.editorView     = editor;
+    container_state(container)->pluginDesc     = d;
+    container_state(container)->pluginInstance = inst;
+    container_set_editor(container, editor);
     [editor setFrame:NSMakeRect(0.0, 0.0, width, height)];
     [container addSubview:editor];
     return container;
 }
-
-@end

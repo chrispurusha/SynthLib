@@ -41,21 +41,21 @@
 
 // A host must tell us its slice size before rendering, but auval and a few hosts render before
 // setting it. This is what MaximumFramesPerSlice reports until then.
-#define DEFAULT_MAX_FRAMES   (4096)
+#define DEFAULT_MAX_FRAMES    (4096)
 
 // Events that arrived between one render and the next, waiting for the render they belong to. Sized
 // for a burst - a chord, a controller sweep, a host scheduling automation ahead - not for a backlog:
 // every render empties it.
-#define EVENT_QUEUE_SIZE     (1024)
+#define EVENT_QUEUE_SIZE    (1024)
 
 // How many consecutive points for one parameter go to paramPoints() in one call - see the VST3
 // wrapper's MAX_POINTS, which this matches.
-#define MAX_POINTS           (64)
+#define MAX_POINTS    (64)
 
 typedef struct {
-    AudioUnitPropertyID          id;
+    AudioUnitPropertyID           id;
     AudioUnitPropertyListenerProc proc;
-    void *                       userData;
+    void *                        userData;
 } tPropertyListener;
 
 typedef struct {
@@ -80,9 +80,9 @@ typedef struct {
     // and every method the host calls is handed that same pointer back as `self`.
     AudioComponentPlugInInterface iface;
 
-    AudioComponentInstance ci;
-    const tSynthLibPluginDesc * desc;
-    void *                 inst;
+    AudioComponentInstance        ci;
+    const tSynthLibPluginDesc *   desc;
+    void *                        inst;
 
     // How a host feeds an EFFECT. Either it hands over a callback to pull from, or it connects
     // another unit's output to our input; both are stored and neither is assumed.
@@ -94,46 +94,46 @@ typedef struct {
     // The host's transport, such as it is. See tSynthLibTransport: an Audio Unit host installs
     // these or does not, and answers from whatever it feels like rather than from the block being
     // rendered - which is why `valid` is false far more often here than on the VST3 side.
-    HostCallbackInfo       hostCallbacks;
-    bool                   haveHostCallbacks;
+    HostCallbackInfo    hostCallbacks;
+    bool                haveHostCallbacks;
 
     // The buffer an input is pulled into, and the AudioBufferList that describes it.
-    float *                inputSamples;
-    UInt32                 inputFrames;
-    AudioBufferList *      inputList;
-    const float **         inputChannels;
+    float *             inputSamples;
+    UInt32              inputFrames;
+    AudioBufferList *   inputList;
+    const float **      inputChannels;
 
-    double                 sampleRate;
-    UInt32                 maxFrames;
-    bool                   offline;
-    bool                   bypassed;        // an effect's input handed straight through - see au_render()
-    bool                   initialized;
+    double              sampleRate;
+    UInt32              maxFrames;
+    bool                offline;
+    bool                bypassed;           // an effect's input handed straight through - see au_render()
+    bool                initialized;
 
-    tSynthLibParamStore    params;
+    tSynthLibParamStore params;
 
-    tPropertyListener      listeners[MAX_LISTENERS];
-    UInt32                 listenerCount;
+    tPropertyListener   listeners[MAX_LISTENERS];
+    UInt32              listenerCount;
 
-    tRenderNotify          renderNotify[MAX_RENDER_NOTIFY];
-    UInt32                 renderNotifyCount;
+    tRenderNotify       renderNotify[MAX_RENDER_NOTIFY];
+    UInt32              renderNotifyCount;
 
-    OSStatus               lastRenderError;
+    OSStatus            lastRenderError;
 
     // Channel pointers handed to the plug-in's render(), and the buffer used when the host asks us
     // to supply our own - see au_render().
-    float **               channels;
-    float *                ownedSamples;
-    UInt32                 ownedFrames;
+    float ** channels;
+    float *  ownedSamples;
+    UInt32   ownedFrames;
 
-    AUPreset               currentPreset;
+    AUPreset currentPreset;
 
     // THE EVENT QUEUE. One consumer, the render; producers are whoever the host calls MIDIEvent and
     // ScheduleParameters from, usually the render thread itself and occasionally a MIDI or UI thread
     // - so producers take a spin flag against EACH OTHER and the render never waits on anything.
-    tQueuedEvent           events[EVENT_QUEUE_SIZE];
-    _Atomic uint32_t       eventWrite;
-    _Atomic uint32_t       eventRead;
-    atomic_flag            eventProducer;
+    tQueuedEvent     events[EVENT_QUEUE_SIZE];
+    _Atomic uint32_t eventWrite;
+    _Atomic uint32_t eventRead;
+    atomic_flag      eventProducer;
 } tSynthLibAu;
 
 // ------------------------------------------------------------------------------------------------
@@ -155,6 +155,7 @@ static void register_au(tSynthLibAu * au) {
             break;
         }
     }
+
     pthread_mutex_unlock(&gInstanceLock);
 }
 
@@ -166,6 +167,7 @@ static void unregister_au(tSynthLibAu * au) {
             gInstances[i] = NULL;
         }
     }
+
     pthread_mutex_unlock(&gInstanceLock);
 }
 
@@ -185,6 +187,7 @@ static tSynthLibAu * au_for(void * inst) {
             break;
         }
     }
+
     pthread_mutex_unlock(&gInstanceLock);
     return found;
 }
@@ -207,6 +210,7 @@ static const tSynthLibPluginDesc * variant_for(OSType subType) {
             return &set->variants[i];
         }
     }
+
     return &set->variants[0];
 }
 
@@ -235,13 +239,21 @@ static AudioUnitParameterUnit au_unit_of(const tSynthLibParamDesc * p) {
 
     switch (p->unit) {
         case eSynthLibUnitPercent:      return kAudioUnitParameterUnit_Percent;
+
         case eSynthLibUnitDecibels:     return kAudioUnitParameterUnit_Decibels;
+
         case eSynthLibUnitHertz:        return kAudioUnitParameterUnit_Hertz;
+
         case eSynthLibUnitSeconds:      return kAudioUnitParameterUnit_Seconds;
+
         case eSynthLibUnitMilliseconds: return kAudioUnitParameterUnit_Milliseconds;
+
         case eSynthLibUnitSemitones:    return kAudioUnitParameterUnit_RelativeSemiTones;
+
         case eSynthLibUnitIndexed:      return kAudioUnitParameterUnit_Indexed;
+
         case eSynthLibUnitBoolean:      return kAudioUnitParameterUnit_Boolean;
+
         case eSynthLibUnitGeneric:
         default:                        return kAudioUnitParameterUnit_Generic;
     }
@@ -340,27 +352,27 @@ static void sync_from_plugin(tSynthLibAu * au) {
 // ------------------------------------------------------------------------------------------------
 
 static CFDictionaryRef copy_class_info(tSynthLibAu * au) {
-    const tSynthLibPluginDesc * d    = au->desc;
-    CFMutableDictionaryRef      dict = CFDictionaryCreateMutable(NULL, 0,
-                                                                 &kCFTypeDictionaryKeyCallBacks,
-                                                                 &kCFTypeDictionaryValueCallBacks);
+    const tSynthLibPluginDesc * d            = au->desc;
+    CFMutableDictionaryRef      dict         = CFDictionaryCreateMutable(NULL, 0,
+                                                                         &kCFTypeDictionaryKeyCallBacks,
+                                                                         &kCFTypeDictionaryValueCallBacks);
 
     if (dict == NULL) {
         return NULL;
     }
-    SInt32 version      = (SInt32)d->auVersion;
-    SInt32 type         = (SInt32)d->auType;
-    SInt32 subtype      = (SInt32)d->auSubType;
-    SInt32 manufacturer = (SInt32)d->auManufacturer;
+    SInt32                      version      = (SInt32)d->auVersion;
+    SInt32                      type         = (SInt32)d->auType;
+    SInt32                      subtype      = (SInt32)d->auSubType;
+    SInt32                      manufacturer = (SInt32)d->auManufacturer;
 
-#define PUT_INT(key, value)                                                          \
-    do {                                                                             \
-        CFNumberRef n = CFNumberCreate(NULL, kCFNumberSInt32Type, &(value));          \
-        if (n != NULL) {                                                             \
-            CFDictionarySetValue(dict, CFSTR(key), n);                               \
-            CFRelease(n);                                                            \
-        }                                                                            \
-    } while (0)
+#define PUT_INT(key, value)                                                 \
+   do {                                                                     \
+       CFNumberRef n = CFNumberCreate(NULL, kCFNumberSInt32Type, &(value)); \
+       if (n != NULL) {                                                     \
+           CFDictionarySetValue(dict, CFSTR(key), n);                       \
+           CFRelease(n);                                                    \
+       }                                                                    \
+   } while (0)
 
     PUT_INT(kAUPresetVersionKey, version);
     PUT_INT(kAUPresetTypeKey, type);
@@ -371,7 +383,6 @@ static CFDictionaryRef copy_class_info(tSynthLibAu * au) {
     if (au->currentPreset.presetName != NULL) {
         CFDictionarySetValue(dict, CFSTR(kAUPresetNameKey), au->currentPreset.presetName);
     }
-
     // OUR OWN BLOB, BYTE FOR BYTE THE ONE THE VST3 SIDE WRITES. That is what lets a patch saved in
     // one format be read back by the other, and stops the two from drifting over what a saved
     // plug-in means - see synthlibPluginState.h.
@@ -395,21 +406,21 @@ static CFDictionaryRef copy_class_info(tSynthLibAu * au) {
 }
 
 static OSStatus apply_class_info(tSynthLibAu * au, CFDictionaryRef dict) {
-    const tSynthLibPluginDesc * d = au->desc;
+    const tSynthLibPluginDesc * d          = au->desc;
 
     if (dict == NULL) {
         return kAudioUnitErr_InvalidPropertyValue;
     }
-    CFDataRef data = (CFDataRef)CFDictionaryGetValue(dict, CFSTR(kAUPresetDataKey));
+    CFDataRef                   data       = (CFDataRef)CFDictionaryGetValue(dict, CFSTR(kAUPresetDataKey));
 
     if ((data == NULL) || (CFGetTypeID(data) != CFDataGetTypeID())) {
         return noErr;       // a dictionary with no data of ours in it is not an error, just nothing to do
     }
-    uint32_t              capacity   = (au->params.count > 0u) ? au->params.count : 1u;
-    tSynthLibParamValue * values     = (tSynthLibParamValue *)calloc(capacity, sizeof(tSynthLibParamValue));
-    uint32_t              got        = 0;
-    const void *          pluginData = NULL;
-    size_t                pluginLen  = 0;
+    uint32_t                    capacity   = (au->params.count > 0u) ? au->params.count : 1u;
+    tSynthLibParamValue *       values     = (tSynthLibParamValue *)calloc(capacity, sizeof(tSynthLibParamValue));
+    uint32_t                    got        = 0;
+    const void *                pluginData = NULL;
+    size_t                      pluginLen  = 0;
 
     if (values == NULL) {
         return kAudioUnitErr_FailedInitialization;
@@ -436,7 +447,7 @@ static OSStatus apply_class_info(tSynthLibAu * au, CFDictionaryRef dict) {
         if (au->currentPreset.presetName != NULL) {
             CFRelease(au->currentPreset.presetName);
         }
-        au->currentPreset.presetName = CFStringCreateCopy(NULL, name);
+        au->currentPreset.presetName   = CFStringCreateCopy(NULL, name);
         au->currentPreset.presetNumber = -1;         // a restored state is a user preset, not a factory one
     }
     notify_listeners(au, kAudioUnitProperty_ParameterList, kAudioUnitScope_Global, 0);
@@ -454,7 +465,7 @@ static void send_prepare(tSynthLibAu * au) {
     if ((au->inst == NULL) || (d->cb.prepare == NULL)) {
         return;
     }
-    tSynthLibSetup setup;
+    tSynthLibSetup              setup;
 
     setup.sampleRate = au->sampleRate;
     setup.maxFrames  = au->maxFrames;
@@ -469,9 +480,13 @@ static void send_prepare(tSynthLibAu * au) {
 static UInt32 element_count(const tSynthLibPluginDesc * d, AudioUnitScope scope) {
     switch (scope) {
         case kAudioUnitScope_Global: return 1;
+
         case kAudioUnitScope_Input:  return d->numInputs;
+
         case kAudioUnitScope_Output: return (d->numOutputs > 0u) ? 1u : 0u;   // notes §12 (synthlibPlugin.h) - the main bus only
+
         case kAudioUnitScope_Group:  return d->isInstrument ? 1 : 0;
+
         default:                     return 0;
     }
 }
@@ -511,13 +526,14 @@ static uint32_t visible_count(const tSynthLibAu * au) {
             count++;
         }
     }
+
     return count;
 }
 
 static OSStatus au_get_property_info(void * self, AudioUnitPropertyID id, AudioUnitScope scope,
                                      AudioUnitElement element, UInt32 * outSize, Boolean * outWritable) {
-    tSynthLibAu *               au = (tSynthLibAu *)self;
-    const tSynthLibPluginDesc * d  = au->desc;
+    tSynthLibAu *               au       = (tSynthLibAu *)self;
+    const tSynthLibPluginDesc * d        = au->desc;
     UInt32                      size     = 0;
     Boolean                     writable = false;
 
@@ -538,7 +554,7 @@ static OSStatus au_get_property_info(void * self, AudioUnitPropertyID id, AudioU
 
         case kAudioUnitProperty_ParameterList:
             // notes §4
-            size = (scope == kAudioUnitScope_Global)
+            size     = (scope == kAudioUnitScope_Global)
                    ? (UInt32)(visible_count(au) * sizeof(AudioUnitParameterID))
                    : 0;
             break;
@@ -546,17 +562,19 @@ static OSStatus au_get_property_info(void * self, AudioUnitPropertyID id, AudioU
         // THE ELEMENT IS THE PARAMETER ID, not its position - which only mattered once a plug-in's
         // ids stopped being their positions.
         case kAudioUnitProperty_ParameterInfo:
+
             if (synthlib_params_index(&au->params, (uint32_t)element) < 0) {
                 return kAudioUnitErr_InvalidElement;
             }
-            size = sizeof(AudioUnitParameterInfo);
+            size     = sizeof(AudioUnitParameterInfo);
             break;
 
-        case kAudioUnitProperty_ParameterValueStrings: {
+        case kAudioUnitProperty_ParameterValueStrings:
+        {
             tSynthLibParamDesc p;
 
-            if ((synthlib_params_describe(&au->params, d, au->inst, (uint32_t)element, &p) == false) ||
-                (is_list(&p) == false)) {
+            if (  (synthlib_params_describe(&au->params, d, au->inst, (uint32_t)element, &p) == false)
+               || (is_list(&p) == false)) {
                 return kAudioUnitErr_InvalidProperty;
             }
             size = sizeof(CFArrayRef);
@@ -564,6 +582,7 @@ static OSStatus au_get_property_info(void * self, AudioUnitPropertyID id, AudioU
         }
 
         case kAudioUnitProperty_StreamFormat:
+
             if (element_count(d, scope) == 0) {
                 return kAudioUnitErr_InvalidScope;
             }
@@ -572,16 +591,16 @@ static OSStatus au_get_property_info(void * self, AudioUnitPropertyID id, AudioU
             break;
 
         case kAudioUnitProperty_ElementCount:
-            size = sizeof(UInt32);
+            size     = sizeof(UInt32);
             break;
 
         case kAudioUnitProperty_Latency:
         case kAudioUnitProperty_TailTime:
-            size = sizeof(Float64);
+            size     = sizeof(Float64);
             break;
 
         case kAudioUnitProperty_SupportedNumChannels:
-            size = sizeof(AUChannelInfo);
+            size     = sizeof(AUChannelInfo);
             break;
 
         case kAudioUnitProperty_MaximumFramesPerSlice:
@@ -599,6 +618,7 @@ static OSStatus au_get_property_info(void * self, AudioUnitPropertyID id, AudioU
         // A HOST'S BYPASS BUTTON, which auval lists among the properties an effect should have. Only
         // an effect: an instrument has no input for a bypass to hand on.
         case kAudioUnitProperty_BypassEffect:
+
             if ((d->isInstrument == true) || (input_channels(d) == 0u)) {
                 return kAudioUnitErr_InvalidProperty;
             }
@@ -610,6 +630,7 @@ static OSStatus au_get_property_info(void * self, AudioUnitPropertyID id, AudioU
         // transport; there is nothing to read back, so GetProperty refuses them and only the size
         // and the writable flag are meaningful here.
         case kAudioUnitProperty_HostCallbacks:
+
             if (d->wantsTransport == false) {
                 return kAudioUnitErr_InvalidProperty;
             }
@@ -618,6 +639,7 @@ static OSStatus au_get_property_info(void * self, AudioUnitPropertyID id, AudioU
             break;
 
         case kAudioUnitProperty_MakeConnection:
+
             if (element_count(d, kAudioUnitScope_Input) == 0u) {
                 return kAudioUnitErr_InvalidProperty;
             }
@@ -626,6 +648,7 @@ static OSStatus au_get_property_info(void * self, AudioUnitPropertyID id, AudioU
             break;
 
         case kAudioUnitProperty_SetRenderCallback:
+
             if (element_count(d, kAudioUnitScope_Input) == 0u) {
                 return kAudioUnitErr_InvalidProperty;
             }
@@ -634,11 +657,11 @@ static OSStatus au_get_property_info(void * self, AudioUnitPropertyID id, AudioU
             break;
 
         case kAudioUnitProperty_LastRenderError:
-            size = sizeof(OSStatus);
+            size     = sizeof(OSStatus);
             break;
 
         case kAudioUnitProperty_FactoryPresets:
-            size = sizeof(CFArrayRef);
+            size     = sizeof(CFArrayRef);
             break;
 
         case kAudioUnitProperty_PresentPreset:
@@ -647,27 +670,29 @@ static OSStatus au_get_property_info(void * self, AudioUnitPropertyID id, AudioU
             break;
 
         case kAudioUnitProperty_CocoaUI:
+
             if ((d->cb.createView == NULL) || (d->editorDefaultWidth <= 0.0)) {
                 return kAudioUnitErr_InvalidProperty;
             }
-            size = sizeof(AudioUnitCocoaViewInfo);
+            size     = sizeof(AudioUnitCocoaViewInfo);
             break;
 
         case kAudioUnitProperty_ParameterStringFromValue:
-            size = sizeof(AudioUnitParameterStringFromValue);
+            size     = sizeof(AudioUnitParameterStringFromValue);
             break;
 
         // notes §5
 
         case kMusicDeviceProperty_InstrumentCount:
+
             if (d->isInstrument == false) {
                 return kAudioUnitErr_InvalidProperty;
             }
-            size = sizeof(UInt32);
+            size     = sizeof(UInt32);
             break;
 
         case kSynthLibAuProperty_Instance:
-            size = sizeof(tSynthLibAuHandle);
+            size     = sizeof(tSynthLibAuHandle);
             break;
 
         default:
@@ -686,8 +711,8 @@ static OSStatus au_get_property_info(void * self, AudioUnitPropertyID id, AudioU
 
 static OSStatus au_get_property(void * self, AudioUnitPropertyID id, AudioUnitScope scope,
                                 AudioUnitElement element, void * outData, UInt32 * ioDataSize) {
-    tSynthLibAu *               au = (tSynthLibAu *)self;
-    const tSynthLibPluginDesc * d  = au->desc;
+    tSynthLibAu *               au       = (tSynthLibAu *)self;
+    const tSynthLibPluginDesc * d        = au->desc;
     UInt32                      size     = 0;
     Boolean                     writable = false;
     OSStatus                    err      = au_get_property_info(self, id, scope, element, &size, &writable);
@@ -706,7 +731,8 @@ static OSStatus au_get_property(void * self, AudioUnitPropertyID id, AudioUnitSc
     }
 
     switch (id) {
-        case kAudioUnitProperty_ClassInfo: {
+        case kAudioUnitProperty_ClassInfo:
+        {
             CFDictionaryRef dict = copy_class_info(au);
 
             if (dict == NULL) {
@@ -720,7 +746,8 @@ static OSStatus au_get_property(void * self, AudioUnitPropertyID id, AudioUnitSc
             *(Float64 *)outData = au->sampleRate;
             break;
 
-        case kAudioUnitProperty_ParameterList: {
+        case kAudioUnitProperty_ParameterList:
+        {
             AudioUnitParameterID * ids = (AudioUnitParameterID *)outData;
             uint32_t               n   = 0;
 
@@ -729,10 +756,12 @@ static OSStatus au_get_property(void * self, AudioUnitPropertyID id, AudioUnitSc
                     ids[n++] = (AudioUnitParameterID)au->params.ids[i];
                 }
             }
+
             break;
         }
 
-        case kAudioUnitProperty_ParameterInfo: {
+        case kAudioUnitProperty_ParameterInfo:
+        {
             tSynthLibParamDesc       p;
             AudioUnitParameterInfo * info = (AudioUnitParameterInfo *)outData;
 
@@ -748,30 +777,30 @@ static OSStatus au_get_property(void * self, AudioUnitPropertyID id, AudioUnitSc
 
             // CFNameRelease says the caller owns the string we just made. Without it the host leaks
             // one CFString per parameter per query, and a host queries often.
-            info->flags = kAudioUnitParameterFlag_IsReadable |
-                          kAudioUnitParameterFlag_IsWritable |
-                          kAudioUnitParameterFlag_HasCFNameString |
-                          kAudioUnitParameterFlag_CFNameRelease |
-                          kAudioUnitParameterFlag_IsHighResolution;
+            info->flags        = kAudioUnitParameterFlag_IsReadable |
+                                 kAudioUnitParameterFlag_IsWritable |
+                                 kAudioUnitParameterFlag_HasCFNameString |
+                                 kAudioUnitParameterFlag_CFNameRelease |
+                                 kAudioUnitParameterFlag_IsHighResolution;
 
             if (is_list(&p) == true) {
                 info->flags |= kAudioUnitParameterFlag_ValuesHaveStrings;
             }
-
             // The 52-byte name is the legacy field, filled as well as the CFString: some hosts and
             // every old one read only this.
             strncpy(info->name, p.title, sizeof(info->name) - 1);
             break;
         }
 
-        case kAudioUnitProperty_ParameterValueStrings: {
-            tSynthLibParamDesc     p;
-            CFMutableArrayRef      names;
+        case kAudioUnitProperty_ParameterValueStrings:
+        {
+            tSynthLibParamDesc p;
+            CFMutableArrayRef  names;
 
             if (synthlib_params_describe(&au->params, d, au->inst, (uint32_t)element, &p) == false) {
                 return kAudioUnitErr_InvalidElement;
             }
-            names = CFArrayCreateMutable(NULL, p.stepCount + 1, &kCFTypeArrayCallBacks);
+            names                  = CFArrayCreateMutable(NULL, p.stepCount + 1, &kCFTypeArrayCallBacks);
 
             if (names == NULL) {
                 return kAudioUnitErr_FailedInitialization;
@@ -790,11 +819,13 @@ static OSStatus au_get_property(void * self, AudioUnitPropertyID id, AudioUnitSc
                     CFRelease(s);
                 }
             }
+
             *(CFArrayRef *)outData = names;             // the caller releases it
             break;
         }
 
-        case kAudioUnitProperty_StreamFormat: {
+        case kAudioUnitProperty_StreamFormat:
+        {
             UInt32 channels = (scope == kAudioUnitScope_Input) ? input_channels(d)
                                                                : output_channels(d);
 
@@ -803,10 +834,11 @@ static OSStatus au_get_property(void * self, AudioUnitPropertyID id, AudioUnitSc
         }
 
         case kAudioUnitProperty_ElementCount:
-            *(UInt32 *)outData = element_count(d, scope);
+            *(UInt32 *)outData   = element_count(d, scope);
             break;
 
-        case kAudioUnitProperty_Latency: {
+        case kAudioUnitProperty_Latency:
+        {
             uint32_t samples = ((au->inst != NULL) && (d->cb.latencySamples != NULL))
                                ? d->cb.latencySamples(au->inst) : 0u;
 
@@ -819,10 +851,11 @@ static OSStatus au_get_property(void * self, AudioUnitPropertyID id, AudioUnitSc
             // THE NEAREST AN AUDIO UNIT CAN COME TO VST3'S kInfiniteTail. There are reverbs and delays
             // in these engines, so a host must not decide the plug-in has finished the moment the
             // notes stop.
-            *(Float64 *)outData = 10.0;
+            *(Float64 *)outData  = 10.0;
             break;
 
-        case kAudioUnitProperty_SupportedNumChannels: {
+        case kAudioUnitProperty_SupportedNumChannels:
+        {
             AUChannelInfo * info = (AUChannelInfo *)outData;
 
             info->inChannels  = (SInt16)input_channels(d);
@@ -831,15 +864,15 @@ static OSStatus au_get_property(void * self, AudioUnitPropertyID id, AudioUnitSc
         }
 
         case kAudioUnitProperty_MaximumFramesPerSlice:
-            *(UInt32 *)outData = au->maxFrames;
+            *(UInt32 *)outData   = au->maxFrames;
             break;
 
         case kAudioUnitProperty_OfflineRender:
-            *(UInt32 *)outData = au->offline ? 1u : 0u;
+            *(UInt32 *)outData   = au->offline ? 1u : 0u;
             break;
 
         case kAudioUnitProperty_BypassEffect:
-            *(UInt32 *)outData = au->bypassed ? 1u : 0u;
+            *(UInt32 *)outData   = au->bypassed ? 1u : 0u;
             break;
 
         case kAudioUnitProperty_HostCallbacks:
@@ -848,14 +881,15 @@ static OSStatus au_get_property(void * self, AudioUnitPropertyID id, AudioUnitSc
             return kAudioUnitErr_InvalidPropertyValue;      // the host writes these; there is no read
 
         case kAudioUnitProperty_LastRenderError:
-            *(OSStatus *)outData  = au->lastRenderError;
-            au->lastRenderError   = noErr;      // reading it clears it, as a host expects
+            *(OSStatus *)outData = au->lastRenderError;
+            au->lastRenderError  = noErr;       // reading it clears it, as a host expects
             break;
 
-        case kAudioUnitProperty_FactoryPresets: {
+        case kAudioUnitProperty_FactoryPresets:
+        {
             // notes §6
-            static const AUPreset kFactoryPresets[1] = { { 0, CFSTR("Default") } };
-            const void *          items[1]           = { &kFactoryPresets[0] };
+            static const AUPreset kFactoryPresets[1] = {{0, CFSTR("Default")}};
+            const void *          items[1]           = {&kFactoryPresets[0]};
             CFArrayRef            array              = CFArrayCreate(NULL, items, 1, NULL);
 
             if (array == NULL) {
@@ -865,7 +899,8 @@ static OSStatus au_get_property(void * self, AudioUnitPropertyID id, AudioUnitSc
             break;
         }
 
-        case kAudioUnitProperty_PresentPreset: {
+        case kAudioUnitProperty_PresentPreset:
+        {
             AUPreset * preset = (AUPreset *)outData;
 
             *preset = au->currentPreset;
@@ -876,8 +911,9 @@ static OSStatus au_get_property(void * self, AudioUnitPropertyID id, AudioUnitSc
             break;
         }
 
-        case kAudioUnitProperty_CocoaUI: {
-            AudioUnitCocoaViewInfo * info   = (AudioUnitCocoaViewInfo *)outData;
+        case kAudioUnitProperty_CocoaUI:
+        {
+            AudioUnitCocoaViewInfo * info = (AudioUnitCocoaViewInfo *)outData;
             CFStringRef              bundleId;
             CFBundleRef              bundle;
 
@@ -886,13 +922,13 @@ static OSStatus au_get_property(void * self, AudioUnitPropertyID id, AudioUnitSc
             if (d->auBundleId == NULL) {
                 return kAudioUnitErr_InvalidProperty;
             }
-            bundleId = CFStringCreateWithCString(NULL, d->auBundleId, kCFStringEncodingUTF8);
+            bundleId                         = CFStringCreateWithCString(NULL, d->auBundleId, kCFStringEncodingUTF8);
 
             if (bundleId == NULL) {
                 return kAudioUnitErr_FailedInitialization;
             }
             // notes §7
-            bundle = CFBundleGetBundleWithIdentifier(bundleId);
+            bundle                           = CFBundleGetBundleWithIdentifier(bundleId);
             CFRelease(bundleId);
 
             if (bundle == NULL) {
@@ -903,17 +939,18 @@ static OSStatus au_get_property(void * self, AudioUnitPropertyID id, AudioUnitSc
             break;
         }
 
-        case kAudioUnitProperty_ParameterStringFromValue: {
+        case kAudioUnitProperty_ParameterStringFromValue:
+        {
             AudioUnitParameterStringFromValue * req = (AudioUnitParameterStringFromValue *)outData;
             char                                text[128];
             double                              normalized;
 
-            tSynthLibParamDesc p;
+            tSynthLibParamDesc                  p;
 
             if (synthlib_params_describe(&au->params, d, au->inst, (uint32_t)req->inParamID, &p) == false) {
                 return kAudioUnitErr_InvalidParameter;
             }
-            normalized = (req->inValue != NULL) ? au_to_normalized(&p, (double)(*req->inValue))
+            normalized     = (req->inValue != NULL) ? au_to_normalized(&p, (double)(*req->inValue))
                                                 : synthlib_params_get(&au->params, (uint32_t)req->inParamID);
 
             if (synthlib_param_text(d, au->inst, &p, normalized, text, sizeof(text)) == false) {
@@ -928,7 +965,8 @@ static OSStatus au_get_property(void * self, AudioUnitPropertyID id, AudioUnitSc
             *(UInt32 *)outData = 0;
             break;
 
-        case kSynthLibAuProperty_Instance: {
+        case kSynthLibAuProperty_Instance:
+        {
             tSynthLibAuHandle * handle = (tSynthLibAuHandle *)outData;
 
             handle->desc = au->desc;
@@ -955,12 +993,14 @@ static OSStatus au_set_property(void * self, AudioUnitPropertyID id, AudioUnitSc
 
     switch (id) {
         case kAudioUnitProperty_ClassInfo:
+
             if ((inData == NULL) || (inDataSize < sizeof(CFPropertyListRef))) {
                 return kAudioUnitErr_InvalidPropertyValue;
             }
             return apply_class_info(au, *(CFDictionaryRef *)inData);
 
-        case kAudioUnitProperty_SampleRate: {
+        case kAudioUnitProperty_SampleRate:
+        {
             if ((inData == NULL) || (inDataSize < sizeof(Float64))) {
                 return kAudioUnitErr_InvalidPropertyValue;
             }
@@ -978,22 +1018,23 @@ static OSStatus au_set_property(void * self, AudioUnitPropertyID id, AudioUnitSc
             return noErr;
         }
 
-        case kAudioUnitProperty_StreamFormat: {
+        case kAudioUnitProperty_StreamFormat:
+        {
             if ((inData == NULL) || (inDataSize < sizeof(AudioStreamBasicDescription))) {
                 return kAudioUnitErr_InvalidPropertyValue;
             }
-            const AudioStreamBasicDescription * asbd = (const AudioStreamBasicDescription *)inData;
-            UInt32 channels = (scope == kAudioUnitScope_Input) ? input_channels(d)
+            const AudioStreamBasicDescription * asbd     = (const AudioStreamBasicDescription *)inData;
+            UInt32                              channels = (scope == kAudioUnitScope_Input) ? input_channels(d)
                                                                : output_channels(d);
 
             // ONLY THE ONE FORMAT, AND SAYING SO IS WHAT LETS au_render() TRUST ITS BUFFERS. A host
             // told "no" here picks another; a host allowed to set an interleaved or 16-bit format
             // would hand over buffers this wrapper would then have to repack at every block.
-            if ((asbd->mFormatID != kAudioFormatLinearPCM) ||
-                ((asbd->mFormatFlags & kAudioFormatFlagIsFloat) == 0) ||
-                ((asbd->mFormatFlags & kAudioFormatFlagIsNonInterleaved) == 0) ||
-                (asbd->mBitsPerChannel != 32) ||
-                (asbd->mChannelsPerFrame != channels)) {
+            if (  (asbd->mFormatID != kAudioFormatLinearPCM)
+               || ((asbd->mFormatFlags & kAudioFormatFlagIsFloat) == 0)
+               || ((asbd->mFormatFlags & kAudioFormatFlagIsNonInterleaved) == 0)
+               || (asbd->mBitsPerChannel != 32)
+               || (asbd->mChannelsPerFrame != channels)) {
                 return kAudioUnitErr_FormatNotSupported;
             }
 
@@ -1007,7 +1048,8 @@ static OSStatus au_set_property(void * self, AudioUnitPropertyID id, AudioUnitSc
             return noErr;
         }
 
-        case kAudioUnitProperty_MaximumFramesPerSlice: {
+        case kAudioUnitProperty_MaximumFramesPerSlice:
+        {
             if ((inData == NULL) || (inDataSize < sizeof(UInt32))) {
                 return kAudioUnitErr_InvalidPropertyValue;
             }
@@ -1020,7 +1062,8 @@ static OSStatus au_set_property(void * self, AudioUnitPropertyID id, AudioUnitSc
             return noErr;
         }
 
-        case kAudioUnitProperty_OfflineRender: {
+        case kAudioUnitProperty_OfflineRender:
+        {
             if ((inData == NULL) || (inDataSize < sizeof(UInt32))) {
                 return kAudioUnitErr_InvalidPropertyValue;
             }
@@ -1036,7 +1079,8 @@ static OSStatus au_set_property(void * self, AudioUnitPropertyID id, AudioUnitSc
             return noErr;
         }
 
-        case kAudioUnitProperty_BypassEffect: {
+        case kAudioUnitProperty_BypassEffect:
+        {
             if ((inData == NULL) || (inDataSize < sizeof(UInt32))) {
                 return kAudioUnitErr_InvalidPropertyValue;
             }
@@ -1045,7 +1089,8 @@ static OSStatus au_set_property(void * self, AudioUnitPropertyID id, AudioUnitSc
             return noErr;
         }
 
-        case kAudioUnitProperty_PresentPreset: {
+        case kAudioUnitProperty_PresentPreset:
+        {
             if ((inData == NULL) || (inDataSize < sizeof(AUPreset))) {
                 return kAudioUnitErr_InvalidPropertyValue;
             }
@@ -1071,7 +1116,8 @@ static OSStatus au_set_property(void * self, AudioUnitPropertyID id, AudioUnitSc
 
         // WHERE THE HOST'S TRANSPORT COMES FROM, and it is a set of function pointers we CALL rather
         // than a block of facts we are given - see fill_transport() for what that costs.
-        case kAudioUnitProperty_HostCallbacks: {
+        case kAudioUnitProperty_HostCallbacks:
+        {
             if (d->wantsTransport == false) {
                 return kAudioUnitErr_InvalidProperty;
             }
@@ -1094,19 +1140,21 @@ static OSStatus au_set_property(void * self, AudioUnitPropertyID id, AudioUnitSc
 
         // The two ways a host feeds an effect. An instrument declares no input bus, and then both
         // are refused above by the element count.
-        case kAudioUnitProperty_MakeConnection: {
+        case kAudioUnitProperty_MakeConnection:
+        {
             if ((inData == NULL) || (inDataSize < sizeof(AudioUnitConnection))) {
                 return kAudioUnitErr_InvalidPropertyValue;
             }
             const AudioUnitConnection * conn = (const AudioUnitConnection *)inData;
 
-            au->inputSourceUnit     = conn->sourceAudioUnit;
-            au->inputSourceBus      = conn->sourceOutputNumber;
-            au->haveInputCallback   = false;        // a connection replaces a callback
+            au->inputSourceUnit   = conn->sourceAudioUnit;
+            au->inputSourceBus    = conn->sourceOutputNumber;
+            au->haveInputCallback = false;          // a connection replaces a callback
             return noErr;
         }
 
-        case kAudioUnitProperty_SetRenderCallback: {
+        case kAudioUnitProperty_SetRenderCallback:
+        {
             if ((inData == NULL) || (inDataSize < sizeof(AURenderCallbackStruct))) {
                 return kAudioUnitErr_InvalidPropertyValue;
             }
@@ -1144,15 +1192,16 @@ static OSStatus au_remove_property_listener_with_user_data(void * self, AudioUni
                                                            void * userData) {
     tSynthLibAu * au = (tSynthLibAu *)self;
 
-    for (UInt32 i = 0; i < au->listenerCount; ) {
-        if ((au->listeners[i].id == id) && (au->listeners[i].proc == proc) &&
-            (au->listeners[i].userData == userData)) {
+    for (UInt32 i = 0; i < au->listenerCount;) {
+        if (  (au->listeners[i].id == id) && (au->listeners[i].proc == proc)
+           && (au->listeners[i].userData == userData)) {
             au->listeners[i] = au->listeners[au->listenerCount - 1];
             au->listenerCount--;
         } else {
             i++;
         }
     }
+
     return noErr;
 }
 
@@ -1160,7 +1209,7 @@ static OSStatus au_remove_property_listener(void * self, AudioUnitPropertyID id,
                                             AudioUnitPropertyListenerProc proc) {
     tSynthLibAu * au = (tSynthLibAu *)self;
 
-    for (UInt32 i = 0; i < au->listenerCount; ) {
+    for (UInt32 i = 0; i < au->listenerCount;) {
         if ((au->listeners[i].id == id) && (au->listeners[i].proc == proc)) {
             au->listeners[i] = au->listeners[au->listenerCount - 1];
             au->listenerCount--;
@@ -1168,6 +1217,7 @@ static OSStatus au_remove_property_listener(void * self, AudioUnitPropertyID id,
             i++;
         }
     }
+
     return noErr;
 }
 
@@ -1186,7 +1236,7 @@ static OSStatus au_add_render_notify(void * self, AURenderCallback proc, void * 
 static OSStatus au_remove_render_notify(void * self, AURenderCallback proc, void * userData) {
     tSynthLibAu * au = (tSynthLibAu *)self;
 
-    for (UInt32 i = 0; i < au->renderNotifyCount; ) {
+    for (UInt32 i = 0; i < au->renderNotifyCount;) {
         if ((au->renderNotify[i].proc == proc) && (au->renderNotify[i].userData == userData)) {
             au->renderNotify[i] = au->renderNotify[au->renderNotifyCount - 1];
             au->renderNotifyCount--;
@@ -1194,6 +1244,7 @@ static OSStatus au_remove_render_notify(void * self, AURenderCallback proc, void
             i++;
         }
     }
+
     return noErr;
 }
 
@@ -1204,18 +1255,18 @@ static OSStatus au_remove_render_notify(void * self, AURenderCallback proc, void
 // FALSE WHEN FULL, and the event is dropped - which a render that empties the queue every time makes
 // a matter of a host scheduling a thousand events between two renders.
 static bool enqueue(tSynthLibAu * au, const tQueuedEvent * event) {
-    bool queued = false;
+    bool     queued = false;
 
     while (atomic_flag_test_and_set_explicit(&au->eventProducer, memory_order_acquire) == true) {
         // Another producer, for the handful of instructions below. Never the render.
     }
-    uint32_t write = atomic_load_explicit(&au->eventWrite, memory_order_relaxed);
-    uint32_t read  = atomic_load_explicit(&au->eventRead, memory_order_acquire);
+    uint32_t write  = atomic_load_explicit(&au->eventWrite, memory_order_relaxed);
+    uint32_t read   = atomic_load_explicit(&au->eventRead, memory_order_acquire);
 
     if ((write - read) < (uint32_t)EVENT_QUEUE_SIZE) {
         au->events[write % EVENT_QUEUE_SIZE] = *event;
         atomic_store_explicit(&au->eventWrite, write + 1u, memory_order_release);
-        queued = true;
+        queued                               = true;
     }
     atomic_flag_clear_explicit(&au->eventProducer, memory_order_release);
     return queued;
@@ -1249,18 +1300,17 @@ static void queue_param(tSynthLibAu * au, uint32_t id, double normalized, uint32
 
 static OSStatus au_get_parameter(void * self, AudioUnitParameterID id, AudioUnitScope scope,
                                  AudioUnitElement element, AudioUnitParameterValue * outValue) {
-    tSynthLibAu * au = (tSynthLibAu *)self;
+    tSynthLibAu *      au = (tSynthLibAu *)self;
 
     (void)element;
 
     if (scope != kAudioUnitScope_Global) {
         return kAudioUnitErr_InvalidScope;
     }
-
     tSynthLibParamDesc p;
 
-    if ((outValue == NULL) ||
-        (synthlib_params_describe(&au->params, au->desc, au->inst, (uint32_t)id, &p) == false)) {
+    if (  (outValue == NULL)
+       || (synthlib_params_describe(&au->params, au->desc, au->inst, (uint32_t)id, &p) == false)) {
         return kAudioUnitErr_InvalidParameter;
     }
     // PLAIN, not normalized. An Audio Unit's parameter values are in the range it declared in
@@ -1276,7 +1326,7 @@ static OSStatus au_get_parameter(void * self, AudioUnitParameterID id, AudioUnit
 static OSStatus au_set_parameter(void * self, AudioUnitParameterID id, AudioUnitScope scope,
                                  AudioUnitElement element, AudioUnitParameterValue value,
                                  UInt32 inBufferOffsetInFrames) {
-    tSynthLibAu * au = (tSynthLibAu *)self;
+    tSynthLibAu *      au = (tSynthLibAu *)self;
 
     (void)element;
     (void)inBufferOffsetInFrames;
@@ -1284,7 +1334,6 @@ static OSStatus au_set_parameter(void * self, AudioUnitParameterID id, AudioUnit
     if (scope != kAudioUnitScope_Global) {
         return kAudioUnitErr_InvalidScope;
     }
-
     tSynthLibParamDesc p;
 
     if (synthlib_params_describe(&au->params, au->desc, au->inst, (uint32_t)id, &p) == false) {
@@ -1308,8 +1357,8 @@ static OSStatus au_schedule_parameters(void * self, const AudioUnitParameterEven
         const AudioUnitParameterEvent * e = &events[i];
         tSynthLibParamDesc              p;
 
-        if ((e->scope != kAudioUnitScope_Global) ||
-            (synthlib_params_describe(&au->params, au->desc, au->inst, (uint32_t)e->parameter, &p) == false)) {
+        if (  (e->scope != kAudioUnitScope_Global)
+           || (synthlib_params_describe(&au->params, au->desc, au->inst, (uint32_t)e->parameter, &p) == false)) {
             continue;
         }
 
@@ -1330,6 +1379,7 @@ static OSStatus au_schedule_parameters(void * self, const AudioUnitParameterEven
                         e->eventValues.immediate.bufferOffset);
         }
     }
+
     return noErr;
 }
 
@@ -1381,8 +1431,8 @@ static bool map_control(tSynthLibAu * au, uint8_t channel, int16_t control, uint
     const tSynthLibPluginDesc * d = au->desc;
 
     if (d->cb.midiMapping != NULL) {
-        return (d->cb.midiMapping(d, au->inst, channel, control, idOut) == true) &&
-               (synthlib_params_index(&au->params, *idOut) >= 0);
+        return (d->cb.midiMapping(d, au->inst, channel, control, idOut) == true)
+               && (synthlib_params_index(&au->params, *idOut) >= 0);
     }
 
     for (uint32_t i = 0; i < au->params.count; i++) {
@@ -1393,6 +1443,7 @@ static bool map_control(tSynthLibAu * au, uint8_t channel, int16_t control, uint
             return true;
         }
     }
+
     return false;
 }
 
@@ -1425,6 +1476,7 @@ static void deliver_midi(tSynthLibAu * au, const tQueuedEvent * e, uint32_t offs
 
     switch (e->status & 0xF0u) {
         case 0x90:      // note on - and a note on at zero velocity is a note off, as it is on the wire
+
             if ((e->data2 > 0u) && (d->cb.noteOn != NULL)) {
                 d->cb.noteOn(au->inst, channel, e->data1, (float)e->data2 / 127.0f, offset);
             } else if (d->cb.noteOff != NULL) {
@@ -1433,18 +1485,21 @@ static void deliver_midi(tSynthLibAu * au, const tQueuedEvent * e, uint32_t offs
             break;
 
         case 0x80:      // note off
+
             if (d->cb.noteOff != NULL) {
                 d->cb.noteOff(au->inst, channel, e->data1, (float)e->data2 / 127.0f, offset);
             }
             break;
 
         case 0xA0:      // POLYPHONIC key pressure, which is not channel pressure and not a controller
+
             if (d->cb.polyPressure != NULL) {
                 d->cb.polyPressure(au->inst, channel, e->data1, (float)e->data2 / 127.0f, offset);
             }
             break;
 
         case 0xB0:      // continuous controller
+
             if (map_control(au, channel, (int16_t)e->data1, &id) == true) {
                 point.value = (double)e->data2 / 127.0;
                 deliver_points(au, id, &point, 1u);
@@ -1458,6 +1513,7 @@ static void deliver_midi(tSynthLibAu * au, const tQueuedEvent * e, uint32_t offs
             break;
 
         case 0xC0:      // program change, onto the parameter flagged SYNTHLIB_PARAM_PROGRAM, as a VST3 host does it
+
             for (uint32_t i = 0; i < au->params.count; i++) {
                 tSynthLibParamDesc p;
 
@@ -1467,9 +1523,11 @@ static void deliver_midi(tSynthLibAu * au, const tQueuedEvent * e, uint32_t offs
                     break;
                 }
             }
+
             break;
 
         case 0xD0:      // channel pressure
+
             if (map_control(au, channel, SYNTHLIB_MIDI_AFTERTOUCH, &id) == true) {
                 point.value = (double)e->data1 / 127.0;
                 deliver_points(au, id, &point, 1u);
@@ -1477,6 +1535,7 @@ static void deliver_midi(tSynthLibAu * au, const tQueuedEvent * e, uint32_t offs
             break;
 
         case 0xE0:      // pitch bend, 14 bits across the two data bytes, 0x2000 at rest
+
             if (map_control(au, channel, SYNTHLIB_MIDI_PITCH_BEND, &id) == true) {
                 point.value = (double)((uint32_t)e->data1 | ((uint32_t)e->data2 << 7)) / 16383.0;
                 deliver_points(au, id, &point, 1u);
@@ -1497,7 +1556,7 @@ static void drain_events(tSynthLibAu * au, uint32_t frames) {
     uint32_t last  = (frames > 0u) ? (frames - 1u) : 0u;
 
     while (read != write) {
-        const tQueuedEvent * e = &au->events[read % EVENT_QUEUE_SIZE];
+        const tQueuedEvent * e     = &au->events[read % EVENT_QUEUE_SIZE];
 
         if (e->isParam == false) {
             deliver_midi(au, e, (e->offset < last) ? e->offset : last);
@@ -1506,12 +1565,12 @@ static void drain_events(tSynthLibAu * au, uint32_t frames) {
         }
         // A RUN OF ONE PARAMETER'S POINTS goes over as one call, so a plug-in that looks for a press
         // among a block's points - GenBridge's Measure - sees a press and its release together.
-        tSynthLibParamPoint points[MAX_POINTS];
-        uint32_t            count = 0;
-        uint32_t            id    = e->id;
+        tSynthLibParamPoint  points[MAX_POINTS];
+        uint32_t             count = 0;
+        uint32_t             id    = e->id;
 
-        while ((read != write) && au->events[read % EVENT_QUEUE_SIZE].isParam &&
-               (au->events[read % EVENT_QUEUE_SIZE].id == id)) {
+        while (  (read != write) && au->events[read % EVENT_QUEUE_SIZE].isParam
+              && (au->events[read % EVENT_QUEUE_SIZE].id == id)) {
             const tQueuedEvent * p = &au->events[read % EVENT_QUEUE_SIZE];
 
             if (count == MAX_POINTS) {
@@ -1533,7 +1592,7 @@ static OSStatus ensure_owned_buffer(tSynthLibAu * au, UInt32 frames) {
     if (au->ownedFrames >= frames) {
         return noErr;
     }
-    float * block = (float *)realloc(au->ownedSamples, (size_t)frames * channels * sizeof(float));
+    float *  block    = (float *)realloc(au->ownedSamples, (size_t)frames * channels * sizeof(float));
 
     if (block == NULL) {
         return kAudioUnitErr_FailedInitialization;
@@ -1569,6 +1628,7 @@ static OSStatus pull_input(tSynthLibAu * au, AudioUnitRenderActionFlags * flags,
         au->inputList->mBuffers[c].mDataByteSize   = frames * (UInt32)sizeof(float);
         au->inputList->mBuffers[c].mData           = au->inputSamples + ((size_t)c * au->inputFrames);
     }
+
     au->inputList->mNumberBuffers = channels;
 
     AudioUnitRenderActionFlags inFlags = (flags != NULL) ? *flags : 0;
@@ -1589,6 +1649,7 @@ static OSStatus pull_input(tSynthLibAu * au, AudioUnitRenderActionFlags * flags,
     for (UInt32 c = 0; c < channels; c++) {
         au->inputChannels[c] = (const float *)au->inputList->mBuffers[c].mData;
     }
+
     return noErr;
 }
 
@@ -1630,11 +1691,11 @@ static void fill_transport(tSynthLibAu * au, const AudioTimeStamp * ts, tSynthLi
     }
 
     if (cb->transportStateProc2 != NULL) {
-        Boolean playing   = false;
-        Boolean recording = false;
-        Boolean changed   = false;
-        Float64 sample    = 0.0;
-        Boolean cycling   = false;
+        Boolean playing    = false;
+        Boolean recording  = false;
+        Boolean changed    = false;
+        Float64 sample     = 0.0;
+        Boolean cycling    = false;
         Float64 cycleStart = 0.0;
         Float64 cycleEnd   = 0.0;
 
@@ -1650,10 +1711,10 @@ static void fill_transport(tSynthLibAu * au, const AudioTimeStamp * ts, tSynthLi
             out->projectTimeSamples = (int64_t)sample;
         }
     } else if (cb->transportStateProc != NULL) {
-        Boolean playing = false;
-        Boolean changed = false;
-        Float64 sample  = 0.0;
-        Boolean cycling = false;
+        Boolean playing    = false;
+        Boolean changed    = false;
+        Float64 sample     = 0.0;
+        Boolean cycling    = false;
         Float64 cycleStart = 0.0;
         Float64 cycleEnd   = 0.0;
 
@@ -1670,10 +1731,10 @@ static void fill_transport(tSynthLibAu * au, const AudioTimeStamp * ts, tSynthLi
     }
 
     if (cb->musicalTimeLocationProc != NULL) {
-        UInt32  offset   = 0;
-        Float32 numerator = 0.0f;      // a time signature's top half is a FLOAT here, its bottom an int
+        UInt32  offset      = 0;
+        Float32 numerator   = 0.0f;    // a time signature's top half is a FLOAT here, its bottom an int
         UInt32  denominator = 0;
-        Float64 downBeat = 0.0;
+        Float64 downBeat    = 0.0;
 
         if (cb->musicalTimeLocationProc(cb->hostUserData, &offset, &numerator,
                                         &denominator, &downBeat) == noErr) {
@@ -1729,7 +1790,7 @@ static OSStatus au_render(void * self, AudioUnitRenderActionFlags * ioActionFlag
     // internal block stands in and the pointers are written back for the host to read.
     for (UInt32 c = 0; c < channels; c++) {
         if (ioData->mBuffers[c].mData == NULL) {
-            err = ensure_owned_buffer(au, inNumberFrames);
+            err                                 = ensure_owned_buffer(au, inNumberFrames);
 
             if (err != noErr) {
                 au->lastRenderError = err;
@@ -1741,7 +1802,8 @@ static OSStatus au_render(void * self, AudioUnitRenderActionFlags * ioActionFlag
         }
         au->channels[c] = (float *)ioData->mBuffers[c].mData;
     }
-    uint32_t numIn = 0;
+
+    uint32_t           numIn = 0;
 
     if (input_channels(d) > 0u) {
         err = pull_input(au, ioActionFlags, inTimeStamp, inNumberFrames);
@@ -1787,7 +1849,7 @@ static OSStatus au_render(void * self, AudioUnitRenderActionFlags * ioActionFlag
     // NOT SILENT, and saying so matters: the flag arrives set on some hosts, and leaving it set
     // tells the host it may skip everything downstream of us.
     if (ioActionFlags != NULL) {
-        *ioActionFlags &= (AudioUnitRenderActionFlags)~kAudioUnitRenderAction_OutputIsSilence;
+        *ioActionFlags &= (AudioUnitRenderActionFlags) ~kAudioUnitRenderAction_OutputIsSilence;
     }
 
     for (UInt32 i = 0; i < au->renderNotifyCount; i++) {
@@ -1796,6 +1858,7 @@ static OSStatus au_render(void * self, AudioUnitRenderActionFlags * ioActionFlag
         au->renderNotify[i].proc(au->renderNotify[i].userData, &f, inTimeStamp,
                                  inBusNumber, inNumberFrames, ioData);
     }
+
     au->lastRenderError = noErr;
     return noErr;
 }
@@ -1867,21 +1930,36 @@ static OSStatus au_uninitialize(void * self) {
 static AudioComponentMethod au_lookup_common(SInt16 selector) {
     switch (selector) {
         case kAudioUnitInitializeSelect:            return (AudioComponentMethod)au_initialize;
+
         case kAudioUnitUninitializeSelect:          return (AudioComponentMethod)au_uninitialize;
+
         case kAudioUnitGetPropertyInfoSelect:       return (AudioComponentMethod)au_get_property_info;
+
         case kAudioUnitGetPropertySelect:           return (AudioComponentMethod)au_get_property;
+
         case kAudioUnitSetPropertySelect:           return (AudioComponentMethod)au_set_property;
+
         case kAudioUnitAddPropertyListenerSelect:   return (AudioComponentMethod)au_add_property_listener;
+
         case kAudioUnitRemovePropertyListenerSelect: return (AudioComponentMethod)au_remove_property_listener;
+
         case kAudioUnitRemovePropertyListenerWithUserDataSelect:
             return (AudioComponentMethod)au_remove_property_listener_with_user_data;
+
         case kAudioUnitAddRenderNotifySelect:       return (AudioComponentMethod)au_add_render_notify;
+
         case kAudioUnitRemoveRenderNotifySelect:    return (AudioComponentMethod)au_remove_render_notify;
+
         case kAudioUnitGetParameterSelect:          return (AudioComponentMethod)au_get_parameter;
+
         case kAudioUnitSetParameterSelect:          return (AudioComponentMethod)au_set_parameter;
+
         case kAudioUnitScheduleParametersSelect:    return (AudioComponentMethod)au_schedule_parameters;
+
         case kAudioUnitRenderSelect:                return (AudioComponentMethod)au_render;
+
         case kAudioUnitResetSelect:                 return (AudioComponentMethod)au_reset;
+
         default:                                    return NULL;
     }
 }
@@ -1894,8 +1972,11 @@ static AudioComponentMethod au_lookup_effect(SInt16 selector) {
 static AudioComponentMethod au_lookup_music(SInt16 selector) {
     switch (selector) {
         case kMusicDeviceMIDIEventSelect: return (AudioComponentMethod)au_midi_event;
+
         case kMusicDeviceStartNoteSelect: return (AudioComponentMethod)au_start_note;
+
         case kMusicDeviceStopNoteSelect:  return (AudioComponentMethod)au_stop_note;
+
         default:                          return au_lookup_common(selector);
     }
 }
@@ -1997,13 +2078,13 @@ static void deliver_to_host(void * ctx) {
             event.mArgument.mParameter.mScope       = kAudioUnitScope_Global;
             event.mArgument.mParameter.mElement     = 0;
 
-            event.mEventType = kAudioUnitEvent_BeginParameterChangeGesture;
+            event.mEventType                        = kAudioUnitEvent_BeginParameterChangeGesture;
             AUEventListenerNotify(NULL, NULL, &event);
 
-            event.mEventType = kAudioUnitEvent_ParameterValueChange;
+            event.mEventType                        = kAudioUnitEvent_ParameterValueChange;
             AUEventListenerNotify(NULL, NULL, &event);
 
-            event.mEventType = kAudioUnitEvent_EndParameterChangeGesture;
+            event.mEventType                        = kAudioUnitEvent_EndParameterChangeGesture;
             AUEventListenerNotify(NULL, NULL, &event);
         }
     }
@@ -2016,7 +2097,7 @@ static void post_to_host(void * inst, uint32_t id, double value, bool latency) {
     if (inst == NULL) {
         return;
     }
-    post = (tHostPost *)malloc(sizeof(tHostPost));
+    post          = (tHostPost *)malloc(sizeof(tHostPost));
 
     if (post == NULL) {
         return;
@@ -2028,15 +2109,15 @@ static void post_to_host(void * inst, uint32_t id, double value, bool latency) {
     synthlib_run_on_main(deliver_to_host, post);
 }
 
-void synthlib_plugin_param_edited(void * inst, uint32_t id, double normalized) {
+void synthlib_au_param_edited(void * inst, uint32_t id, double normalized) {
     post_to_host(inst, id, normalized, false);
 }
 
-void synthlib_plugin_latency_changed(void * inst) {
+void synthlib_au_latency_changed(void * inst) {
     post_to_host(inst, 0u, 0.0, true);
 }
 
-double synthlib_plugin_param_value(void * inst, uint32_t id) {
+double synthlib_au_param_value(void * inst, uint32_t id) {
     tSynthLibAu * au = au_for(inst);
 
     return (au != NULL) ? synthlib_params_get(&au->params, id) : 0.0;
@@ -2045,7 +2126,7 @@ double synthlib_plugin_param_value(void * inst, uint32_t id) {
 // AN AUDIO UNIT IS ONE OBJECT, so there is no channel to cross - the message goes straight to the
 // callback. VST3 needs IConnectionPoint and an IMessage the host has to allocate; here the two
 // halves the message was invented to join are the same pointer.
-bool synthlib_plugin_send_message(void * inst, const char * id, int64_t value) {
+bool synthlib_au_send_message(void * inst, const char * id, int64_t value) {
     tSynthLibAu * au = au_for(inst);
 
     if ((au == NULL) || (au->desc->cb.message == NULL) || (id == NULL)) {
@@ -2056,7 +2137,7 @@ bool synthlib_plugin_send_message(void * inst, const char * id, int64_t value) {
 }
 
 // notes §11
-bool synthlib_plugin_request_resize(void * inst, double width, double height) {
+bool synthlib_au_request_resize(void * inst, double width, double height) {
     (void)inst;
     (void)width;
     (void)height;
@@ -2067,24 +2148,28 @@ bool synthlib_plugin_request_resize(void * inst, double width, double height) {
 // The factory - the one exported symbol, named in the .component's Info.plist
 // ------------------------------------------------------------------------------------------------
 
+static const tSynthLibPluginFormat gAuFormat;
+
 __attribute__((visibility("default")))
 AudioComponentPlugInInterface * SynthLibAUFactory(const AudioComponentDescription * inDesc);
 
 AudioComponentPlugInInterface * SynthLibAUFactory(const AudioComponentDescription * inDesc) {
+    synthlib_plugin_set_format(&gAuFormat);
+
     // WHICH OF OUR PLUG-INS THIS IS. macOS names it by subtype, out of our own Info.plist.
-    const tSynthLibPluginDesc * d = (inDesc != NULL) ? variant_for(inDesc->componentSubType)
+    const tSynthLibPluginDesc * d           = (inDesc != NULL) ? variant_for(inDesc->componentSubType)
                                                      : &variants()->variants[0];
 
     if (d == NULL) {
         return NULL;
     }
-    uint32_t outChannels = output_channels(d);
-    uint32_t inChannels  = input_channels(d);
+    uint32_t                    outChannels = output_channels(d);
+    uint32_t                    inChannels  = input_channels(d);
 
     if (outChannels == 0u) {
         return NULL;
     }
-    tSynthLibAu * au = (tSynthLibAu *)calloc(1, sizeof(tSynthLibAu));
+    tSynthLibAu *               au          = (tSynthLibAu *)calloc(1, sizeof(tSynthLibAu));
 
     if (au == NULL) {
         return NULL;
@@ -2095,10 +2180,10 @@ AudioComponentPlugInInterface * SynthLibAUFactory(const AudioComponentDescriptio
                                                                                : au_lookup_effect;
     au->iface.reserved = NULL;
 
-    au->desc       = d;
-    au->sampleRate = 44100.0;
-    au->maxFrames  = DEFAULT_MAX_FRAMES;
-    au->channels   = (float **)calloc(outChannels, sizeof(float *));
+    au->desc           = d;
+    au->sampleRate     = 44100.0;
+    au->maxFrames      = DEFAULT_MAX_FRAMES;
+    au->channels       = (float **)calloc(outChannels, sizeof(float *));
     atomic_init(&au->eventWrite, 0u);
     atomic_init(&au->eventRead, 0u);
     atomic_flag_clear(&au->eventProducer);
@@ -2133,7 +2218,7 @@ AudioComponentPlugInInterface * SynthLibAUFactory(const AudioComponentDescriptio
 
 // NO MIDI OUTPUT FROM THE AUDIO UNIT YET - a MIDI processor ('aumi') and the host's
 // kAudioUnitProperty_MIDIOutputCallback are what it would take.
-bool synthlib_plugin_midi_out(void * inst, uint8_t status, uint8_t data1, uint8_t data2, uint32_t sampleOffset) {
+bool synthlib_au_midi_out(void * inst, uint8_t status, uint8_t data1, uint8_t data2, uint32_t sampleOffset) {
     (void)inst;
     (void)status;
     (void)data1;
@@ -2141,3 +2226,12 @@ bool synthlib_plugin_midi_out(void * inst, uint8_t status, uint8_t data1, uint8_
     (void)sampleOffset;
     return false;
 }
+
+static const tSynthLibPluginFormat gAuFormat = {
+    .paramEdited    = synthlib_au_param_edited,
+    .paramValue     = synthlib_au_param_value,
+    .latencyChanged = synthlib_au_latency_changed,
+    .requestResize  = synthlib_au_request_resize,
+    .sendMessage    = synthlib_au_send_message,
+    .midiOut        = synthlib_au_midi_out
+};

@@ -43,6 +43,13 @@ void synthlib_clear_redraw(void);
 // render loop ("was a redraw requested since the last time I checked?").
 bool synthlib_consume_redraw(void);
 
+// How a redraw request reaches the render loop: what wakes it, called from any thread. The GLFW
+// window code registers its own; a plug-in registers its view's.
+void synthlib_set_redraw_hook(void ( *hook )(void));
+
+// Called whenever the dial mode is set, for an application that stores it itself.
+void synthlib_set_dial_mode_hook(void ( *hook )(tDialMode mode));
+
 // ── GLFW window ──────────────────────────────────────────────────────────────
 // void* keeps this header GLFW-free — cast to GLFWwindow* at the call site, same convention every
 // app's own (now-retired) gWindow used.

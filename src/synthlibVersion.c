@@ -23,15 +23,23 @@
 #include "renderBackend.h"
 #include "synthlibVersion.h"
 
+static const char * gAppVersion = "development build";
+static const char * gAppBuilt   = "";
+
+void synthlib_set_app_info(const char * version, const char * built) {
+    gAppVersion = (version != NULL) ? version : gAppVersion;
+    gAppBuilt   = (built != NULL) ? built : gAppBuilt;
+}
+
 const char * synthlib_about_text(const char * appName) {
     static char text[320];
 
     // notes §1
     snprintf(text, sizeof(text),
-             "%s\n\nVersion:  %s\nCompiled: %s %s\nRenderer: %s",
+             "%s\n\nVersion:  %s\nCompiled: %s\nRenderer: %s",
              (appName != NULL) ? appName : "SynthLib",
-             SYNTHLIB_VERSION_STRING,
-             __DATE__, __TIME__,
+             gAppVersion,
+             gAppBuilt,
              gfx_backend_name(gfx_backend_current()));
     return text;
 }

@@ -90,10 +90,14 @@ static tSynthLibPluginDesc make_desc(void) {
 static const tSynthLibPluginDesc gDesc = make_desc();
 static const tSynthLibPluginSet  gSet  = { &gDesc, 1 };
 
-const tSynthLibPluginSet * synthlib_plugin_variants(void) { return &gSet; }
+static const tSynthLibPluginSet * test_variants(void) { return &gSet; }
+extern "C" bool synthlib_vst3_request_resize(void *, double, double) { return false; }
+
 IPlugView * synthlib_vst3_create_view(const tSynthLibPluginDesc *, void *, FUnknown *, double, double *) {
     return nullptr;
 }
+
+SYNTHLIB_PLUGIN_REGISTER(test_variants, "synthlib-test")
 
 extern "C" IPluginFactory * PLUGIN_API GetPluginFactory(void);
 

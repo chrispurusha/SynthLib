@@ -28,15 +28,21 @@
 
 #include "synthlibLog.h"
 
+static const char * gLogName = "synthlib";
+
+void synthlib_log_set_name(const char * name) {
+    gLogName = name;
+}
+
 // Both paths come from the project's name, built on the stack each time rather than cached in a
 // static - there is then nothing for a first call to initialise, and so nothing to race over.
 static void log_path(char * out, size_t size, const char * suffix) {
 #if defined (_WIN32)
     const char * temp = getenv("TEMP");   // no /tmp on Windows: %TEMP%\<name>-log
 
-    snprintf(out, size, "%s\\%s%s", (temp != NULL) ? temp : ".", gSynthLibLogName, suffix);
+    snprintf(out, size, "%s\\%s%s", (temp != NULL) ? temp : ".", gLogName, suffix);
 #else
-    snprintf(out, size, "/tmp/%s%s", gSynthLibLogName, suffix);
+    snprintf(out, size, "/tmp/%s%s", gLogName, suffix);
 #endif
 }
 
@@ -49,7 +55,7 @@ void synthlib_log_line(const char * format, ...) {
 
     clock_gettime(CLOCK_MONOTONIC, &ts);
 
-    double now = (double)ts.tv_sec + ((double)ts.tv_nsec * 1e-9);
+    double                now       = (double)ts.tv_sec + ((double)ts.tv_nsec * 1e-9);
 
     if ((now - atomic_load(&checkedAt)) >= 1.0) {
         atomic_store(&checkedAt, now);
@@ -62,24 +68,23 @@ void synthlib_log_line(const char * format, ...) {
     }
     log_path(path, sizeof(path), ".log");
 
-    FILE * file = fopen(path, "a");
+    FILE *                file      = fopen(path, "a");
 
     if (file == NULL) {
         return;
     }
-
     // The executable's own name, so a line from Live is told from one from a test harness at a
     // glance rather than by pid alone. Read each time: getprogname() returns a pointer the process
     // already holds, and caching it in a static was a (benign) data race.
 #if defined (_WIN32)
-    const char * name = NULL;   // no getprogname(); the pid still tells processes apart
+    const char *          name      = NULL; // no getprogname(); the pid still tells processes apart
 #else
-    const char * name = getprogname();
+    const char *          name      = getprogname();
 #endif
 
     fprintf(file, "[%s %d] ", (name != NULL) ? name : "?", (int)getpid());
 
-    va_list args;
+    va_list               args;
 
     va_start(args, format);
     vfprintf(file, format, args);

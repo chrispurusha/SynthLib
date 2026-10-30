@@ -151,7 +151,7 @@ static std::vector<tLiveInstance>        gInstances;
 static std::vector<SynthLibController *> gControllers;
 static int64                             gNextSerial = 1;
 
-// THE BLOCK'S MIDI OUTPUT, for synthlib_plugin_midi_out(): set for the length of each process() call
+// THE BLOCK'S MIDI OUTPUT, for synthlib_vst3_midi_out(): set for the length of each process() call
 // on the thread making it, so a plug-in's call finds the host's list without the registry lock.
 struct tMidiOut {
     void *       inst;
@@ -264,7 +264,7 @@ public:
         return synthlib_params_get(&params, id);
     }
 
-    // Called from synthlib_plugin_send_message(), on whatever thread the plug-in chose. VST3's
+    // Called from synthlib_vst3_send_message(), on whatever thread the plug-in chose. VST3's
     // IConnectionPoint is not documented as thread safe, and neither is IMessage allocation, so this
     // is for the occasional announcement it was built for and not for a stream.
     bool post_message(const char * id, int64_t value) {
@@ -565,7 +565,7 @@ public:
     }
 
     // Asked when we activate, and cached until the controller tells the host to ask again - see
-    // synthlib_plugin_latency_changed().
+    // synthlib_vst3_latency_changed().
     uint32 PLUGIN_API getLatencySamples(void) SMTG_OVERRIDE {
         if ((inst == nullptr) || (desc->cb.latencySamples == nullptr)) {
             return 0;
@@ -1339,7 +1339,7 @@ static void deliver_to_host(void * ctx) {
     delete post;
 }
 
-void synthlib_plugin_param_edited(void * inst, uint32_t id, double normalized) {
+void synthlib_vst3_param_edited(void * inst, uint32_t id, double normalized) {
     if (inst == nullptr) {
         return;
     }
@@ -1347,14 +1347,14 @@ void synthlib_plugin_param_edited(void * inst, uint32_t id, double normalized) {
                          new tHostPost{ inst, id, synthlib_param_clamp(normalized), false });
 }
 
-void synthlib_plugin_latency_changed(void * inst) {
+void synthlib_vst3_latency_changed(void * inst) {
     if (inst == nullptr) {
         return;
     }
     synthlib_run_on_main(deliver_to_host, new tHostPost{ inst, 0u, 0.0, true });
 }
 
-double synthlib_plugin_param_value(void * inst, uint32_t id) {
+double synthlib_vst3_param_value(void * inst, uint32_t id) {
     // THE CONTROLLER'S COPY when there is one, because that is the value the host's own panel shows;
     // the processor's otherwise, which is what a host that never connected the halves still updates.
     std::vector<SynthLibController *> owners = controllers_of(inst);
@@ -1370,7 +1370,7 @@ double synthlib_plugin_param_value(void * inst, uint32_t id) {
 
 // NOT AFTER terminate(). The processor is looked up under the lock and used outside it, which is safe
 // because a plug-in stops everything that sends before the host is allowed to destroy it.
-bool synthlib_plugin_midi_out(void * inst, uint8_t status, uint8_t data1, uint8_t data2, uint32_t sampleOffset) {
+bool synthlib_vst3_midi_out(void * inst, uint8_t status, uint8_t data1, uint8_t data2, uint32_t sampleOffset) {
     if ((inst == nullptr) || (gMidiOut.inst != inst) || (gMidiOut.list == nullptr)) {
         return false;
     }
@@ -1412,7 +1412,7 @@ bool synthlib_plugin_midi_out(void * inst, uint8_t status, uint8_t data1, uint8_
     return gMidiOut.list->addEvent(e) == kResultOk;
 }
 
-bool synthlib_plugin_send_message(void * inst, const char * id, int64_t value) {
+bool synthlib_vst3_send_message(void * inst, const char * id, int64_t value) {
     SynthLibProcessor * p = nullptr;
 
     {
@@ -1597,8 +1597,20 @@ private:
     std::atomic<int32> refCount;
 };
 
+extern "C" bool synthlib_vst3_request_resize(void * inst, double width, double height);
+
+static const tSynthLibPluginFormat gVst3Format = {
+    synthlib_vst3_param_edited,
+    synthlib_vst3_param_value,
+    synthlib_vst3_latency_changed,
+    synthlib_vst3_request_resize,
+    synthlib_vst3_send_message,
+    synthlib_vst3_midi_out
+};
+
 extern "C" {
 SMTG_EXPORT_SYMBOL IPluginFactory * PLUGIN_API GetPluginFactory(void) {
+    synthlib_plugin_set_format(&gVst3Format);
     return new SynthLibFactory();
 }
 

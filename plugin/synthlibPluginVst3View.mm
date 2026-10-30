@@ -314,7 +314,7 @@ IPlugView * synthlib_vst3_create_view(const tSynthLibPluginDesc * desc, void * i
 
 // ------------------------------------------------------------------------------------------------
 
-bool synthlib_plugin_request_resize(void * inst, double width, double height) {
+extern "C" bool synthlib_vst3_request_resize(void * inst, double width, double height) {
     for (SynthLibVst3View * view : gOpenViews) {
         if (view->instance() == inst) {
             return view->request_resize(width, height);
