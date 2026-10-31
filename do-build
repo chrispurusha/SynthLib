@@ -1,0 +1,173 @@
+#!/bin/zsh
+# SynthLib's one build: build/libSynthLib.a and the third-party libraries beside it, universal, macOS 12.0.
+#
+#   ./do-build              whatever is out of date; quick when nothing is
+#   ./do-build check        then link every object, to prove nothing is unresolved or defined twice
+#   ./do-build thirdparty   rebuild freetype, glfw and libusb
+#   ./do-build clean        remove build/
+#
+# Every product runs this before it links. The VST3 half needs ~/Documents/vst3sdk (or $VST3_SDK); without
+# it the library is built without that half. See Docs/build.md.
+
+set -e
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+SDK="${VST3_SDK:-$HOME/Documents/vst3sdk}"
+OUT="$HERE/build"
+ARCHS=(arm64 x86_64)
+MIN=12.0
+JOBS=$(sysctl -n hw.ncpu)
+
+cd "$HERE"
+
+# Xcode's script environment describes the product, and has no Homebrew on its PATH. It also puts a clang
+# with no default SDK first, so the SDK has to be named.
+unset CC CXX CFLAGS CXXFLAGS OBJCFLAGS CPPFLAGS LDFLAGS MACOSX_DEPLOYMENT_TARGET MAKEFLAGS MFLAGS
+export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
+path+=(/opt/homebrew/bin /usr/local/bin)
+
+# Products can build side by side, and an Xcode build can start while a script runs.
+mkdir -p "$OUT"
+zmodload zsh/system
+exec 9>"$OUT/.lock"
+zsystem flock -f 9 -t 1800 "$OUT/.lock"
+
+need_tool() {
+    if ! command -v "$1" >/dev/null; then
+        print -u2 "error: $1 not found - brew install autoconf automake libtool cmake"
+        exit 1
+    fi
+}
+
+need_submodule() {
+    if [[ ! -e "ThirdParty/$1/$2" ]]; then
+        print -u2 "error: ThirdParty/$1 is empty - git submodule update --init --recursive"
+        exit 1
+    fi
+}
+
+build_freetype() {
+    local work="$OUT/thirdparty/freetype"
+
+    need_tool cmake
+    need_submodule freetype CMakeLists.txt
+    print "==> freetype"
+    rm -rf "$work"
+    cmake -S ThirdParty/freetype -B "$work" -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+          -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=$MIN \
+          -DFT_DISABLE_PNG=ON -DFT_DISABLE_ZLIB=ON -DFT_DISABLE_BZIP2=ON -DFT_DISABLE_BROTLI=ON \
+          -DFT_DISABLE_HVF=ON -DFT_DISABLE_HARFBUZZ=ON >/dev/null
+    cmake --build "$work" -j $JOBS >/dev/null
+    cp "$work/libfreetype.a" "$OUT/"
+}
+
+build_glfw() {
+    local work="$OUT/thirdparty/glfw"
+
+    need_tool cmake
+    need_submodule glfw CMakeLists.txt
+    print "==> glfw"
+    rm -rf "$work"
+    cmake -S ThirdParty/glfw -B "$work" -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+          -DGLFW_BUILD_EXAMPLES=OFF -DGLFW_BUILD_TESTS=OFF -DGLFW_BUILD_DOCS=OFF \
+          -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=$MIN >/dev/null
+    cmake --build "$work" -j $JOBS >/dev/null
+    cp "$work/src/libglfw3.a" "$OUT/"
+}
+
+build_libusb() {
+    local work="$OUT/thirdparty/libusb"
+    local flags="-arch arm64 -arch x86_64 -mmacosx-version-min=$MIN"
+
+    need_tool autoreconf
+    need_tool glibtoolize
+    need_submodule libusb configure.ac
+    print "==> libusb"
+    rm -rf "$work"
+    mkdir -p "$work"
+    (cd ThirdParty/libusb && autoreconf -fi >/dev/null 2>&1)
+    # pipe2 is in the SDK but only from macOS 27: found by configure, it would crash on anything older.
+    (cd "$work" && "$HERE/ThirdParty/libusb/configure" --disable-shared --enable-static \
+         --disable-dependency-tracking ac_cv_func_pipe2=no CFLAGS="$flags -O2" CXXFLAGS="$flags -O2" LDFLAGS="$flags" >/dev/null &&
+     make -j $JOBS -C libusb >/dev/null)
+    cp "$work/libusb/.libs/libusb-1.0.a" "$OUT/"
+}
+
+build_library() {
+    local make_args=(-s -j $JOBS -f "$HERE/Makefile" MIN=$MIN)
+    local archives=()
+
+    if [[ -d "$SDK/pluginterfaces" ]]; then
+        make_args+=(SDK="$SDK")
+    else
+        print -u2 "warning: no VST3 SDK at $SDK - building without the VST3 wrapper"
+    fi
+
+    for arch in $ARCHS; do
+        make "${make_args[@]}" ARCH=$arch
+        archives+=("$OUT/$arch/libSynthLib.a")
+    done
+
+    # Left alone when nothing changed, so a product does not relink for nothing.
+    for archive in $archives; do
+        if [[ ! -f "$OUT/libSynthLib.a" || "$archive" -nt "$OUT/libSynthLib.a" ]]; then
+            lipo -create $archives -output "$OUT/libSynthLib.a.new"
+            mv "$OUT/libSynthLib.a.new" "$OUT/libSynthLib.a"
+            print "==> built $OUT/libSynthLib.a"
+            break
+        fi
+    done
+}
+
+# -all_load takes every object, used or not: a symbol nothing provides, or two objects providing it, fails.
+check_library() {
+    local work="$(mktemp -d)"
+    trap 'rm -rf "$work"' EXIT
+
+    for arch in $ARCHS; do
+        clang++ -arch $arch -mmacosx-version-min=$MIN -bundle -Wl,-all_load "$OUT/libSynthLib.a" \
+                "$OUT/libfreetype.a" "$OUT/libglfw3.a" \
+                -framework Cocoa -framework CoreAudio -framework CoreMIDI -framework CoreFoundation \
+                -framework AudioToolbox -framework AudioUnit -framework Metal -framework QuartzCore \
+                -framework IOKit -lobjc -o "$work/all-$arch"
+        print "==> check $arch: every object links, nothing unresolved or duplicated"
+    done
+}
+
+build_missing_thirdparty() {
+    [[ -f "$OUT/libfreetype.a" ]] || build_freetype
+    [[ -f "$OUT/libglfw3.a" ]] || build_glfw
+
+    # Only G2Alike links it, so a machine without autotools can still build everything else.
+    if [[ ! -f "$OUT/libusb-1.0.a" ]]; then
+        if command -v autoreconf >/dev/null && command -v glibtoolize >/dev/null; then
+            build_libusb
+        else
+            print -u2 "warning: libusb not built - brew install autoconf automake libtool"
+        fi
+    fi
+}
+
+case "${1:-}" in
+    "")
+        build_missing_thirdparty
+        build_library
+        ;;
+    check)
+        build_missing_thirdparty
+        build_library
+        check_library
+        ;;
+    thirdparty)
+        build_freetype
+        build_glfw
+        build_libusb
+        ;;
+    clean)
+        rm -rf "$OUT"
+        ;;
+    *)
+        print -u2 "usage: ${0:t} [check|thirdparty|clean]"
+        exit 2
+        ;;
+esac

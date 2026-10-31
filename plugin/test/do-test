@@ -26,6 +26,10 @@ clang -std=gnu11 -Wall -Wextra -Werror -fsanitize=thread -g -I"$PLUGIN" -o "$WOR
     "$HERE/logTest.c" "$PLUGIN/synthlibLog.c"
 "$WORK/logTest"
 
+clang -std=gnu11 -Wall -Wextra -Werror -fsanitize=thread -g -I"$PLUGIN" -o "$WORK/swapFadeTest" \
+    "$HERE/swapFadeTest.c" "$PLUGIN/synthlibSwapFade.c"
+"$WORK/swapFadeTest"
+
 if [[ ! -d "$SDK/pluginterfaces" ]]; then
     print -u2 "VST3 SDK not found at $SDK - skipping the multi-instance test (set VST3_SDK)"
     exit 1

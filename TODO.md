@@ -1,5 +1,8 @@
 # SynthLib TODO
 
+Older sections below describe the per-project submodule and hand-kept source lists, both gone since 2026-10-30:
+one checkout, one build - see `Docs/build.md`.
+
 ## The plug-in contract, second version (2026-09-11), and the sibling ports
 
 `plugin/synthlibPlugin.h` was reworked before GenBridge or MidiSyncTool could
