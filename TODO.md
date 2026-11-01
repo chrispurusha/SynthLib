@@ -295,3 +295,4 @@ default in SynthEdit's `synthBackup.c`).
 Worth doing per-store rather than only for the cache: the cache can always be
 rebuilt from the synth, whereas `prefs.txt` is the one that actually hurts to
 lose. Small, self-contained, and shared by all three apps.
+- Resampler: two copies. Move GenBridge `poc/resampler.c` into `SynthLib/audio` (it has channels and a variable ratio for its drift loop), add a taps setting and a kernel that widens when converting down, then move Sn2Alike to it and delete `audio/synthlibResample.c`. GenBridge's latency and setpoint sums read its taps, so re-run its checks
