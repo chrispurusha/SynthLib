@@ -305,6 +305,17 @@ static void mtl_init(void) {
     [gWhite replaceRegion:MTLRegionMake2D(0, 0, 1, 1) mipmapLevel:0 withBytes:white bytesPerRow:4];
 }
 
+// notes §21: the scale of whatever screen the window is on now - it changes when the window moves to a display
+// with a different backing scale (a Retina laptop and a 1x external one), so it is read again at every resize
+static CGFloat mtl_current_scale(void) {
+    id owner = (gLayer.superlayer != nil) ? gLayer.superlayer.delegate : gLayer.delegate;
+
+    if ([owner isKindOfClass:[NSView class]] && ([(NSView *)owner window] != nil)) {
+        return [[(NSView *)owner window] backingScaleFactor];
+    }
+    return gLayer.contentsScale;
+}
+
 static void mtl_set_surface(int width, int height) {
     mtl_init();
 
@@ -359,7 +370,8 @@ static void mtl_set_surface(int width, int height) {
         [CATransaction begin];
         [CATransaction setDisableActions:YES];
 
-        gLayer.drawableSize = CGSizeMake((CGFloat)width, (CGFloat)height);
+        gLayer.contentsScale = mtl_current_scale();
+        gLayer.drawableSize  = CGSizeMake((CGFloat)width, (CGFloat)height);
 
         // notes §8
         if (gLayer.superlayer != nil) {

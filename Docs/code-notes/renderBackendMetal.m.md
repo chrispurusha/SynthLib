@@ -248,3 +248,11 @@ A BLIT, not a second render pass. The frame already exists in gTarget — render
 into the drawable would mean a full-screen quad, another pipeline and a sampler, to copy
 pixels that are already correct. The offscreen target is what makes mtl_read_pixels_rgb()
 work, so it earns its keep twice.
+
+## 21. The scale follows the window's screen
+contentsScale was set once, when the view was attached. A window moved from a Retina screen to a 1x external display
+(or back) changes its backing scale, and the layer kept the old one, so its frame - the surface's pixels over the scale -
+came out the wrong size and the canvas could vanish or sit in a corner (G2Alike report, 2026-11-02; not reproduced, no
+second display at hand). The scale is now read from the view's window at every surface change; the view is found as
+the layer's delegate (its own layer for a layer-hosting view, the superlayer's for a plug-in view).
+

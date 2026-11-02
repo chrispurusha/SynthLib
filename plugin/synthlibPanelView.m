@@ -418,7 +418,7 @@ static void panel_updateTrackingAreas(NSView * self, SEL _cmd) {
 
     NSTrackingArea * area =
         [[NSTrackingArea alloc] initWithRect:[self bounds]
-         options:(NSTrackingMouseMoved | NSTrackingActiveInActiveApp |
+         options:(NSTrackingMouseMoved | NSTrackingMouseEnteredAndExited | NSTrackingActiveInActiveApp |
                   NSTrackingInVisibleRect)
          owner:self
          userInfo:nil];
@@ -441,6 +441,18 @@ static void panel_mouseMoved(NSView * self, SEL _cmd, NSEvent * event) {
     if ((panel_state(self)->panel->menuActive != NULL) && panel_state(self)->panel->menuActive()) {
         panel_redraw(self);
     }
+}
+
+// notes §13: the pointer has left - nothing on the panel is under it any more
+static void panel_mouseExited(NSView * self, SEL _cmd, NSEvent * event) {
+    (void)_cmd;
+    (void)event;
+
+    if ((panel_state(self)->panel == NULL) || (panel_state(self)->panel->pointer == NULL)) {
+        return;
+    }
+    panel_state(self)->panel->pointer(-1.0e6, -1.0e6);
+    panel_redraw(self);
 }
 
 // A drag is a stream of clicks: only continuous controls (GenBridge's trim) respond to one, and
@@ -520,6 +532,7 @@ static void panel_make_class(void) {
     synthlib_runtime_class_override(cls, @selector(mouseDown:), panel_mouseDown);
     synthlib_runtime_class_override(cls, @selector(mouseUp:), panel_mouseUp);
     synthlib_runtime_class_override(cls, @selector(mouseMoved:), panel_mouseMoved);
+    synthlib_runtime_class_override(cls, @selector(mouseExited:), panel_mouseExited);
     synthlib_runtime_class_override(cls, @selector(mouseDragged:), panel_mouseDragged);
     synthlib_runtime_class_override(cls, @selector(scrollWheel:), panel_scrollWheel);
     synthlib_runtime_class_override(cls, @selector(updateTrackingAreas), panel_updateTrackingAreas);

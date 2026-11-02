@@ -99,3 +99,11 @@ sibling applications do in their Rotary mode. A panel that supplies `keepsPointe
 grab; when it says yes, the pointer is left alone and every drag reports its position (`dragTo`) instead of its
 movement (`dragBy`). Both are optional and checked at the grab, so the panels written before them (GenBridge,
 MidiSyncTool) behave as they did. First user: Pulse2Alike's Rotary mode (2026-10-20).
+
+## 13. The pointer leaving
+The panel only hears where the pointer is from mouse moves inside the view, so without this it keeps the last position
+it was told after the pointer leaves: leave upwards over the menu bar and the item under that last position stays lit
+(seen in Pulse2Alike, 2026-11-02). The tracking area asks for exits too, and on one the panel is told the pointer is
+far off the canvas, where nothing hit-tests, then repainted. A drag in progress is unaffected: AppKit keeps sending its
+drags to the view.
+
