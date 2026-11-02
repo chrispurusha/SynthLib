@@ -341,6 +341,14 @@ handler; an Audio Unit posts parameter events. Both are behind this one call.
 ANY THREAD. The host side of both formats wants the main thread, so a call from anywhere else is
 posted there and delivered shortly after; from the main thread it happens before this returns.
 
+FROM THE AUDIO THREAD IT ALLOCATES NOTHING (2026-11-02). Off the main thread the edit goes into a
+fixed queue of 8192 slots that any number of threads can write without a lock, and only the first
+edit of a batch posts a drain to the main thread; the drain hands each edit to the format as if it
+had been made there. Before this, every call made its own allocation and its own dispatch, and a
+program change taken on the audio thread reports a whole sound - a few hundred of each in one block,
+which showed up as CPU spikes on a 256-sample buffer. A full queue drops the edit (the host's copy
+stays stale until the next one) and logs it once.
+
 ## 30. `synthlib_plugin_request_resize()`
 
 Ask the host to resize this instance's editor window, after the plug-in has changed its own idea of

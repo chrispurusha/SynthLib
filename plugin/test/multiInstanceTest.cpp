@@ -228,6 +228,16 @@ static void * edit_from_thread(void * inst) {
     return nullptr;
 }
 
+#define BURST    (3000)
+
+// a program change on the audio thread: a whole sound's edits in one go, more than once round the queue
+static void * burst_from_thread(void * inst) {
+    for (int i = 0; i < BURST; i++) {
+        synthlib_plugin_param_edited(inst, 1, (double)i / BURST);
+    }
+    return nullptr;
+}
+
 int main(void) {
     IPluginFactory * factory = GetPluginFactory();
     Pair             p1, p2, p3;
@@ -272,6 +282,16 @@ int main(void) {
     check("an edit from a worker thread is posted, not run in place", before == 0);
     check("... and arrives at handler 2 on the main thread",
           (p2.handler.edits == 1) && (p2.handler.lastId == 0) && (fabs(p2.handler.lastValue - 0.9) < 1e-9));
+
+    for (int round = 0; round < 4; round++) {
+        int edits = p2.handler.edits;
+
+        pthread_create(&thread, nullptr, burst_from_thread, f2);
+        pthread_join(thread, nullptr);
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.2, false);
+        check("a burst of edits from a worker thread all arrive", p2.handler.edits == (edits + BURST));
+        check("... the last of them last", (p2.handler.lastId == 1) && (fabs(p2.handler.lastValue - ((double)(BURST - 1) / BURST)) < 1e-9));
+    }
 
     printf("a third, UNCONNECTED pair while two others live\n");
     make_pair(factory, p3, false);
