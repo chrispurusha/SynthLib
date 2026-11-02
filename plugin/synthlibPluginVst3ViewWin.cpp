@@ -142,6 +142,8 @@ public:
 
             if (desc->cb.destroyView != nullptr) {
                 desc->cb.destroyView(inst, (void *)editorWindow);   // the plug-in destroys its own window
+            } else {
+                DestroyWindow(editorWindow);    // a synthlibPanelViewWin.c panel cleans up on WM_DESTROY
             }
             editorWindow = nullptr;
         }

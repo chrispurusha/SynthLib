@@ -113,3 +113,8 @@ links, loads and has no factory. `-S` drops the library's debug map from the bun
 Windows is a separate platform build and does not use this library. Its scripts compile SynthLib's sources directly,
 with `SYNTHLIB_PLUGIN_BUILD` and `SYNTHLIB_NO_GL_BACKEND` still meaningful there, and build third-party code from
 `ThirdParty/` for each architecture. See `Docs/windows-port-plan.md` in G2Alike.
+
+A plug-in that draws its own panel (`synthlibPanelView.h`) uses `plugin/synthlibPanelViewWin.c` there in place
+of `synthlibPanelView.m`; on the Mac that file compiles to nothing. The AllAlike plug-ins build this way with
+`AllAlike/tools/do-windows-plugin`, which also links SynthLib's objects as an archive so unused files (the
+GLFW window) drop out, and puts FreeType in `build/windows-<arch>/deps`.
