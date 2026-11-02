@@ -28,3 +28,13 @@ The plug-ins built on this panel give no `destroyView` callback, as on the Mac, 
 NSView. `synthlibPluginVst3ViewWin.cpp` therefore calls `DestroyWindow()` itself when there is no `destroyView`,
 and `WM_DESTROY` here hands back the GL context and the backend's slot. G2Alike, which has its own
 `destroyView`, is unaffected.
+
+## §5 Multisampling
+
+The Mac's Metal view and the GLFW applications draw with `GFX_MSAA_SAMPLES` (4) samples; without them the
+panels' dials and lines are visibly jagged, which is how the first Windows build looked (2026-11-02). A classic
+`ChoosePixelFormat()` cannot ask for samples, so the hidden root context is used to fetch
+`wglChoosePixelFormatARB`, which can. A window's pixel format can be set only once, so when a multisampled format
+exists the root window and context are made again with it, and every editor uses the same format and shares
+lists with that root. A driver without the extension, or one that refuses the format, keeps the plain format:
+jagged but drawn. `gl_init()` (through `gfx_init()`) enables `GL_MULTISAMPLE` in each editor's context.

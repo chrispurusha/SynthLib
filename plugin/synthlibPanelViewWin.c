@@ -23,6 +23,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <windowsx.h>
+#include <GL/gl.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <wchar.h>
@@ -30,6 +31,7 @@
 #include "renderBackend.h"
 #include "inputState.h"
 #include "synthlibPanelView.h"
+#include "synthlibLog.h"
 
 #define TIMER_TICK       (1u)
 #define TICK_MS          (33u)    // 30 Hz, as the Mac view
@@ -82,9 +84,33 @@ static bool register_class(void) {
     return true;
 }
 
+// WGL_ARB_pixel_format and WGL_ARB_multisample, which windows.h does not name
+#define WGL_DRAW_TO_WINDOW_ARB       (0x2001)
+#define WGL_ACCELERATION_ARB         (0x2003)
+#define WGL_SUPPORT_OPENGL_ARB       (0x2010)
+#define WGL_DOUBLE_BUFFER_ARB        (0x2011)
+#define WGL_PIXEL_TYPE_ARB           (0x2013)
+#define WGL_COLOR_BITS_ARB           (0x2014)
+#define WGL_ALPHA_BITS_ARB           (0x201B)
+#define WGL_FULL_ACCELERATION_ARB    (0x2027)
+#define WGL_TYPE_RGBA_ARB            (0x202B)
+#define WGL_SAMPLE_BUFFERS_ARB       (0x2041)
+#define WGL_SAMPLES_ARB              (0x2042)
+
+typedef BOOL (WINAPI * tChoosePixelFormatArb)(HDC, const int *, const FLOAT *, UINT, int *, UINT *);
+
+static int gMsaaFormat = 0;    // notes §5: 0 until the driver offers a multisampled format
+
 static bool set_pixel_format(HDC dc) {
     PIXELFORMATDESCRIPTOR pfd = {0};
 
+    if (gMsaaFormat != 0) {
+        DescribePixelFormat(dc, gMsaaFormat, sizeof(pfd), &pfd);
+
+        if (SetPixelFormat(dc, gMsaaFormat, &pfd) == TRUE) {
+            return true;
+        }
+    }
     pfd.nSize      = sizeof(pfd);
     pfd.nVersion   = 1;
     pfd.dwFlags    = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER;
@@ -96,6 +122,44 @@ static bool set_pixel_format(HDC dc) {
     int format = ChoosePixelFormat(dc, &pfd);
 
     return (format != 0) && (SetPixelFormat(dc, format, &pfd) == TRUE);
+}
+
+// notes §5: GFX_MSAA_SAMPLES, as the Mac's Metal view and the GLFW applications have. Asked of the driver
+// through the root context, the one current while it asks; the host's own context is put back after.
+static void find_msaa_format(void) {
+    HGLRC previousRc = wglGetCurrentContext();
+    HDC   previousDc = wglGetCurrentDC();
+
+    if (wglMakeCurrent(gRootDc, gRootRc) == FALSE) {
+        return;
+    }
+    tChoosePixelFormatArb choose = (tChoosePixelFormatArb)(void *)wglGetProcAddress("wglChoosePixelFormatARB");
+
+    if ((choose != NULL) && (GFX_MSAA_SAMPLES > 1)) {
+        const int attributes[] = {
+            WGL_DRAW_TO_WINDOW_ARB, TRUE,
+            WGL_SUPPORT_OPENGL_ARB, TRUE,
+            WGL_DOUBLE_BUFFER_ARB,  TRUE,
+            WGL_ACCELERATION_ARB,   WGL_FULL_ACCELERATION_ARB,
+            WGL_PIXEL_TYPE_ARB,     WGL_TYPE_RGBA_ARB,
+            WGL_COLOR_BITS_ARB,     32,
+            WGL_ALPHA_BITS_ARB,     8,
+            WGL_SAMPLE_BUFFERS_ARB, 1,
+            WGL_SAMPLES_ARB,        GFX_MSAA_SAMPLES,
+            0
+        };
+        int  format = 0;
+        UINT count  = 0;
+
+        if ((choose(gRootDc, attributes, NULL, 1, &format, &count) == TRUE) && (count > 0)) {
+            gMsaaFormat = format;
+        }
+    }
+    synthlib_log_line("panel GL: %s | %s | %s; wglChoosePixelFormatARB %s, %d-sample format %d\n",
+                      (const char *)glGetString(GL_VENDOR), (const char *)glGetString(GL_RENDERER),
+                      (const char *)glGetString(GL_VERSION), (choose != NULL) ? "found" : "MISSING",
+                      GFX_MSAA_SAMPLES, gMsaaFormat);
+    wglMakeCurrent(previousDc, previousRc);
 }
 
 // notes §2: a hidden context every view shares its textures with, so the glyph atlas outlives any one editor
@@ -114,7 +178,41 @@ static bool ensure_root_context(void) {
         return false;
     }
     gRootRc = wglCreateContext(gRootDc);
-    return gRootRc != NULL;
+
+    if (gRootRc == NULL) {
+        return false;
+    }
+    find_msaa_format();
+
+    if (gMsaaFormat == 0) {
+        return true;
+    }
+    // notes §5: a window's pixel format is set once, so the root is made again with the multisampled one,
+    // and every editor's context then shares lists with a context of its own format
+    HWND  window = CreateWindowExW(0, gClassName, L"", WS_POPUP, 0, 0, 1, 1, NULL, NULL, gModule, NULL);
+    HDC   dc     = (window != NULL) ? GetDC(window) : NULL;
+    HGLRC rc     = ((dc != NULL) && set_pixel_format(dc)) ? wglCreateContext(dc) : NULL;
+
+    if (rc == NULL) {
+        gMsaaFormat = 0;    // keep the plain root, and plain editors with it
+
+        if (dc != NULL) {
+            ReleaseDC(window, dc);
+        }
+
+        if (window != NULL) {
+            DestroyWindow(window);
+        }
+        return true;
+    }
+    wglMakeCurrent(NULL, NULL);
+    wglDeleteContext(gRootRc);
+    ReleaseDC(gRootWindow, gRootDc);
+    DestroyWindow(gRootWindow);
+    gRootWindow = window;
+    gRootDc     = dc;
+    gRootRc     = rc;
+    return true;
 }
 
 static void make_current(tPanelWin * w) {
@@ -536,6 +634,14 @@ void * synthlib_panel_view_create(const tSynthLibPanel * panel, void * user, dou
     }
     make_current(w);
     gfx_backend_choose(eRenderBackendOpenGL);
+    gfx_init();    // blending: GL state is per context, and every editor has its own
+
+    GLint sampleBuffers = 0;
+    GLint samples       = 0;
+
+    glGetIntegerv(0x80A8, &sampleBuffers);    // GL_SAMPLE_BUFFERS, which gl.h 1.1 does not name
+    glGetIntegerv(0x80A9, &samples);          // GL_SAMPLES
+    synthlib_log_line("panel view: %d x %d, sample buffers %d, samples %d\n", (int)width, (int)height, sampleBuffers, samples);
     gfx_attach_window((void *)w->hwnd);
 
     if (panel->init != NULL) {
