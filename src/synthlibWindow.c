@@ -49,6 +49,8 @@ extern "C" {
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Weverything"
 #include <GLFW/glfw3native.h>
+#pragma clang diagnostic pop
+#endif
 
 void synthlib_load_window_and_dial_mode(int targetFrameBuffWidth, int targetFrameBuffHeight) {
     synthlib_set_dial_mode((tDialMode)prefs_get_int("dialMode", (long)synthlib_dial_mode()));
@@ -68,8 +70,6 @@ void synthlib_load_window_and_dial_mode(int targetFrameBuffWidth, int targetFram
         glfwSetWindowPos((GLFWwindow *)synthlib_window(), savedX, savedY);
     }
 }
-#pragma clang diagnostic pop
-#endif
 
 // The saved setting, read once at window creation. It lives in SynthLib rather than in each
 // application so all three get it from one place; an application only supplies the menu item that
