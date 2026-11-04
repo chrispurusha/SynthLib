@@ -32,6 +32,6 @@ $sdkSources = @('pluginterfaces\base\funknown.cpp', 'pluginterfaces\base\coreiid
 
 Write-Host "==> vst3hostwin for $triple"
 & $cxx -std=gnu++17 -O2 -static -Wno-pragma-pack -isystem $sdk -isystem $miniaudio "$here\vst3hostwin.cpp" @sdkSources `
-    -o $out -lwinmm -lole32 -luser32 -lgdi32 -lpthread
+    -o $out -lwinmm -lole32 -luser32 -lgdi32 -lcomdlg32 -lshell32 -lpthread
 if ($LASTEXITCODE) { throw 'build failed' }
 Write-Host ("built: $out ({0:N1} MB)" -f ((Get-Item $out).Length / 1MB))

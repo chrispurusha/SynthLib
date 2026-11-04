@@ -22,10 +22,13 @@
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <commdlg.h>
 #include <mmsystem.h>
+#include <shellapi.h>
 
 #include <atomic>
 #include <cmath>
+#include <cstdarg>
 #include <cstdio>
 #include <cstring>
 #include <map>
@@ -313,12 +316,28 @@ static HWND               gWindow     = nullptr;
 static bool               gResizing   = false;    // our own SetWindowPos, not the user's drag
 static int                gOctave     = 4;        // the computer keyboard's C is C4 = 60
 static bool               gKeyDown[256] = {};
+static int                gKeyNote[256] = {};    // the note each held key started, for its release
+static bool               gKeysPlay     = true;  // the Keyboard menu's "Letters play notes"
 static ParamID            gMidiMap[16][130];
 static bool               gMidiMapped[16][130] = {};
+static bool               gHaveConsole = true;    // false when started from an icon (notes §9)
+static std::wstring       gPluginName;
+static std::wstring       gRelaunch;              // the plug-in chosen from the menu, opened in a fresh process
 
-static void set_client_size(int width, int height) {
+static void         update_title(void);
+static std::wstring choose_plugin(HWND owner);
+static void         midi_menu_chosen(int item);
+static void         keys_menu_chosen(void);
+static void         show_help(HWND owner);
+
+enum { kMenuOpen = 1001, kMenuExit, kMenuHelp, kMenuKeys, kMenuOctaveDown, kMenuOctaveUp,
+       kMenuMidiNone = 1100, kMenuMidiFirst = 1101 };
+static const UINT kMsgTitle = WM_APP + 1;    // Caps Lock changed: the title says what the letters do
+
+static void set_client_size_of(HWND hwnd, int width, int height, bool move) {
     RECT r     = {0, 0, width, height};
-    DWORD style = (DWORD)GetWindowLongPtrW(gWindow, GWL_STYLE);
+    DWORD style = (DWORD)GetWindowLongPtrW(hwnd, GWL_STYLE);
+    BOOL  menu  = (GetMenu(hwnd) != nullptr) ? TRUE : FALSE;
 
     typedef BOOL (WINAPI * tAdjustForDpi)(LPRECT, DWORD, BOOL, DWORD, UINT);
     typedef UINT (WINAPI * tGetDpiForWindow)(HWND);
@@ -327,12 +346,17 @@ static void set_client_size(int width, int height) {
     tGetDpiForWindow dpiOf  = (tGetDpiForWindow)(void *)GetProcAddress(user32, "GetDpiForWindow");
 
     if ((adjust != nullptr) && (dpiOf != nullptr)) {
-        adjust(&r, style, FALSE, 0, dpiOf(gWindow));
+        adjust(&r, style, menu, 0, dpiOf(hwnd));
     } else {
-        AdjustWindowRectEx(&r, style, FALSE, 0);
+        AdjustWindowRectEx(&r, style, menu, 0);
     }
+    SetWindowPos(hwnd, nullptr, 0, 0, r.right - r.left, r.bottom - r.top,
+                 (move ? 0u : SWP_NOMOVE) | SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+static void set_client_size(int width, int height) {
     gResizing = true;
-    SetWindowPos(gWindow, nullptr, 0, 0, r.right - r.left, r.bottom - r.top, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    set_client_size_of(gWindow, width, height, false);
     gResizing = false;
 }
 
@@ -370,7 +394,7 @@ static double window_scale(HWND hwnd) {
     return (double)dpi / 96.0;
 }
 
-// notes §4: Caps Lock on, the letters play; off, they are the plug-in's to type with
+// notes §4: G2Alike's layout - A S D F G H J K L the white keys from C, W E T Y U O P the black
 static int note_for_key(WPARAM vk) {
     static const char * keys = "AWSEDFTGYHUJKOLP";    // C up to D#, a piano's white and black keys
 
@@ -382,29 +406,72 @@ static int note_for_key(WPARAM vk) {
     return -1;
 }
 
+static bool caps_lock_on(void) {
+    return (GetKeyState(VK_CAPITAL) & 1) != 0;
+}
+
+// The letters play only in the plug-in's own window, never in the browser, a file dialog or a message box
+static bool keys_play_now(void) {
+    return gKeysPlay && !caps_lock_on() && (gWindow != nullptr) && (GetActiveWindow() == gWindow);
+}
+
+static bool modifier_down(void) {
+    return (GetKeyState(VK_CONTROL) < 0) || (GetKeyState(VK_MENU) < 0) || (GetKeyState(VK_LWIN) < 0) || (GetKeyState(VK_RWIN) < 0);
+}
+
+static void shift_octave(int by) {
+    gOctave = std::max(0, std::min(8, gOctave + by));
+    printf("octave: C%d\n", gOctave);
+    update_title();
+}
+
+// Every key still down, let go - the window lost the keyboard, so their releases will never come here
+static void release_keys(void) {
+    for (int k = 0; k < 256; k++) {
+        if (gKeyDown[k]) {
+            gKeyDown[k] = false;
+            queue_note(gKeyNote[k], 0.0f, false);
+        }
+    }
+}
+
 static LRESULT CALLBACK keyboard_hook(int code, WPARAM wParam, LPARAM lParam) {
-    if ((code == HC_ACTION) && ((GetKeyState(VK_CAPITAL) & 1) != 0) && (wParam < 256)) {
+    if ((code == HC_ACTION) && (wParam < 256)) {
         bool up      = ((lParam & (1u << 31)) != 0);
         bool wasDown = ((lParam & (1u << 30)) != 0);
 
-        if ((wParam == 'Z') || (wParam == 'X')) {
-            if (!up && !wasDown) {
-                gOctave = std::max(0, std::min(8, gOctave + ((wParam == 'X') ? 1 : -1)));
-                printf("octave: C%d\n", gOctave);
+        if (wParam == VK_CAPITAL) {
+            if (up && (gWindow != nullptr)) {
+                PostMessageW(gWindow, kMsgTitle, 0, 0);
             }
+            return CallNextHookEx(nullptr, code, wParam, lParam);
+        }
+
+        // A release always ends the note its press started, whatever the octave or Caps Lock is now
+        if (up && gKeyDown[wParam]) {
+            gKeyDown[wParam] = false;
+            queue_note(gKeyNote[wParam], 0.0f, false);
             return 1;
         }
-        int note = note_for_key(wParam);
 
-        if (note >= 0) {
-            if (!up && !gKeyDown[wParam]) {
-                gKeyDown[wParam] = true;
-                queue_note(note, 0.8f, true);
-            } else if (up && gKeyDown[wParam]) {
-                gKeyDown[wParam] = false;
-                queue_note(note, 0.0f, false);
+        if (keys_play_now() && !modifier_down()) {
+            if ((wParam == 'Z') || (wParam == 'X')) {
+                if (!up && !wasDown) {
+                    shift_octave((wParam == 'X') ? 1 : -1);
+                }
+                return 1;
             }
-            return 1;
+            int note = note_for_key(wParam);
+
+            if (note >= 0) {
+                if (!up && !gKeyDown[wParam]) {
+                    gKeyDown[wParam] = true;
+                    gKeyNote[wParam] = note;
+                    queue_note(note, 0.8f, true);
+                    printf("key %c: note %d\n", (char)wParam, note);
+                }
+                return 1;
+            }
         }
     }
     return CallNextHookEx(nullptr, code, wParam, lParam);
@@ -446,6 +513,38 @@ static LRESULT CALLBACK host_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             return 0;
         }
 
+        case WM_COMMAND:    // the menu bar's own items; the plug-in's controls report to its own window
+            if ((lParam == 0) && (HIWORD(wParam) == 0)) {
+                int id = (int)LOWORD(wParam);
+
+                if (id == kMenuOpen) {
+                    std::wstring path = choose_plugin(hwnd);
+
+                    if (!path.empty()) {
+                        gRelaunch = path;    // notes §11
+                        DestroyWindow(hwnd);
+                    }
+                } else if (id == kMenuExit) {
+                    DestroyWindow(hwnd);
+                } else if (id == kMenuHelp) {
+                    show_help(hwnd);
+                } else if (id == kMenuKeys) {
+                    keys_menu_chosen();
+                } else if ((id == kMenuOctaveDown) || (id == kMenuOctaveUp)) {
+                    shift_octave((id == kMenuOctaveUp) ? 1 : -1);
+                } else if (id >= kMenuMidiNone) {
+                    midi_menu_chosen(id - kMenuMidiFirst);    // -1 for None
+                }
+                return 0;
+            }
+            break;
+
+        case WM_ACTIVATE:
+            if (LOWORD(wParam) == WA_INACTIVE) {
+                release_keys();
+            }
+            break;
+
         case WM_CLOSE:
             DestroyWindow(hwnd);
             return 0;
@@ -455,6 +554,10 @@ static LRESULT CALLBACK host_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             return 0;
 
         default:
+            if (msg == kMsgTitle) {
+                update_title();
+                return 0;
+            }
             break;
     }
     return DefWindowProcW(hwnd, msg, wParam, lParam);
@@ -551,10 +654,11 @@ static void audio_callback(ma_device * device, void * out, const void *, ma_uint
 
 static void usage(void) {
     fprintf(stderr,
-            "usage: vst3hostwin <plugin.vst3> [--midi N] [--seconds N] [--shot out.bmp] [--dpi-unaware]\n"
+            "usage: vst3hostwin [<plugin.vst3>] [--midi N] [--seconds N] [--shot out.bmp] [--dpi-unaware]\n"
             "                   [--no-audio] [--audio N] [--note PITCH] [--fresh] [--keep-state]\n"
-            "  <plugin.vst3>  a single-file .vst3, or a bundle folder (Contents\\<arch>-win\\<name>.vst3)\n"
-            "  --midi N       open MIDI input N (the list is printed at start-up)\n"
+            "  <plugin.vst3>  a single-file .vst3, or a bundle folder (Contents\\<arch>-win\\<name>.vst3);\n"
+            "                 without one, a plug-in browser opens\n"
+            "  --midi N       open MIDI input N (the list is printed at start-up; else the MIDI input menu's choice)\n"
             "  --seconds N    quit after N seconds\n"
             "  --shot PATH    save the window as a .bmp just before quitting; implies --seconds 4\n"
             "  --dpi-unaware  run as a host Windows scales as a bitmap, for that half of the DPI handling\n"
@@ -563,19 +667,33 @@ static void usage(void) {
             "  --note PITCH   hold this note from the start\n"
             "  --fresh        do not restore the saved state (%%APPDATA%%\\vst3hostwin\\<plugin>.state)\n"
             "  --keep-state   do not save the state at exit\n"
-            "Caps Lock on: A W S E D F T G Y H U J K O L P play C to D#, Z and X shift the octave.\n");
+            "Keys: A S D F G H J K L white notes from C, W E T Y U O P black, Z / X octave;\n"
+            "Caps Lock on types into the plug-in instead.\n");
 }
 
 // notes §8: GenBridge Monitor's habit - the plug-in's state kept per plug-in, restored at open, saved at close
-static std::wstring state_path(const std::wstring & binary) {
+static std::wstring settings_dir(void) {
     wchar_t      appData[MAX_PATH] = {0};
     DWORD        n                 = GetEnvironmentVariableW(L"APPDATA", appData, MAX_PATH);
     std::wstring dir               = ((n > 0) && (n < MAX_PATH)) ? std::wstring(appData) + L"\\vst3hostwin" : L".";
-    size_t       slash             = binary.find_last_of(L"\\/");
-    std::wstring leaf              = (slash == std::wstring::npos) ? binary : binary.substr(slash + 1);
 
     CreateDirectoryW(dir.c_str(), nullptr);
-    return dir + L"\\" + leaf + L".state";
+    return dir;
+}
+
+static std::wstring leaf_of(const std::wstring & path) {
+    std::wstring name = path;
+
+    while (!name.empty() && ((name.back() == L'\\') || (name.back() == L'/'))) {
+        name.pop_back();
+    }
+    size_t slash = name.find_last_of(L"\\/");
+
+    return (slash == std::wstring::npos) ? name : name.substr(slash + 1);
+}
+
+static std::wstring state_path(const std::wstring & binary) {
+    return settings_dir() + L"\\" + leaf_of(binary) + L".state";
 }
 
 static bool read_file(const std::wstring & path, std::string & out) {
@@ -613,6 +731,29 @@ static std::wstring widen(const char * s) {
     return w;
 }
 
+static std::string narrow(const std::wstring & w) {
+    int         n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    std::string s((size_t)((n > 0) ? n - 1 : 0), '\0');
+
+    WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, &s[0], n, nullptr, nullptr);
+    return s;
+}
+
+// notes §9: an error has to be seen, and from an icon there is no console to print it to
+static void fail(const char * fmt, ...) {
+    char    msg[1024];
+    va_list ap;
+
+    va_start(ap, fmt);
+    vsnprintf(msg, sizeof(msg), fmt, ap);
+    va_end(ap);
+    fprintf(stderr, "%s\n", msg);
+
+    if (!gHaveConsole) {
+        MessageBoxW(nullptr, widen(msg).c_str(), L"vst3hostwin", MB_OK | MB_ICONERROR);
+    }
+}
+
 // notes §7
 static std::wstring binary_path(const std::wstring & path) {
     DWORD attrs = GetFileAttributesW(path.c_str());
@@ -633,6 +774,640 @@ static std::wstring binary_path(const std::wstring & path) {
     const wchar_t * arch = L"x86_64-win";
 #endif
     return name + L"\\Contents\\" + arch + L"\\" + leaf;
+}
+
+// ------------------------------------------------------------------------------------------------
+// The plug-in browser (notes §10)
+// ------------------------------------------------------------------------------------------------
+
+#if defined (__aarch64__)
+static const int       kOwnMachine = 0xAA64;
+static const wchar_t * kOwnArch    = L"arm64";
+#else
+static const int       kOwnMachine = 0x8664;
+static const wchar_t * kOwnArch    = L"x64";
+#endif
+
+// The PE header's machine field: 0xAA64 arm64 (ARM64X too), 0x8664 x64; -1 when it is not a DLL at all
+static int pe_machine(const std::wstring & file) {
+    FILE * f = _wfopen(file.c_str(), L"rb");
+    int    m = -1;
+
+    if (f == nullptr) {
+        return -1;
+    }
+    unsigned char h[64];
+
+    if ((fread(h, 1, sizeof(h), f) == sizeof(h)) && (h[0] == 'M') && (h[1] == 'Z')) {
+        long          off = (long)((unsigned)h[0x3C] | ((unsigned)h[0x3D] << 8) | ((unsigned)h[0x3E] << 16) | ((unsigned)h[0x3F] << 24));
+        unsigned char pe[6];
+
+        if ((fseek(f, off, SEEK_SET) == 0) && (fread(pe, 1, sizeof(pe), f) == sizeof(pe)) && (memcmp(pe, "PE\0\0", 4) == 0)) {
+            m = pe[4] | (pe[5] << 8);
+        }
+    }
+    fclose(f);
+    return m;
+}
+
+static const wchar_t * machine_name(int m) {
+    return (m == 0xAA64) ? L"arm64" : ((m == 0x8664) ? L"x64" : ((m == 0x14C) ? L"x86" : L"unknown"));
+}
+
+struct PluginEntry {
+    std::wstring name;
+    std::wstring path;
+    std::wstring where;
+    std::wstring date;
+    std::wstring problem;    // empty when this host can load it
+};
+
+static bool is_vst3_name(const std::wstring & n) {
+    return (n.size() > 5) && (_wcsicmp(n.c_str() + n.size() - 5, L".vst3") == 0);
+}
+
+static void add_entry(std::vector<PluginEntry> & list, const std::wstring & path, const wchar_t * where) {
+    for (const PluginEntry & e : list) {
+        if (_wcsicmp(e.path.c_str(), path.c_str()) == 0) {
+            return;
+        }
+    }
+    PluginEntry  e;
+    std::wstring binary = binary_path(path);
+    std::wstring leaf   = leaf_of(path);
+    int          m      = pe_machine(binary);
+
+    e.name  = is_vst3_name(leaf) ? leaf.substr(0, leaf.size() - 5) : leaf;
+    e.path  = path;
+    e.where = where;
+
+    WIN32_FILE_ATTRIBUTE_DATA fa = {};
+
+    if (GetFileAttributesExW(binary.c_str(), GetFileExInfoStandard, &fa)) {
+        FILETIME   local;
+        SYSTEMTIME st;
+        wchar_t    d[32];
+
+        FileTimeToLocalFileTime(&fa.ftLastWriteTime, &local);
+        FileTimeToSystemTime(&local, &st);
+        swprintf(d, 32, L"%04u-%02u-%02u %02u:%02u", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute);
+        e.date = d;
+    }
+
+    if (m < 0) {
+        e.problem = std::wstring(L"no ") + kOwnArch + L" build in it";
+    } else if (m != kOwnMachine) {
+        e.problem = std::wstring(machine_name(m)) + L" only - this host is " + kOwnArch;
+    }
+    list.push_back(e);
+}
+
+static void scan_folder(std::vector<PluginEntry> & list, const std::wstring & dir, const wchar_t * where, int depth) {
+    WIN32_FIND_DATAW fd;
+    HANDLE           h = FindFirstFileW((dir + L"\\*").c_str(), &fd);
+
+    if (h == INVALID_HANDLE_VALUE) {
+        return;
+    }
+
+    do {
+        std::wstring n = fd.cFileName;
+
+        if ((n == L".") || (n == L"..")) {
+            continue;
+        }
+        std::wstring full = dir + L"\\" + n;
+
+        if (is_vst3_name(n)) {
+            add_entry(list, full, where);    // a file or a bundle folder - never looked inside
+        } else if (((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) && (depth > 0)) {
+            scan_folder(list, full, where, depth - 1);
+        }
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
+}
+
+static std::vector<std::wstring> read_lines(const std::wstring & path) {
+    std::vector<std::wstring> out;
+    std::string               s;
+
+    if (!read_file(path, s)) {
+        return out;
+    }
+    size_t a = 0;
+
+    while (a < s.size()) {
+        size_t b = s.find('\n', a);
+
+        b = (b == std::string::npos) ? s.size() : b;
+        std::string line = s.substr(a, b - a);
+
+        if (!line.empty() && (line.back() == '\r')) {
+            line.pop_back();
+        }
+        if (!line.empty()) {
+            out.push_back(widen(line.c_str()));
+        }
+        a = b + 1;
+    }
+    return out;
+}
+
+static void remember_recent(const std::wstring & path) {
+    std::wstring              file = settings_dir() + L"\\recent.txt";
+    std::vector<std::wstring> old  = read_lines(file);
+    std::string               s    = narrow(path) + "\n";
+    int                       kept = 0;
+
+    for (const std::wstring & p : old) {
+        if ((_wcsicmp(p.c_str(), path.c_str()) != 0) && (kept++ < 9)) {
+            s += narrow(p) + "\n";
+        }
+    }
+    write_file(file, s);
+}
+
+static std::wstring env_dir(const wchar_t * var, const wchar_t * tail) {
+    wchar_t v[MAX_PATH] = {0};
+    DWORD   n           = GetEnvironmentVariableW(var, v, MAX_PATH);
+
+    return ((n > 0) && (n < MAX_PATH)) ? std::wstring(v) + tail : std::wstring();
+}
+
+static std::vector<PluginEntry> collect_plugins(void) {
+    std::vector<PluginEntry> list;
+
+    for (const std::wstring & p : read_lines(settings_dir() + L"\\recent.txt")) {
+        if (GetFileAttributesW(p.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            add_entry(list, p, L"recent");
+        }
+    }
+
+    // This checkout's own builds: the exe is SynthLib\tools\, the projects beside SynthLib
+    wchar_t exe[MAX_PATH] = {0};
+
+    GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    std::wstring root = exe;
+
+    for (int up = 0; up < 3; up++) {
+        size_t slash = root.find_last_of(L"\\/");
+        root = (slash == std::wstring::npos) ? std::wstring() : root.substr(0, slash);
+    }
+
+    if (!root.empty() && (GetFileAttributesW((root + L"\\SynthLib").c_str()) != INVALID_FILE_ATTRIBUTES)) {
+        WIN32_FIND_DATAW fd;
+        HANDLE           h = FindFirstFileW((root + L"\\AllAlike\\*").c_str(), &fd);
+
+        if (h != INVALID_HANDLE_VALUE) {
+            do {
+                if (((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) && (fd.cFileName[0] != L'.')) {
+                    scan_folder(list, root + L"\\AllAlike\\" + fd.cFileName + L"\\build\\windows", L"AllAlike build", 0);
+                }
+            } while (FindNextFileW(h, &fd));
+            FindClose(h);
+        }
+        h = FindFirstFileW((root + L"\\G2Alike\\build-win-*").c_str(), &fd);
+
+        if (h != INVALID_HANDLE_VALUE) {
+            do {
+                scan_folder(list, root + L"\\G2Alike\\" + fd.cFileName, L"G2Alike build", 0);
+            } while (FindNextFileW(h, &fd));
+            FindClose(h);
+        }
+    }
+    std::wstring common = env_dir(L"CommonProgramFiles", L"\\VST3");
+    std::wstring user   = env_dir(L"LOCALAPPDATA", L"\\Programs\\Common\\VST3");
+
+    if (!common.empty()) { scan_folder(list, common, L"installed", 3); }
+    if (!user.empty()) { scan_folder(list, user, L"installed (user)", 3); }
+    return list;
+}
+
+enum { kIdHeader = 201, kIdList, kIdPath, kIdBrowse };
+
+struct Browser {
+    HWND                     wnd    = nullptr;
+    HWND                     header = nullptr;
+    HWND                     list   = nullptr;
+    HWND                     path   = nullptr;
+    HWND                     open   = nullptr;
+    HWND                     browse = nullptr;
+    HWND                     cancel = nullptr;
+    HFONT                    font   = nullptr;
+    double                   scale  = 1.0;
+    std::vector<PluginEntry> entries;
+    std::wstring             chosen;
+    bool                     done   = false;
+};
+
+static Browser * gBrowser = nullptr;
+
+static void browser_layout(Browser * b) {
+    RECT r;
+
+    GetClientRect(b->wnd, &r);
+    auto S      = [b](int v) { return (int)lround(v * b->scale); };
+    int  m      = S(12);
+    int  bh     = S(28);
+    int  bw     = S(96);
+    int  lh     = S(20);
+    int  w      = r.right;
+    int  top    = m + lh + S(6);
+    int  btnTop = r.bottom - m - bh;
+    int  pathY  = btnTop - S(10) - lh;
+
+    MoveWindow(b->header, m, m, w - (2 * m), lh, TRUE);
+    MoveWindow(b->list, m, top, w - (2 * m), std::max(S(40), pathY - S(6) - top), TRUE);
+    MoveWindow(b->path, m, pathY, w - (2 * m), lh, TRUE);
+    MoveWindow(b->browse, m, btnTop, S(130), bh, TRUE);
+    MoveWindow(b->cancel, w - m - bw, btnTop, bw, bh, TRUE);
+    MoveWindow(b->open, w - m - (2 * bw) - S(8), btnTop, bw, bh, TRUE);
+}
+
+static PluginEntry * browser_current(Browser * b) {
+    LRESULT sel = SendMessageW(b->list, LB_GETCURSEL, 0, 0);
+
+    if (sel == LB_ERR) {
+        return nullptr;
+    }
+    size_t i = (size_t)SendMessageW(b->list, LB_GETITEMDATA, (WPARAM)sel, 0);
+
+    return (i < b->entries.size()) ? &b->entries[i] : nullptr;
+}
+
+static void browser_selected(Browser * b) {
+    PluginEntry * e = browser_current(b);
+
+    SetWindowTextW(b->path, (e != nullptr) ? e->path.c_str() : L"");
+    EnableWindow(b->open, ((e != nullptr) && e->problem.empty()) ? TRUE : FALSE);
+}
+
+static void browser_open(Browser * b) {
+    PluginEntry * e = browser_current(b);
+
+    if ((e != nullptr) && e->problem.empty()) {
+        b->chosen = e->path;
+        b->done   = true;
+    }
+}
+
+static void browser_browse(Browser * b) {
+    wchar_t        file[MAX_PATH * 2] = {0};
+    OPENFILENAMEW  ofn                = {};
+    std::wstring   common             = env_dir(L"CommonProgramFiles", L"\\VST3");
+
+    ofn.lStructSize     = sizeof(ofn);
+    ofn.hwndOwner       = b->wnd;
+    ofn.lpstrFilter     = L"VST3 plug-ins (*.vst3)\0*.vst3\0All files (*.*)\0*.*\0";
+    ofn.lpstrFile       = file;
+    ofn.nMaxFile        = MAX_PATH * 2;
+    ofn.lpstrInitialDir = common.empty() ? nullptr : common.c_str();
+    ofn.lpstrTitle      = L"Open a VST3 plug-in (inside a bundle: Contents\\<arch>-win\\<name>.vst3)";
+    ofn.Flags           = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+
+    if (!GetOpenFileNameW(&ofn)) {
+        return;
+    }
+    int m = pe_machine(file);
+
+    if (m != kOwnMachine) {
+        std::wstring msg = (m < 0) ? std::wstring(L"That file is not a plug-in DLL.")
+                                   : std::wstring(L"That plug-in is built for ") + machine_name(m) + L"; this host is " + kOwnArch + L".";
+
+        MessageBoxW(b->wnd, msg.c_str(), L"vst3hostwin", MB_OK | MB_ICONWARNING);
+        return;
+    }
+    b->chosen = file;
+    b->done   = true;
+}
+
+static LRESULT CALLBACK browser_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    Browser * b = gBrowser;
+
+    switch (msg) {
+        case WM_SIZE:
+            if ((b != nullptr) && (b->list != nullptr)) {
+                browser_layout(b);
+            }
+            return 0;
+
+        case WM_GETMINMAXINFO: {
+            MINMAXINFO * mm = (MINMAXINFO *)lParam;
+            double       s  = (b != nullptr) ? b->scale : 1.0;
+
+            mm->ptMinTrackSize.x = (LONG)(480 * s);
+            mm->ptMinTrackSize.y = (LONG)(300 * s);
+            return 0;
+        }
+
+        case WM_COMMAND: {
+            int id   = (int)LOWORD(wParam);
+            int code = (int)HIWORD(wParam);
+
+            if (b == nullptr) {
+                return 0;
+            }
+            if ((id == kIdList) && (code == LBN_SELCHANGE)) {
+                browser_selected(b);
+            } else if (((id == kIdList) && (code == LBN_DBLCLK)) || (id == IDOK)) {
+                browser_open(b);
+            } else if (id == kIdBrowse) {
+                browser_browse(b);
+            } else if (id == IDCANCEL) {
+                b->done = true;
+            }
+            return 0;
+        }
+
+        case WM_CLOSE:
+            if (b != nullptr) {
+                b->done = true;
+            }
+            return 0;
+
+        default:
+            break;
+    }
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+
+static std::wstring choose_plugin(HWND owner) {
+    static bool registered = false;
+    HINSTANCE   inst       = GetModuleHandleW(nullptr);
+
+    if (!registered) {
+        WNDCLASSEXW wc = {};
+
+        wc.cbSize        = sizeof(wc);
+        wc.lpfnWndProc   = browser_proc;
+        wc.hInstance     = inst;
+        wc.hCursor       = LoadCursor(nullptr, IDC_ARROW);
+        wc.hIcon         = LoadIcon(nullptr, IDI_APPLICATION);
+        wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+        wc.lpszClassName = L"vst3hostwin-browser";
+        RegisterClassExW(&wc);
+        registered = true;
+    }
+    Browser b;
+
+    b.entries = collect_plugins();
+    b.wnd     = CreateWindowExW(0, L"vst3hostwin-browser", L"vst3hostwin - choose a plug-in",
+                                WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX, CW_USEDEFAULT, CW_USEDEFAULT, 100, 100,
+                                owner, nullptr, inst, nullptr);
+    gBrowser  = &b;
+    b.scale   = window_scale(b.wnd);
+    b.font    = CreateFontW(-(int)lround(9.0 * 96.0 * b.scale / 72.0), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                            DEFAULT_PITCH, L"Segoe UI");
+
+    auto child = [&](const wchar_t * cls, const wchar_t * text, DWORD style, DWORD ex, int id) {
+        HWND h = CreateWindowExW(ex, cls, text, WS_CHILD | WS_VISIBLE | style, 0, 0, 10, 10, b.wnd,
+                                 (HMENU)(INT_PTR)id, inst, nullptr);
+
+        SendMessageW(h, WM_SETFONT, (WPARAM)b.font, TRUE);
+        return h;
+    };
+    b.header = child(L"STATIC", b.entries.empty() ? L"No plug-ins found here - Browse... to open a .vst3 file."
+                                                  : L"Choose a plug-in, then Open (or double-click it).",
+                     SS_LEFT, 0, kIdHeader);
+    b.list   = child(L"LISTBOX", L"", WS_TABSTOP | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | LBS_USETABSTOPS,
+                     WS_EX_CLIENTEDGE, kIdList);
+    b.path   = child(L"STATIC", L"", SS_LEFT | SS_PATHELLIPSIS | SS_NOPREFIX, 0, kIdPath);
+    b.browse = child(L"BUTTON", L"&Browse...", WS_TABSTOP | BS_PUSHBUTTON, 0, kIdBrowse);
+    b.open   = child(L"BUTTON", L"&Open", WS_TABSTOP | BS_DEFPUSHBUTTON, 0, IDOK);
+    b.cancel = child(L"BUTTON", L"Cancel", WS_TABSTOP | BS_PUSHBUTTON, 0, IDCANCEL);
+
+    int tabs[2] = {80, 150};    // dialog units: name | where | date
+
+    SendMessageW(b.list, LB_SETTABSTOPS, 2, (LPARAM)tabs);
+    int firstUsable = -1;
+
+    for (size_t i = 0; i < b.entries.size(); i++) {
+        const PluginEntry & e    = b.entries[i];
+        std::wstring        text = e.name + L"\t" + e.where + L"\t" + e.date;
+
+        if (!e.problem.empty()) {
+            text += L"   (" + e.problem + L")";
+        }
+        LRESULT row = SendMessageW(b.list, LB_ADDSTRING, 0, (LPARAM)text.c_str());
+
+        SendMessageW(b.list, LB_SETITEMDATA, (WPARAM)row, (LPARAM)i);
+
+        if ((firstUsable < 0) && e.problem.empty()) {
+            firstUsable = (int)row;
+        }
+    }
+    SendMessageW(b.list, LB_SETCURSEL, (WPARAM)((firstUsable >= 0) ? firstUsable : 0), 0);
+    browser_selected(&b);
+
+    set_client_size_of(b.wnd, (int)lround(720 * b.scale), (int)lround(440 * b.scale), false);
+    browser_layout(&b);
+
+    // Centred on the plug-in's window, or on the screen
+    RECT      wr;
+    RECT      area;
+    HMONITOR  mon = MonitorFromWindow((owner != nullptr) ? owner : b.wnd, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO mi = {};
+
+    mi.cbSize = sizeof(mi);
+    GetMonitorInfoW(mon, &mi);
+    GetWindowRect(b.wnd, &wr);
+
+    if (owner != nullptr) {
+        GetWindowRect(owner, &area);
+    } else {
+        area = mi.rcWork;
+    }
+    int x = area.left + ((area.right - area.left) - (wr.right - wr.left)) / 2;
+    int y = area.top + ((area.bottom - area.top) - (wr.bottom - wr.top)) / 2;
+
+    SetWindowPos(b.wnd, nullptr, std::max((int)mi.rcWork.left, x), std::max((int)mi.rcWork.top, y), 0, 0,
+                 SWP_NOSIZE | SWP_NOZORDER);
+
+    if (owner != nullptr) {
+        EnableWindow(owner, FALSE);
+    }
+    ShowWindow(b.wnd, SW_SHOW);
+    SetForegroundWindow(b.wnd);
+    SetFocus(b.list);
+
+    while (!b.done) {
+        MSG m;
+        int r = GetMessageW(&m, nullptr, 0, 0);
+
+        if (r <= 0) {
+            if (r == 0) {
+                PostQuitMessage((int)m.wParam);
+            }
+            break;
+        }
+
+        if (!IsDialogMessageW(b.wnd, &m)) {
+            TranslateMessage(&m);
+            DispatchMessageW(&m);
+        }
+    }
+
+    if (owner != nullptr) {
+        EnableWindow(owner, TRUE);    // before the browser goes, so the activation returns to it
+    }
+    DestroyWindow(b.wnd);
+    DeleteObject(b.font);
+    gBrowser = nullptr;
+    return b.chosen;
+}
+
+// ------------------------------------------------------------------------------------------------
+// The menu bar: MIDI input, another plug-in, help
+// ------------------------------------------------------------------------------------------------
+
+static HMENU   gMidiMenu = nullptr;
+static HMIDIIN gMidi     = nullptr;
+static int     gMidiOpen = -1;
+
+static std::wstring midi_name(int i) {
+    MIDIINCAPSW caps = {};
+
+    midiInGetDevCapsW((UINT)i, &caps, sizeof(caps));
+    return caps.szPname;
+}
+
+static bool open_midi(int index) {
+    if (gMidi != nullptr) {
+        midiInStop(gMidi);
+        midiInClose(gMidi);
+        gMidi = nullptr;
+    }
+    gMidiOpen = -1;
+
+    if (index >= 0) {
+        if (midiInOpen(&gMidi, (UINT)index, (DWORD_PTR)midi_in, 0, CALLBACK_FUNCTION) == MMSYSERR_NOERROR) {
+            midiInStart(gMidi);
+            gMidiOpen = index;
+            printf("midi: %ls open\n", midi_name(index).c_str());
+        } else {
+            gMidi = nullptr;
+            fail("Could not open MIDI input %d (%s). Another program may have it open.", index, narrow(midi_name(index)).c_str());
+        }
+    }
+
+    if (gMidiMenu != nullptr) {
+        int count = GetMenuItemCount(gMidiMenu);
+
+        CheckMenuItem(gMidiMenu, kMenuMidiNone, MF_BYCOMMAND | ((gMidiOpen < 0) ? MF_CHECKED : MF_UNCHECKED));
+
+        for (int i = 0; i < count; i++) {
+            CheckMenuItem(gMidiMenu, (UINT)(kMenuMidiFirst + i), MF_BYCOMMAND | ((i == gMidiOpen) ? MF_CHECKED : MF_UNCHECKED));
+        }
+    }
+    return (gMidiOpen == index);
+}
+
+static void midi_menu_chosen(int item) {
+    if (open_midi(item) || (item < 0)) {
+        write_file(settings_dir() + L"\\midi.txt", (item >= 0) ? narrow(midi_name(item)) : std::string("-"));
+    }
+}
+
+// The input chosen from the menu last time, found again by name - the numbers move when devices come and go
+static int remembered_midi(void) {
+    std::string name;
+
+    if (!read_file(settings_dir() + L"\\midi.txt", name)) {
+        return -1;
+    }
+    UINT ins = midiInGetNumDevs();
+
+    for (UINT i = 0; i < ins; i++) {
+        if (narrow(midi_name((int)i)) == name) {
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+static HMENU gKeysMenu = nullptr;
+
+static void keys_menu_chosen(void) {
+    gKeysPlay = !gKeysPlay;
+
+    if (!gKeysPlay) {
+        release_keys();
+    }
+    CheckMenuItem(gKeysMenu, kMenuKeys, MF_BYCOMMAND | (gKeysPlay ? MF_CHECKED : MF_UNCHECKED));
+    write_file(settings_dir() + L"\\keys.txt", gKeysPlay ? "play" : "type");
+    update_title();
+}
+
+static void build_menu(HWND hwnd) {
+    HMENU bar  = CreateMenu();
+    HMENU plug = CreatePopupMenu();
+    HMENU help = CreatePopupMenu();
+    std::string keys;
+
+    if (read_file(settings_dir() + L"\\keys.txt", keys)) {
+        gKeysPlay = (keys != "type");
+    }
+    gKeysMenu = CreatePopupMenu();
+    AppendMenuW(gKeysMenu, MF_STRING | (gKeysPlay ? MF_CHECKED : 0u), kMenuKeys, L"&Letters play notes (Caps Lock on: type instead)");
+    AppendMenuW(gKeysMenu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(gKeysMenu, MF_STRING, kMenuOctaveDown, L"Octave &down\tZ");
+    AppendMenuW(gKeysMenu, MF_STRING, kMenuOctaveUp, L"Octave &up\tX");
+
+    AppendMenuW(plug, MF_STRING, kMenuOpen, L"&Open another plug-in...");
+    AppendMenuW(plug, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(plug, MF_STRING, kMenuExit, L"E&xit");
+
+    gMidiMenu = CreatePopupMenu();
+    AppendMenuW(gMidiMenu, MF_STRING, kMenuMidiNone, L"&None");
+    UINT ins = midiInGetNumDevs();
+
+    if (ins > 0) {
+        AppendMenuW(gMidiMenu, MF_SEPARATOR, 0, nullptr);
+    }
+    for (UINT i = 0; i < ins; i++) {
+        AppendMenuW(gMidiMenu, MF_STRING, (UINT_PTR)(kMenuMidiFirst + (int)i), midi_name((int)i).c_str());
+    }
+    AppendMenuW(help, MF_STRING, kMenuHelp, L"&Playing notes...");
+
+    AppendMenuW(bar, MF_POPUP, (UINT_PTR)plug, L"&Plug-in");
+    AppendMenuW(bar, MF_POPUP, (UINT_PTR)gKeysMenu, L"&Keyboard");
+    AppendMenuW(bar, MF_POPUP, (UINT_PTR)gMidiMenu, L"&MIDI input");
+    AppendMenuW(bar, MF_POPUP, (UINT_PTR)help, L"&Help");
+    SetMenu(hwnd, bar);
+}
+
+static void update_title(void) {
+    if (gWindow == nullptr) {
+        return;
+    }
+    wchar_t t[512];
+
+    if (!gKeysPlay) {
+        swprintf(t, 512, L"%ls - vst3hostwin      letters type into the plug-in (Keyboard menu to play notes)", gPluginName.c_str());
+    } else if (caps_lock_on()) {
+        swprintf(t, 512, L"%ls - vst3hostwin      Caps Lock is on: letters type into the plug-in", gPluginName.c_str());
+    } else {
+        swprintf(t, 512, L"%ls - vst3hostwin      A-L white notes from C%d, W E T Y U O P black, Z / X octave",
+                 gPluginName.c_str(), gOctave);
+    }
+    SetWindowTextW(gWindow, t);
+}
+
+static void show_help(HWND owner) {
+    std::wstring text =
+        L"Playing notes from the computer keyboard\n\n"
+        L"The letter keys play notes, as in G2Alike:\n"
+        L"    A S D F G H J K L  -  the white keys, from C\n"
+        L"    W E  T Y U  O P     -  the black keys between them\n"
+        L"    Z / X  -  octave down / up (the title bar shows which C the A key plays)\n\n"
+        L"To type into the plug-in itself (a patch name, its file browser), turn Caps Lock ON,\n"
+        L"or untick Keyboard > Letters play notes. Keys held with Ctrl, Alt or Win are never notes.\n\n"
+        L"A MIDI keyboard: choose it from the MIDI input menu; the choice is remembered.\n\n"
+        L"Each plug-in's state - the patch you loaded through its own menu - is saved when\n"
+        L"you close the window and comes back next time. It is kept in\n    " + settings_dir();
+
+    MessageBoxW(owner, text.c_str(), L"vst3hostwin", MB_OK | MB_ICONINFORMATION);
 }
 
 static void save_shot(const char * path) {
@@ -687,11 +1462,23 @@ static void save_shot(const char * path) {
 }
 
 int main(int argc, char ** argv) {
-    if (argc < 2) {
-        usage();
-        return 2;
+    // notes §9: started from an icon, the console Windows gave us is ours alone - hide it
+    {
+        DWORD ids[2];
+
+        if (GetConsoleProcessList(ids, 2) <= 1) {
+            HWND console = GetConsoleWindow();
+
+            if (console != nullptr) {
+                ShowWindow(console, SW_HIDE);
+            }
+            FreeConsole();
+            gHaveConsole = false;
+        }
     }
-    const char * pluginPath = argv[1];
+    int       wargc = 0;
+    LPWSTR *  wargv = CommandLineToArgvW(GetCommandLineW(), &wargc);    // the path as typed, not the ANSI copy
+    std::wstring pluginW;
     const char * shotPath   = nullptr;
     double       seconds    = 0.0;
     int          midiIndex  = -1;
@@ -702,8 +1489,10 @@ int main(int argc, char ** argv) {
     bool         freshState    = false;
     bool         readOnlyState = false;
 
-    for (int i = 2; i < argc; i++) {
-        if ((strcmp(argv[i], "--seconds") == 0) && (i + 1 < argc)) {
+    for (int i = 1; i < argc; i++) {
+        if ((argv[i][0] != '-') && pluginW.empty()) {
+            pluginW = ((wargv != nullptr) && (wargc == argc)) ? std::wstring(wargv[i]) : widen(argv[i]);
+        } else if ((strcmp(argv[i], "--seconds") == 0) && (i + 1 < argc)) {
             seconds = atof(argv[++i]);
         } else if ((strcmp(argv[i], "--shot") == 0) && (i + 1 < argc)) {
             shotPath = argv[++i];
@@ -739,12 +1528,40 @@ int main(int argc, char ** argv) {
     }
     printf("host: %s\n", dpiAware ? "per-monitor DPI aware" : "DPI unaware (Windows scales it as a bitmap)");
 
+    if (pluginW.empty()) {
+        pluginW = choose_plugin(nullptr);
+
+        if (pluginW.empty()) {
+            return 0;
+        }
+    }
+    {
+        wchar_t full[MAX_PATH * 2];
+        DWORD   n = GetFullPathNameW(pluginW.c_str(), MAX_PATH * 2, full, nullptr);
+
+        if ((n > 0) && (n < MAX_PATH * 2)) {
+            pluginW = full;    // the recent list and a relaunch must not depend on where it was started from
+        }
+    }
+    gPluginName = leaf_of(pluginW);
+
+    if (is_vst3_name(gPluginName)) {
+        gPluginName.resize(gPluginName.size() - 5);
+    }
+
     // --- the DLL, its factory, the component and controller --------------------------------------
-    std::wstring binary = binary_path(widen(pluginPath));
-    HMODULE      dll    = LoadLibraryW(binary.c_str());
+    std::wstring binary  = binary_path(pluginW);
+    int          machine = pe_machine(binary);
+
+    if ((machine >= 0) && (machine != kOwnMachine)) {
+        fail("%s is built for %s, and this host is %s.%s", narrow(gPluginName).c_str(), narrow(machine_name(machine)).c_str(),
+             narrow(kOwnArch).c_str(), (machine == 0x8664) ? " Use vst3hostwin-x64.exe for it." : "");
+        return 1;
+    }
+    HMODULE dll = LoadLibraryW(binary.c_str());
 
     if (dll == nullptr) {
-        fprintf(stderr, "LoadLibrary failed (error %lu): %ls\n", GetLastError(), binary.c_str());
+        fail("LoadLibrary failed (error %lu):\n%s", GetLastError(), narrow(binary).c_str());
         return 1;
     }
     typedef bool (*tInitDll)(void);
@@ -755,7 +1572,7 @@ int main(int argc, char ** argv) {
     tGetFactory getFactory = (tGetFactory)(void *)GetProcAddress(dll, "GetPluginFactory");
 
     if (getFactory == nullptr) {
-        fprintf(stderr, "no GetPluginFactory export\n");
+        fail("%s is not a VST3 plug-in (no GetPluginFactory export).", narrow(binary).c_str());
         return 1;
     }
 
@@ -765,7 +1582,7 @@ int main(int argc, char ** argv) {
     IPluginFactory * factory = getFactory();
 
     if (factory == nullptr) {
-        fprintf(stderr, "GetPluginFactory returned null\n");
+        fail("%s: GetPluginFactory returned null.", narrow(gPluginName).c_str());
         return 1;
     }
     IPluginFactory2 * factory2 = nullptr;
@@ -808,10 +1625,11 @@ int main(int argc, char ** argv) {
     if (!haveComponent
        || (factory->createInstance(componentCid, IComponent::iid, (void **)&gComponent) != kResultTrue)
        || (gComponent == nullptr)) {
-        fprintf(stderr, "no audio class %d, or it could not be created\n", audioIndex);
+        fail("%s: no audio class %d, or it could not be created.", narrow(gPluginName).c_str(), audioIndex);
         return 1;
     }
     gComponent->initialize(&gHostApp);
+    remember_recent(pluginW);
 
     // The controller the component names - not whichever the factory listed last
     if (gComponent->getControllerClassId(controllerCid) == kResultTrue) {
@@ -821,7 +1639,7 @@ int main(int argc, char ** argv) {
     if (!haveController
        || (factory->createInstance(controllerCid, IEditController::iid, (void **)&gController) != kResultTrue)
        || (gController == nullptr)) {
-        fprintf(stderr, "no controller, or it could not be created\n");
+        fail("%s: no controller, or it could not be created.", narrow(gPluginName).c_str());
         return 1;
     }
     gController->initialize(&gHostApp);
@@ -899,25 +1717,19 @@ int main(int argc, char ** argv) {
                 printf("audio: %s, %u Hz\n", device.playback.name, device.sampleRate);
             }
         } else {
-            fprintf(stderr, "audio: no output device\n");
+            fail("No audio output device - the plug-in will be silent.");
         }
     }
 
-    // --- MIDI ----------------------------------------------------------------------------------------
-    HMIDIIN midi = nullptr;
-    UINT    ins  = midiInGetNumDevs();
+    // --- MIDI: --midi N, else the input chosen from the menu last time ---------------------------------
+    UINT ins = midiInGetNumDevs();
 
     for (UINT i = 0; i < ins; i++) {
-        MIDIINCAPSW caps = {};
-
-        midiInGetDevCapsW(i, &caps, sizeof(caps));
-        printf("midi in %u: %ls%s\n", i, caps.szPname, ((int)i == midiIndex) ? "  <- open" : "");
+        printf("midi in %u: %ls\n", i, midi_name((int)i).c_str());
     }
 
-    if ((midiIndex >= 0) && (midiInOpen(&midi, (UINT)midiIndex, (DWORD_PTR)midi_in, 0, CALLBACK_FUNCTION) == MMSYSERR_NOERROR)) {
-        midiInStart(midi);
-    } else if (midiIndex >= 0) {
-        fprintf(stderr, "midi: could not open input %d\n", midiIndex);
+    if (midiIndex < 0) {
+        midiIndex = remembered_midi();
     }
 
     // --- the editor ----------------------------------------------------------------------------------
@@ -928,13 +1740,15 @@ int main(int argc, char ** argv) {
     wc.hInstance     = GetModuleHandleW(nullptr);
     wc.hCursor       = LoadCursor(nullptr, IDC_ARROW);
     wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
+    wc.hIcon         = LoadIcon(nullptr, IDI_APPLICATION);
     wc.lpszClassName = L"vst3hostwin";
     RegisterClassExW(&wc);
 
-    std::wstring title = L"vst3hostwin - " + widen(pluginPath);
-
-    gWindow = CreateWindowExW(0, wc.lpszClassName, title.c_str(), WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
+    gWindow = CreateWindowExW(0, wc.lpszClassName, L"vst3hostwin", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
                               CW_USEDEFAULT, CW_USEDEFAULT, 800, 600, nullptr, nullptr, wc.hInstance, nullptr);
+    build_menu(gWindow);    // before the view's size is applied, so the client area allows for it
+    update_title();
+    open_midi(midiIndex);
     gView   = gController->createView(ViewType::kEditor);
 
     if (gView == nullptr) {
@@ -998,10 +1812,7 @@ int main(int argc, char ** argv) {
         UnhookWindowsHookEx(hook);
     }
 
-    if (midi != nullptr) {
-        midiInStop(midi);
-        midiInClose(midi);
-    }
+    open_midi(-1);
 
     if (deviceRunning) {
         ma_device_uninit(&device);
@@ -1040,6 +1851,26 @@ int main(int argc, char ** argv) {
 
     if (exitDll != nullptr) {
         exitDll();
+    }
+
+    // notes §11: the plug-in chosen from the menu, in a fresh process once this one has saved its state
+    if (!gRelaunch.empty()) {
+        wchar_t exe[MAX_PATH] = {0};
+
+        GetModuleFileNameW(nullptr, exe, MAX_PATH);
+        std::wstring        cmd = L"\"" + std::wstring(exe) + L"\" \"" + gRelaunch + L"\"" + (dpiAware ? L"" : L" --dpi-unaware");
+        STARTUPINFOW        si  = {};
+        PROCESS_INFORMATION pi  = {};
+
+        si.cb = sizeof(si);
+
+        if (CreateProcessW(exe, &cmd[0], nullptr, nullptr, FALSE, gHaveConsole ? 0u : (DWORD)DETACHED_PROCESS,
+                           nullptr, nullptr, &si, &pi)) {
+            CloseHandle(pi.hThread);
+            CloseHandle(pi.hProcess);
+        } else {
+            fail("Could not start a new vst3hostwin for %s.", narrow(gRelaunch).c_str());
+        }
     }
     return 0;
 }
