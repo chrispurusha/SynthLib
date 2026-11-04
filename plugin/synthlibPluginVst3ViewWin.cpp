@@ -30,6 +30,7 @@
 
 #include "pluginterfaces/base/funknown.h"
 #include "pluginterfaces/gui/iplugview.h"
+#include "pluginterfaces/gui/iplugviewcontentscalesupport.h"
 
 #include "synthlibPlugin.h"
 #include "synthlibPluginVst3View.h"
@@ -40,7 +41,19 @@ class SynthLibVst3ViewWin;
 
 static std::vector<SynthLibVst3ViewWin *> gOpenViews;
 
-class SynthLibVst3ViewWin : public IPlugView {
+// notes §3: the scale before a host says - the system DPI as THIS PROCESS sees it, which is 96 in a host
+// Windows scales as a bitmap. GetDpiForSystem() is Windows 10 1607 on, so looked up rather than linked.
+static double system_scale(void) {
+    typedef UINT (WINAPI * tGetDpiForSystem)(void);
+    HMODULE          user32 = GetModuleHandleW(L"user32.dll");
+    tGetDpiForSystem get    = (user32 != nullptr) ?
+                              (tGetDpiForSystem)(void *)GetProcAddress(user32, "GetDpiForSystem") : nullptr;
+    UINT             dpi    = (get != nullptr) ? get() : 96u;
+
+    return (dpi >= 96u) ? ((double)dpi / 96.0) : 1.0;
+}
+
+class SynthLibVst3ViewWin : public IPlugView, public IPlugViewContentScaleSupport {
 public:
     SynthLibVst3ViewWin(const tSynthLibPluginDesc * descriptor, void * pluginInstance, FUnknown * ownerIn,
                         double initialWidth, double * widthSinkIn)
@@ -48,6 +61,7 @@ public:
         if (owner != nullptr) {
             owner->addRef();
         }
+        scale = system_scale();
         double width = desc->editorDefaultWidth;
 
         if (initialWidth > 0.0) {
@@ -82,16 +96,37 @@ public:
         }
         ViewRect rect = {};
 
-        rect.right  = (int32)width;
-        rect.bottom = (int32)height;
+        rect.right  = pixels(width);
+        rect.bottom = pixels(height);
         return (plugFrame->resizeView(this, &rect) == kResultOk);
     }
 
     tresult PLUGIN_API queryInterface(const TUID iid, void ** obj) SMTG_OVERRIDE {
         QUERY_INTERFACE(iid, obj, FUnknown::iid, IPlugView)
         QUERY_INTERFACE(iid, obj, IPlugView::iid, IPlugView)
+        QUERY_INTERFACE(iid, obj, IPlugViewContentScaleSupport::iid, IPlugViewContentScaleSupport)
         *obj = nullptr;
         return kNoInterface;
+    }
+
+    // notes §3: what the host says the scale is. The editor keeps its logical size and asks for the
+    // pixels that now take; both kinds of panel draw and hit-test from the window's pixel width.
+    tresult PLUGIN_API setContentScaleFactor(ScaleFactor factor) SMTG_OVERRIDE {
+        if (!(factor >= 0.5f) || !(factor <= 8.0f)) {
+            return kInvalidArgument;
+        }
+
+        if (fabs((double)factor - scale) < 0.001) {
+            return kResultOk;
+        }
+        scale = (double)factor;
+
+        if (editorWindow != nullptr) {
+            SetWindowPos(editorWindow, nullptr, 0, 0, pixels(currentWidth), pixels(currentHeight),
+                         SWP_NOZORDER | SWP_NOACTIVATE);
+            request_resize(currentWidth, currentHeight);
+        }
+        return kResultOk;
     }
 
     uint32 PLUGIN_API addRef(void) SMTG_OVERRIDE {
@@ -128,7 +163,7 @@ public:
         style |= (LONG_PTR)(WS_CHILD | WS_CLIPSIBLINGS | WS_CLIPCHILDREN);
         SetWindowLongPtrW(editorWindow, GWL_STYLE, style);
         SetParent(editorWindow, (HWND)parent);
-        SetWindowPos(editorWindow, nullptr, 0, 0, (int)currentWidth, (int)currentHeight,
+        SetWindowPos(editorWindow, nullptr, 0, 0, pixels(currentWidth), pixels(currentHeight),
                      SWP_NOZORDER | SWP_FRAMECHANGED | SWP_SHOWWINDOW);
         forget();
         gOpenViews.push_back(this);
@@ -177,17 +212,21 @@ public:
         }
         size->left   = 0;
         size->top    = 0;
-        size->right  = (int32)currentWidth;
-        size->bottom = (int32)currentHeight;
+        size->right  = pixels(currentWidth);
+        size->bottom = pixels(currentHeight);
         return kResultOk;
     }
 
+    // The host's sizes are pixels; currentWidth/Height, the saved width and the descriptor's limits are logical
     tresult PLUGIN_API onSize(ViewRect * newSize) SMTG_OVERRIDE {
         if (newSize == nullptr) {
             return kInvalidArgument;
         }
-        currentWidth  = (double)(newSize->right - newSize->left);
-        currentHeight = (double)(newSize->bottom - newSize->top);
+        int pixelWidth  = (int)(newSize->right - newSize->left);
+        int pixelHeight = (int)(newSize->bottom - newSize->top);
+
+        currentWidth  = (double)pixelWidth / scale;
+        currentHeight = (double)pixelHeight / scale;
 
         if (widthSink != nullptr) {
             *widthSink = currentWidth;
@@ -198,8 +237,7 @@ public:
         }
 
         if (editorWindow != nullptr) {
-            SetWindowPos(editorWindow, nullptr, 0, 0, (int)currentWidth, (int)currentHeight,
-                         SWP_NOZORDER | SWP_NOACTIVATE);
+            SetWindowPos(editorWindow, nullptr, 0, 0, pixelWidth, pixelHeight, SWP_NOZORDER | SWP_NOACTIVATE);
 
             if (desc->cb.viewResized != nullptr) {
                 desc->cb.viewResized(inst, (void *)editorWindow, currentWidth, currentHeight);
@@ -226,23 +264,27 @@ public:
         if (rect == nullptr) {
             return kInvalidArgument;
         }
-        double wanted = (double)(rect->right - rect->left);
+        double wanted = (double)(rect->right - rect->left) / scale;
 
         if (desc->editorAspect > 0.0) {
-            double fromHeight = (double)(rect->bottom - rect->top) * desc->editorAspect;
+            double fromHeight = (double)(rect->bottom - rect->top) / scale * desc->editorAspect;
 
             wanted = (wanted + fromHeight) * 0.5;
         }
         wanted      = clamp_width(wanted);
-        rect->right = rect->left + (int32)lround(wanted);
+        rect->right = rect->left + pixels(wanted);
 
         if (desc->editorAspect > 0.0) {
-            rect->bottom = rect->top + (int32)lround(wanted / desc->editorAspect);
+            rect->bottom = rect->top + pixels(wanted / desc->editorAspect);
         }
         return kResultTrue;
     }
 
 private:
+    int32 pixels(double logical) const {
+        return (int32)lround(logical * scale);
+    }
+
     void forget(void) {
         for (size_t i = 0; i < gOpenViews.size(); i++) {
             if (gOpenViews[i] == this) {
@@ -274,7 +316,8 @@ private:
     double *                    widthSink;
     HWND                        editorWindow  = nullptr;
     double                      currentWidth  = 0.0;
-    double                      currentHeight = 0.0;
+    double                      currentHeight = 0.0;    // logical; the window is these times scale
+    double                      scale         = 1.0;    // pixels per logical unit, notes §3
     IPlugFrame *                plugFrame     = nullptr;
 };
 

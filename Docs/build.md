@@ -118,3 +118,6 @@ A plug-in that draws its own panel (`synthlibPanelView.h`) uses `plugin/synthlib
 of `synthlibPanelView.m`; on the Mac that file compiles to nothing. The AllAlike plug-ins build this way with
 `AllAlike/tools/do-windows-plugin`, which also links SynthLib's objects as an archive so unused files (the
 GLFW window) drop out, and puts FreeType in `build/windows-<arch>/deps`.
+
+To try a plug-in on Windows without a DAW, `tools/do-vst3hostwin.ps1` builds `tools/vst3hostwin.exe`, a small
+host with audio, MIDI in, the computer keyboard and both DPI modes (`Docs/code-notes/vst3hostwin.cpp.md`).
