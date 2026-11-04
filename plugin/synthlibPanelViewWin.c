@@ -48,7 +48,12 @@ typedef struct {
     bool                   captured;    // press() grabbed a control; the pointer is hidden and held
     bool                   following;   // press() grabbed one that keeps the pointer visible
     POINT                  anchor;      // where a captured drag holds the pointer, client coordinates
+    POINT                  last;        // the pointer at the previous move of a captured drag
+    bool                   warped;      // this drag has put the pointer back at the anchor
 } tPanelWin;
+
+#define WARP_RADIUS      (150)    // pixels from the anchor before a drag puts the pointer back - notes §5
+static bool      gWarpIgnored   = false;    // the pointer is absolute here (a VM): never put it back
 
 static wchar_t   gClassName[64] = {0};
 static HINSTANCE gModule        = NULL;
@@ -377,6 +382,8 @@ static void press(tPanelWin * w, int px, int py) {
         if (w->captured) {
             w->anchor.x = px;
             w->anchor.y = py;
+            w->last     = w->anchor;
+            w->warped   = false;
             cursor_capture();
         }
     } else if (w->panel->click != NULL) {
@@ -409,19 +416,32 @@ static void move(tPanelWin * w, int px, int py, bool buttonDown) {
         w->panel->dragTo(w->user, px * k, py * k);
         redraw(w);
     } else if (w->captured && (w->panel->dragBy != NULL)) {
-        int dx = px - w->anchor.x;
-        int dy = py - w->anchor.y;
+        // notes §6: each move from the one before, never from the anchor
+        int dx = px - w->last.x;
+        int dy = py - w->last.y;
 
         if ((dx == 0) && (dy == 0)) {
             return;    // the warp back below arrives as a move of its own
         }
+        w->last.x = px;
+        w->last.y = py;
+
+        if (w->warped && ((abs(dx) > (WARP_RADIUS / 2)) || (abs(dy) > (WARP_RADIUS / 2)))) {
+            gWarpIgnored = true;    // put back, it came straight back from where it really is
+            w->warped    = false;
+            return;
+        }
         sync(w);
         w->panel->dragBy(w->user, dx * k, dy * k);
 
-        POINT p = w->anchor;
+        if (!gWarpIgnored && ((abs(px - w->anchor.x) > WARP_RADIUS) || (abs(py - w->anchor.y) > WARP_RADIUS))) {
+            POINT p = w->anchor;
 
-        ClientToScreen(w->hwnd, &p);
-        SetCursorPos(p.x, p.y);
+            ClientToScreen(w->hwnd, &p);
+            SetCursorPos(p.x, p.y);
+            w->last   = w->anchor;
+            w->warped = true;
+        }
         redraw(w);
     }
 }
