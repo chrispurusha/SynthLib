@@ -80,7 +80,7 @@ struct tBankBrowserState {
     // a property of the app's category vocabulary, not of one browser invocation.
     std::vector<std::string>     priorityCategories;
 
-    int32_t                      sortMode             = 0;    // 0 = Bank/Loc, 1 = Category, 2 = A-Z
+    int32_t                      sortMode             = 0;     // 0 = Bank/Loc, 1 = Category, 2 = A-Z
     bool                         unbanked             = false; // notes §9: every item's bank is 0 - one numbered list
     std::vector<tBankBrowserRow> rows;
     int32_t                      selectedRow          = -1;
