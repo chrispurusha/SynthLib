@@ -67,3 +67,9 @@ A device whose slots are one numbered run rather than banks of locations (Pulse2
 every item with bank 0 and its number as the location. The rows then show the number alone in the Bank column,
 with the name moved into the empty Loc column, and the first sort segment reads "Number". The callback still
 receives (0, number). Any item with a non-zero bank keeps the usual Bank/Loc display for the whole list.
+
+## 10. Lettered banks
+`open_bank_browser_lettered()` shows the banks as letters and the locations as three digits from `firstLocation`,
+so a browser reads as the instrument's display does: the SuperNova II's A000-L127 (`firstLocation` 0), the Virus
+TI's A001-W128 (1). Only the shown text changes; items and the callback stay 1-indexed, and sorting and the bank
+separators are as before. `open_bank_browser()` resets it, so a later plain browser shows numbers again.

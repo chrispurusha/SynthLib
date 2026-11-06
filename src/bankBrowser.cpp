@@ -26,6 +26,7 @@
 #include "utils.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <string>
 #include <vector>
 
@@ -82,6 +83,8 @@ struct tBankBrowserState {
 
     int32_t                      sortMode             = 0;    // 0 = Bank/Loc, 1 = Category, 2 = A-Z
     bool                         unbanked             = false; // notes §9: every item's bank is 0 - one numbered list
+    bool                         lettered             = false; // notes §10: "Bank A" / "Loc 000", as the instrument
+    uint32_t                     firstLocation        = 1;     //   numbers its slots (0 or 1 for the first)
     std::vector<tBankBrowserRow> rows;
     int32_t                      selectedRow          = -1;
     double                       scrollOffset         = 0.0;
@@ -177,6 +180,24 @@ std::vector<std::string> wrap_text(const std::string &text, double maxWidth) {
     return lines;
 }
 
+// notes §10
+std::string bank_text(uint32_t bank1Indexed) {
+    if (sState.lettered && (bank1Indexed >= 1) && (bank1Indexed <= 26)) {
+        return std::string(1, (char)('A' + (bank1Indexed - 1)));
+    }
+    return std::to_string(bank1Indexed);
+}
+
+std::string location_text(uint32_t location1Indexed) {
+    char text[16];
+
+    if (!sState.lettered) {
+        return std::to_string(location1Indexed);
+    }
+    snprintf(text, sizeof(text), "%03u", (unsigned)(location1Indexed - 1 + sState.firstLocation));
+    return text;
+}
+
 const std::string &category_name_for(uint8_t category) {
     static const std::string unknown = "Unknown";
 
@@ -267,8 +288,8 @@ void rebuild_rows(void) {
 
         r.kind      = rowNormal;
         r.itemIndex = idx;
-        r.bankText  = sState.unbanked ? std::to_string(item.location1Indexed) : ("Bank " + std::to_string(item.bank1Indexed));
-        r.locText   = sState.unbanked ? "" : ("Loc " + std::to_string(item.location1Indexed));
+        r.bankText  = sState.unbanked ? std::to_string(item.location1Indexed) : ("Bank " + bank_text(item.bank1Indexed));
+        r.locText   = sState.unbanked ? "" : ("Loc " + location_text(item.location1Indexed));
         r.nameText  = item.name;
 
         // Category mode already conveys it via the group header above — anywhere else (Bank/Loc,
@@ -395,6 +416,8 @@ void open_bank_browser(const char * title, const char * message, const char * co
     sState.title        = (title != nullptr) ? title : "";
     sState.confirmLabel = ((confirmButtonTitle != nullptr) && (confirmButtonTitle[0] != '\0')) ? confirmButtonTitle : "Next...";
     sState.callback     = callback;
+    sState.lettered      = false;
+    sState.firstLocation = 1;
 
     sState.items.clear();
     sState.items.reserve(itemCount);
@@ -447,6 +470,17 @@ void open_bank_browser(const char * title, const char * message, const char * co
     };
 
     synthlib_request_redraw();
+}
+
+// notes §10
+void open_bank_browser_lettered(const char * title, const char * message, const char * confirmButtonTitle,
+                                const tBankBrowserItem * items, uint32_t itemCount,
+                                const char *const * categoryNames, uint32_t categoryNameCount,
+                                uint32_t firstLocation, tBankBrowserCallback callback) {
+    open_bank_browser(title, message, confirmButtonTitle, items, itemCount, categoryNames, categoryNameCount, callback);
+    sState.lettered      = true;
+    sState.firstLocation = firstLocation;
+    rebuild_rows();
 }
 
 bool bank_browser_active(void) {

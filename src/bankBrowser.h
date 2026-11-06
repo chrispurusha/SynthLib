@@ -46,6 +46,11 @@ typedef void (*tBankBrowserCallback)(bool confirmed, uint32_t bank1Indexed, uint
 // (e.g. a domain with no meaningful per-item category). message is word-wrapped to the panel width.
 void open_bank_browser(const char * title, const char * message, const char * confirmButtonTitle, const tBankBrowserItem * items, uint32_t itemCount, const char *const * categoryNames, uint32_t categoryNameCount, tBankBrowserCallback callback);
 
+// As open_bank_browser, but the banks shown as letters ("Bank A" for bank1Indexed 1) and the locations as three
+// digits counted from firstLocation ("Loc 000" for location1Indexed 1 when it is 0), as an instrument numbers its
+// slots A000 or A001. The callback still gets the 1-indexed values. bankBrowser.cpp notes §10
+void open_bank_browser_lettered(const char * title, const char * message, const char * confirmButtonTitle, const tBankBrowserItem * items, uint32_t itemCount, const char *const * categoryNames, uint32_t categoryNameCount, uint32_t firstLocation, tBankBrowserCallback callback);
+
 // notes §3
 void bank_browser_set_priority_categories(const char *const * categoryNames, uint32_t count);
 
