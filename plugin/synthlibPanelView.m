@@ -460,6 +460,19 @@ static void panel_mouseExited(NSView * self, SEL _cmd, NSEvent * event) {
 static void panel_mouseDragged(NSView * self, SEL _cmd, NSEvent * event) {
     (void)_cmd;
 
+    // a drag is a position too: a pop-up's scrollbar (the preset browser's) follows only the pointer, and no
+    // control on the panel was grabbed to take the drag instead
+    if ((panel_state(self)->panel != NULL) && (panel_state(self)->panel->pointer != NULL)) {
+        NSPoint p = panel_canvas_point(self, event);
+
+        panel_state(self)->panel->pointer(p.x, p.y);
+
+        if (!panel_state(self)->following && !panel_state(self)->captured && (panel_state(self)->panel->menuActive != NULL) &&
+            panel_state(self)->panel->menuActive()) {
+            panel_redraw(self);
+        }
+    }
+
     if ((panel_state(self)->panel != NULL) && (panel_state(self)->panel->press != NULL)) {
         set_modifier_state(modifier_bits_from_ns([event modifierFlags]));
 
