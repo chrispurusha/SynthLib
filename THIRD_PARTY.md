@@ -39,3 +39,17 @@ SynthLib bundles the following third-party libraries as git submodules in `Third
 ---
 
 For detailed license terms, please refer to the license files provided with each library or visit their official license pages.
+
+## Rubber Band Library
+
+- **Description**: Audio time-stretching and pitch-shifting.
+- **Website**: [https://breakfastquay.com/rubberband/](https://breakfastquay.com/rubberband/)
+- **Source Code**: [https://github.com/breakfastquay/rubberband](https://github.com/breakfastquay/rubberband) (submodule pinned at release v4.0.0)
+- **License**: GPL v2 or later (`ThirdParty/rubberband/COPYING`); a commercial licence is also offered by its authors
+- **Used by**: OneShot
+
+> **Copyleft:** a product that links it is distributed under the GPL - OneShot is GPLv3, which "v2 or later" allows. Only
+> a GPL-compatible product may link `build/librubberband.a`; nothing else in SynthLib refers to it, so the other
+> products are unaffected. A release carries its `COPYING` and says the product uses it.
+
+---

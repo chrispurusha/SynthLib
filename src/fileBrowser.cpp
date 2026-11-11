@@ -91,7 +91,11 @@ const int                            kMinVisibleRows           = 4;
 // a plug-in's editor can be far shorter (Pulse2Alike's is 300 logical units), and a fixed 12 ran off its bottom.
 int                                  sVisibleRows              = kMaxVisibleRows;
 const double                         kSidebarWidth             = 150.0;
-const double                         kPanelWidth               = 730.0;
+const double                         kMaxPanelWidth            = 730.0;
+const double                         kMinPanelWidth            = 420.0;
+const double                         kPanelEdge                = 8.0;
+// AS WIDE AS THE WINDOW HOLDS, up to 730, set when the browser opens - as the rows are: a plug-in's editor can be narrower.
+double                               sPanelWidth               = kMaxPanelWidth;
 
 double panel_height(void) {
     return 60.0 + (kRowHeight * sVisibleRows) + 70.0;
@@ -269,10 +273,11 @@ void begin_browse(tFileBrowserMode mode, tFileBrowserCallback callback, const ch
     int    fit     = (int)((renderH - 130.0 - 16.0) / kRowHeight);
 
     sVisibleRows           = std::max(kMinVisibleRows, std::min(kMaxVisibleRows, fit));
+    sPanelWidth            = std::max(kMinPanelWidth, std::min(kMaxPanelWidth, renderW - (2.0 * kPanelEdge)));
     sState.panelRect       = (tRectangle){
         {
-            (renderW - kPanelWidth) / 2.0, (renderH - panel_height()) / 2.0
-        }, {kPanelWidth, panel_height()}
+            (renderW - sPanelWidth) / 2.0, (renderH - panel_height()) / 2.0
+        }, {sPanelWidth, panel_height()}
     };
 
     synthlib_request_redraw();
@@ -301,7 +306,7 @@ tRectangle list_area_rect(void) {
     return (tRectangle){
         {
             content_x(), sState.panelRect.coord.y + 60.0
-        }, {kPanelWidth - kSidebarWidth - 20.0, kRowHeight * sVisibleRows}
+        }, {sPanelWidth - kSidebarWidth - 20.0, kRowHeight * sVisibleRows}
     };
 }
 
@@ -338,7 +343,7 @@ double button_row_y(void) {
 tRectangle button_rect(int fromRight, double y) {
     double w         = 64.0;
     double gap       = 8.0;
-    double rightEdge = sState.panelRect.coord.x + kPanelWidth - 10.0 - (double)fromRight * (w + gap);
+    double rightEdge = sState.panelRect.coord.x + sPanelWidth - 10.0 - (double)fromRight * (w + gap);
 
     return (tRectangle){
         {
@@ -369,7 +374,7 @@ tRectangle filename_field_rect(void) {
     return (tRectangle){
         {
             content_x(), y
-        }, {kPanelWidth - kSidebarWidth - 20.0, kButtonH + 12.0}
+        }, {sPanelWidth - kSidebarWidth - 20.0, kButtonH + 12.0}
     };
 }
 
@@ -714,7 +719,7 @@ void render_file_browser(void) {
     // Up button + current path
     draw_button(mainArea, up_button_rect(), "Up", (tRgb)RGB_GREY_7);
     set_rgb_colour((tRgb)RGB_BLACK);
-    double     pathLabelWidth = kPanelWidth - kSidebarWidth - 78.0;
+    double     pathLabelWidth = sPanelWidth - kSidebarWidth - 78.0;
     render_text(mainArea, (tRectangle){
             {up_button_rect().coord.x + 44.0, up_button_rect().coord.y + 4.0}, {pathLabelWidth, STANDARD_TEXT_HEIGHT}
         }, truncate_to_width(sState.currentDir, pathLabelWidth).c_str());

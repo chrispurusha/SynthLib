@@ -3,7 +3,7 @@
 #
 #   ./do-build              whatever is out of date; quick when nothing is
 #   ./do-build check        then link every object, to prove nothing is unresolved or defined twice
-#   ./do-build thirdparty   rebuild freetype, glfw and libusb
+#   ./do-build thirdparty   rebuild freetype, glfw, libusb and rubberband
 #   ./do-build clean        remove build/
 #
 # Every product runs this before it links. The VST3 half needs ~/Documents/vst3sdk (or $VST3_SDK); without
@@ -134,6 +134,25 @@ check_library() {
     done
 }
 
+# The single-file build: one compilation unit, built-in resampler, vDSP's FFT (link Accelerate). Release v4.0.0.
+build_rubberband() {
+    local work="$OUT/thirdparty/rubberband"
+    local objects=()   # one archive per architecture, joined: ar cannot write a fat archive
+
+    need_submodule rubberband single/RubberBandSingle.cpp
+    print "==> rubberband"
+    mkdir -p "$work"
+
+    for arch in $ARCHS; do
+        clang++ -arch $arch -mmacosx-version-min=$MIN -O3 -DNDEBUG -std=c++14 -w \
+                -c ThirdParty/rubberband/single/RubberBandSingle.cpp -o "$work/rubberband-$arch.o"
+        rm -f "$work/librubberband-$arch.a"
+        ar rcs "$work/librubberband-$arch.a" "$work/rubberband-$arch.o"
+        objects+=("$work/librubberband-$arch.a")
+    done
+    lipo -create $objects -output "$OUT/librubberband.a"
+}
+
 build_missing_thirdparty() {
     [[ -f "$OUT/libfreetype.a" ]] || build_freetype
     [[ -f "$OUT/libglfw3.a" ]] || build_glfw
@@ -145,6 +164,11 @@ build_missing_thirdparty() {
         else
             print -u2 "warning: libusb not built - brew install autoconf automake libtool"
         fi
+    fi
+
+    # Only OneShot links it (time-stretching)
+    if [[ ! -f "$OUT/librubberband.a" && -e ThirdParty/rubberband/single/RubberBandSingle.cpp ]]; then
+        build_rubberband
     fi
 }
 
@@ -162,6 +186,7 @@ case "${1:-}" in
         build_freetype
         build_glfw
         build_libusb
+        build_rubberband
         ;;
     clean)
         rm -rf "$OUT"

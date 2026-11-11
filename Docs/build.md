@@ -15,8 +15,8 @@ GitHub/
 git clone --recurse-submodules https://github.com/chrispurusha/SynthLib.git
 ```
 
-Or, in an existing clone, `git submodule update --init --recursive`. glfw, freetype and libusb are submodules in
-`ThirdParty/`.
+Or, in an existing clone, `git submodule update --init --recursive`. glfw, freetype, libusb and rubberband are
+submodules in `ThirdParty/`.
 
 Needs Xcode's command line tools, and for the third-party libraries:
 
@@ -33,7 +33,7 @@ it the library is built with a warning and no VST3 wrapper, so Audio Unit and ap
 ```
 ./do-build              whatever is out of date
 ./do-build check        then link every object, to prove nothing is unresolved or defined twice
-./do-build thirdparty   rebuild freetype, glfw and libusb
+./do-build thirdparty   rebuild freetype, glfw, libusb and rubberband
 ./do-build clean        remove build/
 ```
 
@@ -49,6 +49,14 @@ except libusb's generated `configure`:
 | `build/libfreetype.a` | Every product that draws |
 | `build/libglfw3.a` | Applications with a GLFW window |
 | `build/libusb-1.0.a` | G2Alike |
+| `build/librubberband.a` | OneShot (time-stretching). Link `-framework Accelerate` and libc++ with it |
+
+**Rubber Band** (2026-11-11) is built from its single-file compilation unit, `single/RubberBandSingle.cpp`, which
+needs no build system and no other library: its own resampler, and Apple's vDSP for the FFT. Release v4.0.0, `-O3`,
+one archive per architecture joined by `lipo` (`ar` cannot write a fat archive). It is skipped, silently, when the
+submodule is not checked out, as only OneShot needs it; OneShot's `do-plugin` then stops and says how to fetch it.
+Include it with `-I$SL/ThirdParty/rubberband` and `#include "rubberband/RubberBandStretcher.h"`. It is **GPL v2 or
+later**: only a GPL-compatible product may link it (`THIRD_PARTY.md`).
 
 A new source file in one of those three folders is picked up by itself. `plugin/synthlibPluginVst3ViewWin.cpp` is
 Windows only and is left out.
