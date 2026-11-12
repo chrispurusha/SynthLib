@@ -73,3 +73,13 @@ receives (0, number). Any item with a non-zero bank keeps the usual Bank/Loc dis
 so a browser reads as the instrument's display does: the SuperNova II's A000-L127 (`firstLocation` 0), the Virus
 TI's A001-W128 (1). Only the shown text changes; items and the callback stay 1-indexed, and sorting and the bank
 separators are as before. `open_bank_browser()` resets it, so a later plain browser shows numbers again.
+
+## 11. Sort mode outside the browser
+The sort mode (0 Bank/Loc, 1 Category, 2 A-Z) is one remembered preference shared by every browser.
+`bank_browser_sort_mode()` / `bank_browser_set_sort_mode()` let a product put the choice in its own menu, and setting
+it re-sorts a browser already open (unless it asks for Category on a list with no categories, which the browser keeps
+greyed). `bank_browser_sorted_order()` gives the order the list would show for any item set and mode, through the same
+`sorted_order()` the browser draws with, so a product's Prev/Next steps exactly as the list reads and the two cannot
+drift. The sorts are stable, so items with equal keys keep their slot order (2026-11-12; they were `std::sort`, whose
+order for equal names was unspecified).
+

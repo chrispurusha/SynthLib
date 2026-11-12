@@ -220,18 +220,24 @@ int32_t category_priority(const std::string &name) {
     return -1;
 }
 
-// notes §3
-void rebuild_rows(void) {
-    std::vector<int32_t> order(sState.items.size());
+const std::string &category_name_in(const std::vector<std::string> &names, uint8_t category) {
+    static const std::string unknown = "Unknown";
+
+    return ((size_t)category < names.size()) ? names[(size_t)category] : unknown;
+}
+
+// notes §11: the order the list shows items in, shared by the browser and bank_browser_sorted_order()
+std::vector<int32_t> sorted_order(const std::vector<tBankBrowserItemInternal> &items, const std::vector<std::string> &categoryNames, int32_t mode) {
+    std::vector<int32_t> order(items.size());
 
     for (size_t i = 0; i < order.size(); i++) {
         order[i] = (int32_t)i;
     }
 
-    if ((sState.sortMode == 1) && !sState.categoryNames.empty()) {
-        std::sort(order.begin(), order.end(), [](int32_t a, int32_t b) {
-            const std::string &ca = category_name_for(sState.items[(size_t)a].category);
-            const std::string &cb = category_name_for(sState.items[(size_t)b].category);
+    if ((mode == 1) && !categoryNames.empty()) {
+        std::stable_sort(order.begin(), order.end(), [&](int32_t a, int32_t b) {
+            const std::string &ca = category_name_in(categoryNames, items[(size_t)a].category);
+            const std::string &cb = category_name_in(categoryNames, items[(size_t)b].category);
 
             if (ca != cb) {
                 int32_t pa = category_priority(ca);
@@ -244,14 +250,20 @@ void rebuild_rows(void) {
                 }
                 return ca < cb;
             }
-            return sState.items[(size_t)a].name < sState.items[(size_t)b].name;
+            return items[(size_t)a].name < items[(size_t)b].name;
         });
-    } else if (sState.sortMode == 2) {
-        std::sort(order.begin(), order.end(), [](int32_t a, int32_t b) {
-            return sState.items[(size_t)a].name < sState.items[(size_t)b].name;
+    } else if (mode == 2) {
+        std::stable_sort(order.begin(), order.end(), [&](int32_t a, int32_t b) {
+            return items[(size_t)a].name < items[(size_t)b].name;
         });
     }
-    // sortMode 0: raw order, nothing to sort.
+    // mode 0: raw order, nothing to sort.
+    return order;
+}
+
+// notes §3
+void rebuild_rows(void) {
+    std::vector<int32_t> order = sorted_order(sState.items, sState.categoryNames, sState.sortMode);
 
     bool        groupByCategory  = (sState.sortMode == 1) && !sState.categoryNames.empty();
     std::string lastGroupKey;
@@ -405,6 +417,46 @@ void bank_browser_set_priority_categories(const char *const * categoryNames, uin
     // re-sorted list wants anyway — the row that was selected is no longer where it was.
     if (sState.active) {
         rebuild_rows();
+    }
+}
+
+// notes §11
+int32_t bank_browser_sort_mode(void) {
+    long mode = prefs_get_int(kSortModePrefKey, 0);
+
+    return ((mode < 0) || (mode > 2)) ? 0 : (int32_t)mode;
+}
+
+void bank_browser_set_sort_mode(int32_t mode) {
+    if ((mode < 0) || (mode > 2)) {
+        return;
+    }
+    prefs_set_int(kSortModePrefKey, mode);
+
+    if (sState.active && !((mode == 1) && sState.categoryNames.empty()) && (sState.sortMode != mode)) {
+        sState.sortMode = mode;
+        rebuild_rows();
+        synthlib_request_redraw();
+    }
+}
+
+void bank_browser_sorted_order(const tBankBrowserItem * items, uint32_t itemCount, const char *const * categoryNames, uint32_t categoryNameCount, int32_t mode, uint32_t * order) {
+    std::vector<tBankBrowserItemInternal> list;
+    std::vector<std::string>              names;
+
+    list.reserve(itemCount);
+
+    for (uint32_t i = 0; i < itemCount; i++) {
+        list.push_back({(items[i].name != nullptr) ? items[i].name : "", items[i].category, items[i].bank1Indexed, items[i].location1Indexed});
+    }
+
+    for (uint32_t i = 0; (categoryNames != nullptr) && (i < categoryNameCount); i++) {
+        names.push_back((categoryNames[i] != nullptr) ? categoryNames[i] : "");
+    }
+    std::vector<int32_t> sorted = sorted_order(list, names, mode);
+
+    for (uint32_t i = 0; i < itemCount; i++) {
+        order[i] = (uint32_t)sorted[i];
     }
 }
 

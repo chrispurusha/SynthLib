@@ -54,6 +54,15 @@ void open_bank_browser_lettered(const char * title, const char * message, const 
 // notes §3
 void bank_browser_set_priority_categories(const char *const * categoryNames, uint32_t count);
 
+// The sort mode the browser lists in - 0 Bank/Loc, 1 Category, 2 A-Z - remembered across sessions and shared by
+// every browser; setting it re-sorts an open browser. bankBrowser.cpp notes §11
+int32_t bank_browser_sort_mode(void);
+void bank_browser_set_sort_mode(int32_t mode);
+
+// Fills order[0..itemCount-1] with item indices in the order the browser lists them under mode, so a plug-in's
+// Prev/Next can step the same way. bankBrowser.cpp notes §11
+void bank_browser_sorted_order(const tBankBrowserItem * items, uint32_t itemCount, const char *const * categoryNames, uint32_t categoryNameCount, int32_t mode, uint32_t * order);
+
 bool bank_browser_active(void);
 void handle_bank_browser_mouse_down(tCoord coord);
 bool handle_bank_browser_mouse_move(tCoord coord);
