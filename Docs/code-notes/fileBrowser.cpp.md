@@ -47,3 +47,14 @@ render_rectangle_with_border() fills the whole rectangle with whatever colour is
 current when it's called (see utilsGraphics.cpp) — a separate render_rectangle() fill
 beforehand would just be overwritten by it, so the focused/unfocused colour has to be
 set immediately before this one call, not before a preceding plain fill.
+
+## 6. The sidebar scrolls
+
+The places can outnumber the rows - in a plug-in window only a few fit, and the volumes, which come last, were cut
+off (CT, 2026-11-12: no way to reach an external drive). With more places than rows the sidebar keeps a first row of
+its own, `sidebarScroll`, and draws a scrollbar like the list's down its right edge; the rows stop short of it. The
+wheel scrolls whichever of the sidebar and the list the pointer is over, the sidebar a whole row at a time. A press
+on the sidebar's thumb drags it; anywhere else the list's thumb is tried. `list_scrollbar_*` keeps one drag at a time,
+so `sidebarDragging` says which of the two it belongs to.
+While either scrollbar is dragged no row lights up under the pointer: a drag wanders sideways over the rows, and lit
+rows read as if they were being chosen (CT, 2026-11-12).

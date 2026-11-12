@@ -263,11 +263,11 @@ std::vector<int32_t> sorted_order(const std::vector<tBankBrowserItemInternal> &i
 
 // notes §3
 void rebuild_rows(void) {
-    std::vector<int32_t> order = sorted_order(sState.items, sState.categoryNames, sState.sortMode);
+    std::vector<int32_t> order            = sorted_order(sState.items, sState.categoryNames, sState.sortMode);
 
-    bool        groupByCategory  = (sState.sortMode == 1) && !sState.categoryNames.empty();
-    std::string lastGroupKey;
-    bool        haveLastGroupKey = false;
+    bool                 groupByCategory  = (sState.sortMode == 1) && !sState.categoryNames.empty();
+    std::string          lastGroupKey;
+    bool                 haveLastGroupKey = false;
 
     sState.rows.clear();
 
@@ -453,7 +453,8 @@ void bank_browser_sorted_order(const tBankBrowserItem * items, uint32_t itemCoun
     for (uint32_t i = 0; (categoryNames != nullptr) && (i < categoryNameCount); i++) {
         names.push_back((categoryNames[i] != nullptr) ? categoryNames[i] : "");
     }
-    std::vector<int32_t> sorted = sorted_order(list, names, mode);
+
+    std::vector<int32_t>                  sorted = sorted_order(list, names, mode);
 
     for (uint32_t i = 0; i < itemCount; i++) {
         order[i] = (uint32_t)sorted[i];
@@ -464,16 +465,16 @@ void open_bank_browser(const char * title, const char * message, const char * co
                        const tBankBrowserItem * items, uint32_t itemCount,
                        const char *const * categoryNames, uint32_t categoryNameCount,
                        tBankBrowserCallback callback) {
-    sState.active       = true;
-    sState.title        = (title != nullptr) ? title : "";
-    sState.confirmLabel = ((confirmButtonTitle != nullptr) && (confirmButtonTitle[0] != '\0')) ? confirmButtonTitle : "Next...";
-    sState.callback     = callback;
+    sState.active        = true;
+    sState.title         = (title != nullptr) ? title : "";
+    sState.confirmLabel  = ((confirmButtonTitle != nullptr) && (confirmButtonTitle[0] != '\0')) ? confirmButtonTitle : "Next...";
+    sState.callback      = callback;
     sState.lettered      = false;
     sState.firstLocation = 1;
 
     sState.items.clear();
     sState.items.reserve(itemCount);
-    sState.unbanked     = (itemCount > 0);
+    sState.unbanked      = (itemCount > 0);
 
     for (uint32_t i = 0; i < itemCount; i++) {
         sState.unbanked = sState.unbanked && (items[i].bank1Indexed == 0);

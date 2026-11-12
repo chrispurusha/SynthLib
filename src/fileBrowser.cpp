@@ -67,6 +67,8 @@ struct tFileBrowserState {
     std::vector<tSidebarItem>      sidebar;
     int32_t                        selectedIndex       = -1;
     double                         scrollOffset        = 0.0;
+    double                         sidebarScroll       = 0.0;   // notes §6: the sidebar's first row shown
+    bool                           sidebarDragging     = false; // its scrollbar, not the list's, is being dragged
     char                           filenameBuffer[512] = {0};
     uint32_t                       filenameCursor      = 0;
     bool                           filenameFocused     = false; // Only accepts keyboard input / shows a cursor once clicked
@@ -318,14 +320,27 @@ tRectangle sidebar_rect(void) {
     };
 }
 
+// notes §6: more places than rows - the sidebar scrolls, with a scrollbar of its own
+bool sidebar_overflows(void) {
+    return sState.sidebar.size() > (size_t)sVisibleRows;
+}
+
+double sidebar_scroll_limit(void) {
+    return sidebar_overflows() ? (double)(sState.sidebar.size() - (size_t)sVisibleRows) : 0.0;
+}
+
 tRectangle sidebar_row_rect(int index) {
     tRectangle rect = sidebar_rect();
 
     return (tRectangle){
         {
-            rect.coord.x, rect.coord.y + ((double)index * kRowHeight)
-        }, {rect.size.w, kRowHeight}
+            rect.coord.x, rect.coord.y + ((double)(index - (int)sState.sidebarScroll) * kRowHeight)
+        }, {rect.size.w - (sidebar_overflows() ? LIST_SCROLLBAR_WIDTH : 0.0), kRowHeight}
     };
+}
+
+bool sidebar_row_shown(int index) {
+    return (index >= (int)sState.sidebarScroll) && (index < (int)sState.sidebarScroll + sVisibleRows);
 }
 
 int32_t row_count_scrolled(void) {
@@ -492,10 +507,15 @@ void handle_file_browser_mouse_down(tCoord coord) {
     if (!sState.active) {
         return;
     }
-    sState.closePressed   = within_rectangle(coord, close_button_rect());
-    sState.cancelPressed  = within_rectangle(coord, draw_button_bounds(button_rect(1, button_row_y())));
-    sState.confirmPressed = within_rectangle(coord, draw_button_bounds(button_rect(0, button_row_y())));
-    list_scrollbar_mouse_down(list_area_rect(), (int32_t)sState.entries.size(), sVisibleRows, sState.scrollOffset, coord);
+    sState.closePressed    = within_rectangle(coord, close_button_rect());
+    sState.cancelPressed   = within_rectangle(coord, draw_button_bounds(button_rect(1, button_row_y())));
+    sState.confirmPressed  = within_rectangle(coord, draw_button_bounds(button_rect(0, button_row_y())));
+    sState.sidebarDragging = sidebar_overflows()
+                             && list_scrollbar_mouse_down(sidebar_rect(), (int32_t)sState.sidebar.size(), sVisibleRows, sState.sidebarScroll, coord);
+
+    if (!sState.sidebarDragging) {
+        list_scrollbar_mouse_down(list_area_rect(), (int32_t)sState.entries.size(), sVisibleRows, sState.scrollOffset, coord);
+    }
     synthlib_request_redraw();
 }
 
@@ -503,7 +523,12 @@ bool handle_file_browser_mouse_move(tCoord coord) {
     if (!sState.active || !list_scrollbar_dragging()) {
         return false;
     }
-    sState.scrollOffset = list_scrollbar_mouse_drag(coord);
+
+    if (sState.sidebarDragging) {
+        sState.sidebarScroll = list_scrollbar_mouse_drag(coord);
+    } else {
+        sState.scrollOffset = list_scrollbar_mouse_drag(coord);
+    }
     synthlib_request_redraw();
     return true;
 }
@@ -518,6 +543,7 @@ bool handle_file_browser_click(tCoord coord) {
 
     if (list_scrollbar_dragging()) {
         list_scrollbar_mouse_up();
+        sState.sidebarDragging = false;
         return true; // Swallow the release that ends a drag - not also a row click.
     }
 
@@ -546,7 +572,7 @@ bool handle_file_browser_click(tCoord coord) {
         for (size_t i = 0; i < sState.sidebar.size(); i++) {
             const tSidebarItem &item = sState.sidebar[i];
 
-            if (item.isHeader) {
+            if (item.isHeader || !sidebar_row_shown((int)i)) {
                 continue;
             }
 
@@ -690,8 +716,17 @@ void handle_file_browser_scroll(double yDelta) {
     if (!sState.active) {
         return;
     }
-    sState.scrollOffset -= yDelta;
-    sState.scrollOffset  = std::max(0.0, std::min(sState.scrollOffset, (double)row_count_scrolled()));
+    tCoord mouse = {};
+
+    synthlib_host_mouse_coord(&mouse);
+
+    // notes §6: the wheel scrolls whichever of the two the pointer is over
+    if (within_rectangle(mouse, sidebar_rect())) {
+        sState.sidebarScroll = std::max(0.0, std::min(std::round(sState.sidebarScroll - yDelta), sidebar_scroll_limit()));
+    } else {
+        sState.scrollOffset -= yDelta;
+        sState.scrollOffset  = std::max(0.0, std::min(sState.scrollOffset, (double)row_count_scrolled()));
+    }
     synthlib_request_redraw();
 }
 
@@ -732,12 +767,14 @@ void render_file_browser(void) {
     set_rgb_colour((tRgb)RGB_GREY_3);
     render_rectangle_with_border(mainArea, sidebarRect);
 
+    sState.sidebarScroll = std::max(0.0, std::min(sState.sidebarScroll, sidebar_scroll_limit()));   // the places may have shrunk
+
     for (size_t i = 0; i < sState.sidebar.size(); i++) {
         const tSidebarItem &item     = sState.sidebar[i];
         tRectangle         rowRect   = sidebar_row_rect((int)i);
 
-        if (rowRect.coord.y + rowRect.size.h > sidebarRect.coord.y + sidebarRect.size.h) {
-            break; // Overflowed the box — no sidebar scrolling in this first pass.
+        if (!sidebar_row_shown((int)i)) {
+            continue;
         }
 
         if (item.isHeader) {
@@ -748,7 +785,7 @@ void render_file_browser(void) {
             continue;
         }
         bool               isCurrent = (item.path == sState.currentDir);
-        bool               isHovered = within_rectangle(mouseCoord, rowRect);
+        bool               isHovered = !list_scrollbar_dragging() && within_rectangle(mouseCoord, rowRect);   // notes §6: not while a scrollbar is dragged
 
         // Inset from the sidebar box's own left/right border by BORDER_LINE_WIDTH — rowRect runs
         // edge-to-edge with sidebarRect, so a full-width highlight fill would otherwise paint over
@@ -765,6 +802,9 @@ void render_file_browser(void) {
             }, truncate_to_width(item.label, rowRect.size.w - 14.0).c_str());
     }
 
+    if (sidebar_overflows()) {
+        render_list_scrollbar(sidebarRect, (int32_t)sState.sidebar.size(), sVisibleRows, sState.sidebarScroll);
+    }
     // Directory listing
     tRectangle listRect     = list_area_rect();
     bool       hasScrollbar = sState.entries.size() > (size_t)sVisibleRows;
@@ -785,7 +825,7 @@ void render_file_browser(void) {
         tRectangle              rowRect  = {
             {listRect.coord.x, listRect.coord.y + (row * kRowHeight)}, {listRect.size.w - (hasScrollbar ? LIST_SCROLLBAR_WIDTH : 0.0), kRowHeight}};
         bool                    selected = (sState.mode == fileBrowserModeOpenFile) && (index == sState.selectedIndex);
-        bool                    hovered  = within_rectangle(mouseCoord, rowRect);
+        bool                    hovered  = !list_scrollbar_dragging() && within_rectangle(mouseCoord, rowRect);
 
         // Inset from the list box's own left/right border by BORDER_LINE_WIDTH — see the matching
         // comment on the sidebar's highlight above.
