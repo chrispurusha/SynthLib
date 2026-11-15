@@ -41,6 +41,15 @@ typedef struct {
     uint32_t number;        // its SLnnn
 } tEmuSample;
 
+#define EMU_ENV_STAGES    (6)   // notes §5: Attack 1 and 2, Decay 1 and 2, Release 1 and 2
+
+// notes §5: one of a voice's envelopes, as the bank holds it
+typedef struct {
+    bool  present;
+    float time[EMU_ENV_STAGES];    // seconds to reach the stage's level
+    float level[EMU_ENV_STAGES];   // percent
+} tEmuEnvelope;
+
 // notes §2: a sample mapped to keys and velocities
 typedef struct {
     const tEmuSample * sample;   // owned by the bank
@@ -48,6 +57,7 @@ typedef struct {
     int32_t            keyLow, keyHigh;
     int32_t            velLow, velHigh;
     uint32_t           voice;    // the preset's voice it belongs to, from 0
+    tEmuEnvelope       amp;      // notes §5: its voice's amplifier envelope
 } tEmuZone;
 
 typedef struct {

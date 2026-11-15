@@ -36,6 +36,8 @@
 #define ETW_LOW            (4)
 #define ETW_HIGH           (7)
 #define PHDR_NAME          (12)        // UTF-16, from the Phdr tag
+#define E5EV_STAGES_AT     (10)        // notes §5: then six stages of a time and a level, big-endian floats
+#define E5EV_STAGE_BYTES   (9)
 
 struct tEmuBank {
     char         path[2048];
@@ -51,6 +53,14 @@ struct tEmuBank {
 
 static uint32_t read_u32_be(const uint8_t * p) {
     return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | (uint32_t)p[3];
+}
+
+static float read_f32_be(const uint8_t * p) {
+    uint32_t u = ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | (uint32_t)p[3];
+    float    f;
+
+    memcpy(&f, &u, sizeof(f));
+    return f;
 }
 
 static uint32_t read_u32_le(const uint8_t * p) {
@@ -163,9 +173,9 @@ static tEmuSample * ebl_load(const char * path, uint32_t number) {
         }
     }
 
-    // notes §3: the stored loop end is the frame before the loop's last
+    // notes §3: the stored loop end is the loop's last frame
     uint32_t        loopS  = (f[4] >= startL) ? ((f[4] - startL) / 2u) : 0u;
-    uint32_t        loopE  = (f[6] >= startL) ? (((f[6] - startL) / 2u) + 2u) : 0u;
+    uint32_t        loopE  = (f[6] >= startL) ? (((f[6] - startL) / 2u) + 1u) : 0u;
 
     s->frames    = frames;
     s->rate      = (double)rate;
@@ -197,6 +207,9 @@ typedef struct {
     int32_t      voiceVel[2];
     uint32_t     voice;
     uint32_t     windows;       // ETW chunks seen since the voice or zone began
+    uint32_t     envelopes;     // E5Ev chunks seen in the voice
+    tEmuEnvelope amp;           // notes §5: the voice's first
+
     bool         inZones;
     bool         started;       // a voice seen yet
     int32_t      zone;          // the zone the windows after a Zhdr narrow, or -1
@@ -234,6 +247,7 @@ static void walk_zone(tWalk * w, const uint8_t * z, uint32_t length) {
     zone->velLow   = w->voiceVel[0];
     zone->velHigh  = w->voiceVel[1];
     zone->voice    = w->voice;
+    zone->amp      = w->amp;
     w->zone        = (int32_t)(preset->zoneCount - 1u);
     w->windows     = 0;
 }
@@ -263,7 +277,18 @@ static void walk(tWalk * w, const uint8_t * d, uint32_t from, uint32_t to) {
             w->voiceVel[1] = 127;
             w->windows     = 0;
             w->zone        = -1;
+            w->envelopes   = 0;
+            memset(&w->amp, 0, sizeof(w->amp));
             walk(w, d, p + 8u, p + 8u + n);
+        } else if ((memcmp(d + p, "E5Ev", 4) == 0) && (n >= (E5EV_STAGES_AT + (EMU_ENV_STAGES * E5EV_STAGE_BYTES)))) {
+            if (w->envelopes++ == 0u) {   // notes §5: the amplifier's comes first
+                w->amp.present = true;
+
+                for (uint32_t s = 0; s < EMU_ENV_STAGES; s++) {
+                    w->amp.time[s]  = read_f32_be(body + E5EV_STAGES_AT + (s * E5EV_STAGE_BYTES));
+                    w->amp.level[s] = read_f32_be(body + E5EV_STAGES_AT + (s * E5EV_STAGE_BYTES) + 4u);
+                }
+            }
         } else if (memcmp(d + p, "Zhdr", 4) == 0) {
             walk_zone(w, body, n);
         } else if ((memcmp(d + p, "ETW ", 4) == 0) && (n > ETW_HIGH)) {

@@ -23,8 +23,18 @@ A sample (`E5S1`): offsets in its header count from 2 bytes into the chunk - eig
 L, start R, end L, end R, loop start L and R, loop end L and R, all byte offsets of 16-bit frames, the ends
 inclusive; the left channel whole, then the right; then the rate (u32 at 0x68) and options (u16 at 0x6e, bit 0 the
 loop). The rate is not a round number (43569 to 44053 Hz in one bank) and it is the one to play at: the tuning is in
-the rate. The stored loop end is the frame before the loop's last.
+the rate. The stored loop end is the loop's last frame: over four banks (2026-11-14) the seam - the loop's last frame
+followed by its first - is smoothest there in three (Soul Oohs, Guitar Mutes, Saw Basses; one frame later it ticks,
+which is how it was found), and nearly so in the fourth (Celtic Harp, where one frame later was marginally smoother -
+the rule G2Alike's copy first took).
 
 ## 4. Reading on demand
 Opening a bank reads only the `.exb`. A preset's samples are read the first time any preset names them and kept by
 the bank, shared by every preset and zone that uses them, and freed with the bank.
+
+## 5. Envelopes
+A voice holds three `E5Ev` chunks before its zones - the amplifier's first, then the filter's and the auxiliary
+envelope's, as on the E4. Each is 64 bytes: a 10-byte header (version 2), then six stages of 9 bytes, a big-endian
+float time in seconds, a float level in percent and a byte - Attack 1 and 2, Decay 1 and 2, Release 1 and 2. All
+1,549 distinct envelopes in one 11-bank set read this way. Only the amplifier's is kept so far, on each zone; the
+header's other bytes and each stage's byte are not known.
