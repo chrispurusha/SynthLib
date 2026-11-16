@@ -572,3 +572,14 @@ void synthlib_run_on_main(void (* fn)(void * ctx), void * ctx) {
     fn(ctx);
 #endif
 }
+
+// Notes: synthlibPluginState.h.md §6 - unsaved, driven by a performance controller, and either hidden or the bend - so a sound's own values
+// that a controller happens to drive (G2Alike's morph groups) are left as the sound loads them
+bool synthlib_param_resets_on_load(const tSynthLibParamDesc * param) {
+    int16_t c         = param->midiControl;
+    bool    performer = (c == SYNTHLIB_MIDI_MOD_WHEEL) || (c == SYNTHLIB_MIDI_BREATH) || (c == SYNTHLIB_MIDI_FOOT) || (c == SYNTHLIB_MIDI_EXPRESSION)
+                        || (c == SYNTHLIB_MIDI_SUSTAIN) || (c == SYNTHLIB_MIDI_AFTERTOUCH) || (c == SYNTHLIB_MIDI_PITCH_BEND);
+
+    return performer && ((param->flags & SYNTHLIB_PARAM_NO_SAVE) != 0u)
+           && (((param->flags & SYNTHLIB_PARAM_HIDDEN) != 0u) || (c == SYNTHLIB_MIDI_PITCH_BEND));
+}

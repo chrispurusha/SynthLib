@@ -106,3 +106,7 @@ AN AUDIO UNIT'S HOST OWNS THE WINDOW AND IS NOT ASKED. There is no equivalent of
 IPlugFrame::resizeView here: a Cocoa view resizes itself and the host follows, or it does not. Since
 2026-11-16 the request does exactly that - the instance's open editor resizes itself
 (synthlibPluginAuView.m notes §4) - and answers false only when no editor is open.
+
+## 12. Controllers back to rest on load
+As the VST3 wrapper (its notes §10): after the plug-in's own state and before `sync_from_plugin()`, every parameter
+`synthlib_param_resets_on_load()` picks goes back to its default.

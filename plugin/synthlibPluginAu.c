@@ -437,6 +437,15 @@ static OSStatus apply_class_info(tSynthLibAu * au, CFDictionaryRef dict) {
         if ((au->inst != NULL) && (d->cb.setState != NULL)) {
             d->cb.setState(au->inst, pluginData, pluginLen);
         }
+
+        // notes §12: the wheel, bend and pedals back to rest - a project never opens with the wheel up
+        for (uint32_t i = 0, n = synthlib_param_count(d, au->inst); i < n; i++) {
+            tSynthLibParamDesc p;
+
+            if (synthlib_param_describe(d, au->inst, i, &p) && synthlib_param_resets_on_load(&p)) {
+                apply_param(au, (AudioUnitParameterID)p.id, p.defaultNormalized);
+            }
+        }
         sync_from_plugin(au);
     }
     free(values);

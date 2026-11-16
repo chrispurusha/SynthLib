@@ -86,3 +86,11 @@ plug-in that works out a new latency on a worker thread should not have to know 
 
 A POSTED CALL OUTLIVES ITS CALLER, so `ctx` must be heap memory `fn` frees, and `fn` must look its
 instance up again rather than trust a pointer that may since have been destroyed.
+
+## 6. Controllers back to rest on load (owner, 2026-11-16)
+A plug-in only knows the last controller value it was sent, and a host may hold an old one (a wheel lowered while the
+track was not taking MIDI), so a project could open with the wheel up and a sound behaving wrongly until it moved -
+seen on Nl3Alike. Every load now puts back to its default each parameter that is unsaved, driven by a performance
+controller (wheel, bend, sustain, foot, breath, expression, channel pressure), and hidden - or is the bend. Hidden is
+the line because a visible one may be part of the sound that a controller merely drives: G2Alike's morph groups are,
+and its patch sets them. Bank select is not a performance controller and is left alone.

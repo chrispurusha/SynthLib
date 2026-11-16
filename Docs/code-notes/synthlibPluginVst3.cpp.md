@@ -125,3 +125,7 @@ Every controller that belongs to this instance - normally one, and none at all w
 not connected the two halves and there is more than one instance to choose between. Collected
 under the lock and used outside it: everything that destroys a controller runs on the main thread,
 which is also where every caller of this is.
+
+## 10. Controllers back to rest on load
+After the plug-in's own state, before the read-back: `synthlib_param_resets_on_load()` (state notes) picks the
+wheel, bend and pedals, and each goes back to its default through `apply_param()`, as a saved value would.

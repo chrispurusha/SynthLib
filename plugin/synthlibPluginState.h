@@ -109,6 +109,8 @@ bool synthlib_param_describe(const tSynthLibPluginDesc * desc, void * inst, uint
 
 // 0..1 against the parameter's own displayed range, and back.
 double synthlib_param_to_plain(const tSynthLibParamDesc * param, double normalized);
+// notes §6: a wheel, bend, pedal or pressure the player holds - not part of a sound - which a load puts back to rest
+bool synthlib_param_resets_on_load(const tSynthLibParamDesc * param);
 double synthlib_param_to_normalized(const tSynthLibParamDesc * param, double plain);
 
 // ------------------------------------------------------------------------------------------------

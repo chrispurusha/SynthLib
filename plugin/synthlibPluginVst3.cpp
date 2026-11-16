@@ -868,6 +868,15 @@ private:
             desc->cb.setState(inst, pluginData, pluginLen);
         }
 
+        // notes §10: the wheel, bend and pedals back to rest - a project never opens with the wheel up
+        for (uint32_t i = 0, n = synthlib_param_count(desc, inst); i < n; i++) {
+            tSynthLibParamDesc p;
+
+            if (synthlib_param_describe(desc, inst, i, &p) && synthlib_param_resets_on_load(&p)) {
+                apply_param(p.id, p.defaultNormalized);
+            }
+        }
+
         // AND THEN READ BACK, because the plug-in's own bytes may have set parameters the wrapper
         // never saved - every NO_SAVE one, and all of them in a project from before the wrapper
         // saved any. Without this the stored copy goes on reporting defaults the plug-in is not at.
