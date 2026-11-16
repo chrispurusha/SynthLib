@@ -28,6 +28,7 @@
 #include "synthlibPluginAu.h"
 #include "synthlibAuViewFactory.h"
 #include "synthlibRuntimeClass.h"
+#include "synthlibResizeGrip.h"
 
 // Only for the things that are true of the whole BINARY rather than of one plug-in in it - the view
 // class name, and the description string. Anything per-plug-in comes from the handle the AudioUnit
@@ -57,8 +58,9 @@ typedef struct {
     void *                      pluginInstance;
 } tContainerState;
 
-static Class gContainerClass = Nil;
-static char  gEditorKey      = 0;
+static Class          gContainerClass = Nil;
+static char           gEditorKey      = 0;
+static NSHashTable *  gContainers     = nil;   // notes §4: the open editors, weakly, to resize on request
 
 static tContainerState * container_state(NSView * self) {
     return (tContainerState *)synthlib_runtime_class_state(gContainerClass, self);
@@ -88,7 +90,13 @@ static void container_setFrameSize(NSView * self, SEL _cmd, NSSize newSize) {
         newSize.width = d->editorMaxWidth;
     }
 
-    if (d->editorAspect > 0.0) {
+    if (d->editorFreeAspect) {   // notes §25a
+        double minHeight = (d->editorAspect > 0.0) ? (d->editorMinWidth / d->editorAspect) : d->editorMinWidth;
+
+        if (newSize.height < minHeight) {
+            newSize.height = minHeight;
+        }
+    } else if (d->editorAspect > 0.0) {
         newSize.height = newSize.width / d->editorAspect;
     }
     SYNTHLIB_SUPER_ARG(self, _cmd, NSSize, newSize);
@@ -200,5 +208,26 @@ NSView * synthlib_au_view_create(AudioUnit inAU, NSSize inPreferredSize) {
     container_set_editor(container, editor);
     [editor setFrame:NSMakeRect(0.0, 0.0, width, height)];
     [container addSubview:editor];
+    // notes §3: a host offers a resizable window only for a view that says it can be resized
+    container.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    editor.autoresizingMask    = NSViewWidthSizable | NSViewHeightSizable;
+    (void)synthlib_resize_grip_attach(container, d, inst);   // notes §4: for hosts with no corner to drag (Ableton Live)
+
+    if (gContainers == nil) {
+        gContainers = [NSHashTable weakObjectsHashTable];
+    }
+    [gContainers addObject:container];
     return container;
+}
+
+// notes §4: an instance's open editor resized from inside - the host follows the view's frame, or leaves its window
+bool synthlib_au_view_resize(void * inst, double width, double height) {
+    for (NSView * container in [gContainers allObjects]) {
+        if (container_state(container)->pluginInstance == inst) {
+            [container setFrameSize:NSMakeSize(width, height)];
+            return true;
+        }
+    }
+
+    return false;
 }

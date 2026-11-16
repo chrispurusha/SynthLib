@@ -68,3 +68,7 @@ and converges on exactly the size asked for. tools/vst3check in GenBridge holds 
 
 ROUNDED, NOT TRUNCATED. A host feeds each answer back in, so a truncation is not a one-off half
 pixel - it is a step taken every time.
+
+## 7. The resize grip
+The editor carries SynthLib's grip (synthlibResizeGrip.m), put in the host's view above the editor and taken out with
+it in `removed()` - it belongs to the host's view, so it would otherwise outlive the editor there.

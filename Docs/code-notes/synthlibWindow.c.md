@@ -72,3 +72,8 @@ ENTERING DOES NOTHING. A menu closed on the way out should not reappear on the w
 
 Unregistered in `synthlib_window_close()` with the rest: GLFW can deliver events between the close
 request and the loop noticing, and this one would reach into menu state the app is tearing down.
+
+## 8. `freeAspect` (2026-11-16)
+An app whose canvas copes with any shape can set it, and the window is then held only to its minimum size, not to
+target width:height. G2Alike does (its module area shows more or less of the patch, as its plug-in's does since
+synthlibPlugin.h notes §25a); SynthEdit and EmuUtility leave it false and keep the locked ratio.

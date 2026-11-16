@@ -54,6 +54,7 @@ typedef struct {
     int                        targetHeight;
     int                        minDivisor;      // window minimum is target/this; 0 means the shared default of 4
     tDialMode                  dialMode;        // G2-Edit is rotary, the other two vertical
+    bool                       freeAspect;      // notes §8: any shape, not held to target width:height
     tSynthLibTheme             theme;           // built from the app's own colour/metric macros
     tSynthLibMouseCoordFn      mouseCoord;      // synthlib_host_init's injection point, see synthlibHost.h
     tSynthLibPointerCapturedFn pointerCaptured; // ditto: true while a drag has the pointer hidden

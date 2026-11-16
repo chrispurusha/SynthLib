@@ -266,6 +266,17 @@ public:
         }
         double wanted = (double)(rect->right - rect->left) / scale;
 
+        if (desc->editorFreeAspect) {   // notes §25a
+            double minHeight = (desc->editorAspect > 0.0) ? (desc->editorMinWidth / desc->editorAspect) : desc->editorMinWidth;
+
+            rect->right = rect->left + pixels(clamp_width(wanted));
+
+            if ((double)(rect->bottom - rect->top) / scale < minHeight) {
+                rect->bottom = rect->top + pixels(minHeight);
+            }
+            return kResultTrue;
+        }
+
         if (desc->editorAspect > 0.0) {
             double fromHeight = (double)(rect->bottom - rect->top) / scale * desc->editorAspect;
 

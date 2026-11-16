@@ -347,6 +347,8 @@ struct tSynthLibPluginDesc {
 
     // notes §25
     double editorAspect;
+    bool   editorFreeAspect;            // notes §25a: the aspect is only the opening shape; any height from the
+                                        // minimum width's at that aspect up
 
     // notes §26
     long   (*editorWidthLoad)(void);

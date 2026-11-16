@@ -22,6 +22,7 @@
 
 #import <Cocoa/Cocoa.h>
 
+#include "synthlibResizeGrip.h"
 #include <atomic>
 #include <cmath>
 #include <vector>
@@ -143,6 +144,7 @@ public:
         [editorView setFrame:NSMakeRect(0.0, 0.0, currentWidth, currentHeight)];
         [editorView setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
         [host addSubview:editorView];
+        gripView = synthlib_resize_grip_attach(host, d, inst);   // notes §7: for a host without a corner to drag
         forget();
         gOpenViews.push_back(this);
         return kResultOk;
@@ -152,6 +154,9 @@ public:
         // TAKEN OUT OF THE HIERARCHY BEFORE THE PLUG-IN IS TOLD. The view owns a drawing surface
         // bound to this window, and tearing the window down around a live one is the sort of thing
         // that works everywhere except the host somebody reports it from.
+        [gripView removeFromSuperview];   // notes §7
+        gripView = nil;
+
         if (editorView != nil) {
             [editorView removeFromSuperview];
 
@@ -254,6 +259,17 @@ public:
         const tSynthLibPluginDesc * d      = desc;
         double                      wanted = (double)(rect->right - rect->left);
 
+        if (d->editorFreeAspect) {   // notes §25a
+            double minHeight = (d->editorAspect > 0.0) ? (d->editorMinWidth / d->editorAspect) : d->editorMinWidth;
+
+            rect->right = rect->left + (int32)lround(clamp_width(wanted));
+
+            if ((double)(rect->bottom - rect->top) < minHeight) {
+                rect->bottom = rect->top + (int32)lround(minHeight);
+            }
+            return kResultTrue;
+        }
+
         if (d->editorAspect > 0.0) {
             double fromHeight = (double)(rect->bottom - rect->top) * d->editorAspect;
 
@@ -302,6 +318,7 @@ private:
     FUnknown *                  owner;
     double *                    widthSink;
     NSView * __strong  editorView    = nil;
+    NSView * __strong  gripView      = nil;   // notes §7: in the host's view, so taken out with the editor
     double             currentWidth  = 0.0;
     double             currentHeight = 0.0;
     IPlugFrame *       plugFrame     = nullptr;

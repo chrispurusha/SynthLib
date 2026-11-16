@@ -328,7 +328,10 @@ void * synthlib_window_create(const tSynthLibWindowConfig * config, const tSynth
     }
     glfwSetWindowSizeLimits(window, config->targetWidth / minDivisor, config->targetHeight / minDivisor,
                             GLFW_DONT_CARE, GLFW_DONT_CARE);
-    glfwSetWindowAspectRatio(window, config->targetWidth, config->targetHeight);
+
+    if (!config->freeAspect) {   // notes §8
+        glfwSetWindowAspectRatio(window, config->targetWidth, config->targetHeight);
+    }
 
     if (backend_is_opengl()) {
         glfwMakeContextCurrent(window);

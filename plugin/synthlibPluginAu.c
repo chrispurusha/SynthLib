@@ -2137,11 +2137,10 @@ bool synthlib_au_send_message(void * inst, const char * id, int64_t value) {
 }
 
 // notes §11
+bool synthlib_au_view_resize(void * inst, double width, double height);   // synthlibPluginAuView.m
+
 bool synthlib_au_request_resize(void * inst, double width, double height) {
-    (void)inst;
-    (void)width;
-    (void)height;
-    return false;
+    return synthlib_au_view_resize(inst, width, height);
 }
 
 // ------------------------------------------------------------------------------------------------

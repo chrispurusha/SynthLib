@@ -103,6 +103,6 @@ unit the right one.
 ## 11. `synthlib_plugin_request_resize()`
 
 AN AUDIO UNIT'S HOST OWNS THE WINDOW AND IS NOT ASKED. There is no equivalent of VST3's
-IPlugFrame::resizeView here: a Cocoa view resizes itself and the host follows, or it does not.
-Answering false is what tells the caller to leave the window alone rather than resize its own view
-inside a frame that did not move.
+IPlugFrame::resizeView here: a Cocoa view resizes itself and the host follows, or it does not. Since
+2026-11-16 the request does exactly that - the instance's open editor resizes itself
+(synthlibPluginAuView.m notes §4) - and answers false only when no editor is open.

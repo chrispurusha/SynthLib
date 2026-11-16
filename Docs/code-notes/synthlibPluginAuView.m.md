@@ -21,3 +21,16 @@ checkSizeConstraint(): it resizes the view it was given and expects the view to 
 plug-in scales from WIDTH alone, so a taller-but-not-wider window would uncover rows rather than
 drawing larger - the very thing the application's own aspect lock prevents. Enforcing the ratio
 here gives the Audio Unit editor the same behaviour the VST3 one gets from the host.
+
+## 3. Resizable in the host (2026-11-16, a Logic user's report)
+An AU host - Logic, Live Professor - offers a resizable plug-in window only when the view says it can be resized, by
+its `autoresizingMask`. The container and the editor were left at the default (not sizable), so every SynthLib Audio
+Unit opened at a fixed size. Both are now width- and height-sizable; `container_setFrameSize()` still holds the width
+to its limits and, unless `editorFreeAspect` is set, the height to the aspect.
+
+## 4. Resized from inside
+`synthlib_au_request_resize()` used to answer false: an AU host is never asked for a size. But the view may change
+its own frame, and hosts follow that - which is the only way to resize in a host with no corner on an AU window
+(Ableton Live). So the open containers are kept, weakly, and a request resizes the instance's container: its
+`setFrameSize:` holds the limits and aspect, resizes the editor, tells the plug-in and remembers the width. The grip
+(synthlibResizeGrip.m) is what asks.

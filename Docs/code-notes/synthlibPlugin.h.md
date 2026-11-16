@@ -355,3 +355,9 @@ Ask the host to resize this instance's editor window, after the plug-in has chan
 how big it should be. Returns false if the host offers no such channel, which is common; the caller
 should then leave the window alone rather than resizing its view inside a frame that did not move.
 Main thread.
+
+## 25a. `editorFreeAspect` (2026-11-16)
+For a canvas that copes with any height - G2Alike's, whose module area simply shows more or less of the patch - the
+aspect is only the shape the editor opens at: the width is held to its limits, the height to at least the minimum
+width's height at that aspect, and nothing ties the two. A fixed panel (the AllAlikes) leaves it false and keeps §25.
+All three wrappers honour it: the VST3 views (macOS, Windows) in `checkSizeConstraint()`, the AU in its container.
