@@ -43,3 +43,12 @@ header's other bytes and each stage's byte are not known.
 Emulator X keeps each bank as a folder with the bank's own name - `Name.exb/` holding `Name.exb` and `SamplePool/` -
 which a browser shows as the bank. `emu_bank_open()` given that folder opens the bank inside it, so a folder and the
 file both work; sample paths are then found from the file's place as before (§1).
+
+## 7. The stage float is a rate, not seconds
+Read as seconds it made every envelope far too short (a factory piano decayed in 0.4 s). Across 1,383 banks and
+387,000 amplifier envelopes the float never exceeds 1.0, and all but two values are at most 0.5: it is a fraction of
+a scale, not a time. Read as the EOS rate (0-127) over 254 - 0.5 is rate 127 - the factory content behaves as it
+should: a piano's Decay 2 0.4113 is rate 104 (about 24 s to silence on the E5000), its Release 0.1848 rate 47 (about
+1 s), a drone's release 0.464 rate 118. The values are not exact multiples of 1/254 (1,933 distinct), so Emulator X
+holds a continuous rate or converts by a slightly different curve; not yet confirmed against Emulator X itself.
+Each stage's trailing byte has been 0 in every envelope looked at.

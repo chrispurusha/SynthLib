@@ -46,7 +46,7 @@ typedef struct {
 // notes §5: one of a voice's envelopes, as the bank holds it
 typedef struct {
     bool  present;
-    float time[EMU_ENV_STAGES];    // seconds to reach the stage's level
+    float time[EMU_ENV_STAGES];    // notes §5: the stage's rate as Emulator X stores it, 0..1 - NOT seconds
     float level[EMU_ENV_STAGES];   // percent
 } tEmuEnvelope;
 
