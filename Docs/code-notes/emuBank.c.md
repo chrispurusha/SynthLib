@@ -38,3 +38,8 @@ envelope's, as on the E4. Each is 64 bytes: a 10-byte header (version 2), then s
 float time in seconds, a float level in percent and a byte - Attack 1 and 2, Decay 1 and 2, Release 1 and 2. All
 1,549 distinct envelopes in one 11-bank set read this way. Only the amplifier's is kept so far, on each zone; the
 header's other bytes and each stage's byte are not known.
+
+## 6. A bank folder
+Emulator X keeps each bank as a folder with the bank's own name - `Name.exb/` holding `Name.exb` and `SamplePool/` -
+which a browser shows as the bank. `emu_bank_open()` given that folder opens the bank inside it, so a folder and the
+file both work; sample paths are then found from the file's place as before (§1).

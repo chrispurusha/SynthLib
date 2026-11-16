@@ -22,6 +22,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <sys/stat.h>
 
 #include "emuBank.h"
 
@@ -359,7 +360,32 @@ bool emu_bank_is_bank_file(const char * name) {
 }
 
 // notes §2: the presets that hold zones; the empty ones a bank carries are passed over
-tEmuBank * emu_bank_open(const char * path, char * error, size_t errorLength) {
+// notes §6: Emulator X keeps each bank as a folder named like it, holding the bank and its SamplePool - given the
+// folder, the bank inside it
+static void bank_file(const char * path, char * out, size_t size) {
+    struct stat st;
+    size_t      n = strlen(path);
+
+    while ((n > 1) && ((path[n - 1] == '/') || (path[n - 1] == '\\'))) {
+        n--;
+    }
+    const char * leaf = path + n;
+
+    while ((leaf > path) && (leaf[-1] != '/') && (leaf[-1] != '\\')) {
+        leaf--;
+    }
+
+    if ((stat(path, &st) == 0) && S_ISDIR(st.st_mode)) {
+        snprintf(out, size, "%.*s/%.*s", (int)n, path, (int)(path + n - leaf), leaf);
+    } else {
+        snprintf(out, size, "%s", path);
+    }
+}
+
+tEmuBank * emu_bank_open(const char * given, char * error, size_t errorLength) {
+    char       path[2048];
+
+    bank_file(given, path, sizeof(path));
     tEmuBank * bank = calloc(1, sizeof(tEmuBank));
     uint32_t   size = 0;
     uint8_t *  d    = (bank != NULL) ? read_whole_file(path, &size) : NULL;
