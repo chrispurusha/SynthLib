@@ -26,19 +26,19 @@
 
 #include "emuBank.h"
 
-#define MAX_SAMPLES        (1000)
-#define EBL_HEADER_BASE    (2)         // notes §3: the sample header's offsets count from here in the E5S1 chunk
-#define EBL_START_L        (0x48)      // then start R, end L, end R, loop start L and R, loop end L and R
-#define EBL_RATE           (0x68)
-#define EBL_OPTIONS        (0x6e)
-#define EBL_OPTION_LOOP    (0x0001)
-#define ZHDR_SAMPLE        (4)
-#define ZHDR_ROOT          (10)
-#define ETW_LOW            (4)
-#define ETW_HIGH           (7)
-#define PHDR_NAME          (12)        // UTF-16, from the Phdr tag
-#define E5EV_STAGES_AT     (10)        // notes §5: then six stages of a time and a level, big-endian floats
-#define E5EV_STAGE_BYTES   (9)
+#define MAX_SAMPLES         (1000)
+#define EBL_HEADER_BASE     (2)        // notes §3: the sample header's offsets count from here in the E5S1 chunk
+#define EBL_START_L         (0x48)     // then start R, end L, end R, loop start L and R, loop end L and R
+#define EBL_RATE            (0x68)
+#define EBL_OPTIONS         (0x6e)
+#define EBL_OPTION_LOOP     (0x0001)
+#define ZHDR_SAMPLE         (4)
+#define ZHDR_ROOT           (10)
+#define ETW_LOW             (4)
+#define ETW_HIGH            (7)
+#define PHDR_NAME           (12)       // UTF-16, from the Phdr tag
+#define E5EV_STAGES_AT      (10)       // notes §5: then six stages of a time and a level, big-endian floats
+#define E5EV_STAGE_BYTES    (9)
 
 struct tEmuBank {
     char         path[2048];
@@ -78,7 +78,7 @@ static uint8_t * read_whole_file(const char * path, uint32_t * size) {
     }
 
     if ((fseek(f, 0, SEEK_END) == 0) && ((n = ftell(f)) > 0) && (n < 0x7FFFFFFF) && (fseek(f, 0, SEEK_SET) == 0)) {
-        d = malloc((size_t)n);
+        d     = malloc((size_t)n);
 
         if ((d != NULL) && (fread(d, 1, (size_t)n, f) != (size_t)n)) {
             free(d);
@@ -156,9 +156,9 @@ static tEmuSample * ebl_load(const char * path, uint32_t number) {
         free(d);
         return NULL;
     }
-    s->channels = stereo ? 2u : 1u;
-    s->data[0]  = malloc(sizeof(float) * frames);
-    s->data[1]  = stereo ? malloc(sizeof(float) * frames) : s->data[0];
+    s->channels  = stereo ? 2u : 1u;
+    s->data[0]   = malloc(sizeof(float) * frames);
+    s->data[1]   = stereo ? malloc(sizeof(float) * frames) : s->data[0];
 
     if ((s->data[0] == NULL) || (s->data[1] == NULL)) {
         sample_free(s);
@@ -175,8 +175,8 @@ static tEmuSample * ebl_load(const char * path, uint32_t number) {
     }
 
     // notes §3: the stored loop end is the loop's last frame
-    uint32_t        loopS  = (f[4] >= startL) ? ((f[4] - startL) / 2u) : 0u;
-    uint32_t        loopE  = (f[6] >= startL) ? (((f[6] - startL) / 2u) + 1u) : 0u;
+    uint32_t loopS = (f[4] >= startL) ? ((f[4] - startL) / 2u) : 0u;
+    uint32_t loopE = (f[6] >= startL) ? (((f[6] - startL) / 2u) + 1u) : 0u;
 
     s->frames    = frames;
     s->rate      = (double)rate;
@@ -234,7 +234,7 @@ static void walk_zone(tWalk * w, const uint8_t * z, uint32_t length) {
     uint32_t           number = (length > ZHDR_ROOT) ? (((uint32_t)z[ZHDR_SAMPLE] << 8) | z[ZHDR_SAMPLE + 1]) : 0u;
     const tEmuSample * sample = ((number > 0u) && (number <= MAX_SAMPLES)) ? pool_sample(w->bank, number) : NULL;
 
-    w->zone = -1;
+    w->zone        = -1;
 
     if ((sample == NULL) || (preset->zoneCount >= EMU_BANK_MAX_ZONES)) {
         return;
@@ -363,8 +363,8 @@ bool emu_bank_is_bank_file(const char * name) {
 // notes §6: Emulator X keeps each bank as a folder named like it, holding the bank and its SamplePool - given the
 // folder, the bank inside it
 static void bank_file(const char * path, char * out, size_t size) {
-    struct stat st;
-    size_t      n = strlen(path);
+    struct stat  st;
+    size_t       n    = strlen(path);
 
     while ((n > 1) && ((path[n - 1] == '/') || (path[n - 1] == '\\'))) {
         n--;

@@ -1118,6 +1118,16 @@ public:
                 synthlib_params_set(&params, values[i].id, values[i].value);
             }
         }
+
+        // notes §10a: the controller rests the performance controllers too - a host sends the controller's values
+        // back to the processor after a load, which undid the processor's own reset
+        for (uint32_t i = 0, n = synthlib_param_count(desc, instance()); i < n; i++) {
+            tSynthLibParamDesc p;
+
+            if (synthlib_param_describe(desc, instance(), i, &p) && synthlib_param_resets_on_load(&p)) {
+                synthlib_params_set(&params, p.id, p.defaultNormalized);
+            }
+        }
         return kResultOk;
     }
 

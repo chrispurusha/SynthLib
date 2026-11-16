@@ -25,9 +25,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define EMU_BANK_MAX_PRESETS        (256)   // notes §2: the ones holding zones
-#define EMU_BANK_MAX_ZONES          (256)
-#define EMU_BANK_PRESET_NAME_SIZE   (32)
+#define EMU_BANK_MAX_PRESETS         (256)  // notes §2: the ones holding zones
+#define EMU_BANK_MAX_ZONES           (256)
+#define EMU_BANK_PRESET_NAME_SIZE    (32)
 
 // notes §3: one sample, a float array per channel; data[1] == data[0] when mono
 typedef struct {

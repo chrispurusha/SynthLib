@@ -129,3 +129,10 @@ which is also where every caller of this is.
 ## 10. Controllers back to rest on load
 After the plug-in's own state, before the read-back: `synthlib_param_resets_on_load()` (state notes) picks the
 wheel, bend and pedals, and each goes back to its default through `apply_param()`, as a saved value would.
+
+## 10a. The controller rests the performance controllers too
+§10's reset after a load ran in the processor only. The controller keeps its own copy of every value, restored from
+the same state (and from the plug-in's own bytes through stateParams), and a host sends the controller's values back
+to the processor after a load - so the wheel came back where the project left it (Nl3Alike in Ableton, owner
+2026-11-16). setComponentState now rests those parameters as well, by the same rule
+(synthlib_param_resets_on_load).
