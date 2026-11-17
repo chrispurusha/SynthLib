@@ -108,6 +108,26 @@ SYNTHLIB_LOG_STATE tSynthLibLogSink gSynthLibLogSink  = NULL;
 #define RGB_ORANGE_1                {1.00, 0.50, 0.00}
 #define RGB_ORANGE_2                {1.00, 0.70, 0.00}
 
+// notes §7: plug-in panels' shared colours - a plug-in may #define any of these first to override it
+#ifndef RGB_PANEL_UNAVAILABLE
+#define RGB_PANEL_UNAVAILABLE       {0.42, 0.42, 0.44}   // a control that does nothing now; grey means only this
+#endif
+#ifndef PANEL_OFF_DIM
+#define PANEL_OFF_DIM               (0.35)               // how much of its section's colour an Off button keeps
+#endif
+#ifndef RGB_PANEL_OFF_TEXT
+#define RGB_PANEL_OFF_TEXT          {0.85, 0.85, 0.85}
+#endif
+#ifndef RGB_SECTION_PLUGIN
+#define RGB_SECTION_PLUGIN          {0.50, 0.58, 0.80}   // PLUG-IN and HARDWARE
+#endif
+#ifndef RGB_SECTION_OUTPUT
+#define RGB_SECTION_OUTPUT          {0.55, 0.75, 0.50}
+#endif
+#ifndef RGB_SECTION_PLAY
+#define RGB_SECTION_PLAY            {0.85, 0.55, 0.65}   // PLAY, VOICE, GLIDE, VIBRATO, UNISON, ARP
+#endif
+
 // notes §3
 #define MODULE_SCROLLBAR_WIDTH      (11.0)
 #define MODULE_SCROLLBAR_MARGIN     MODULE_SCROLLBAR_WIDTH

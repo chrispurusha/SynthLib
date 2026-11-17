@@ -26,3 +26,10 @@ audition or a pad that sounds while held.
 
 Halfway from the button's own colour to white, so every button - the grey ones and the coloured toggles alike -
 lights while held, and still reads as itself.
+
+## 3. `synthlib_button_off_colour()`
+
+An Off button's colour: its section's colour times `PANEL_OFF_DIM` (synthlibDefs.h §7), so it stays recognisably that
+section's, unlit, and never reads as the grey of a control that is unavailable. Inline in the header, not in the
+library, so a plug-in that overrides `PANEL_OFF_DIM` gets its own value. Draw its label in `RGB_PANEL_OFF_TEXT`: black
+is lost on the dimmed colour.

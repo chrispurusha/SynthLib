@@ -23,6 +23,7 @@
 
 #include <stdbool.h>
 #include "synthlibTypes.h"
+#include "synthlibDefs.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -37,6 +38,13 @@ void synthlib_button_cancel(void);
 
 // notes §2
 tRgb synthlib_button_held_colour(tRgb colour);
+
+// notes §3: an Off button - its section's colour dimmed, inline so a plug-in's own PANEL_OFF_DIM applies
+static inline tRgb synthlib_button_off_colour(tRgb colour) {
+    return (tRgb){
+        colour.red * PANEL_OFF_DIM, colour.green * PANEL_OFF_DIM, colour.blue * PANEL_OFF_DIM
+    };
+}
 
 #ifdef __cplusplus
 }

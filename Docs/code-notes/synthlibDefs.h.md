@@ -56,3 +56,16 @@ Floor on the thumb's height so it stays grabbable no matter how long the list is
 proportional height collapses — a full device-wide patch sweep is ~1000 rows against 10 visible,
 which works out under 2pt on a 200pt track, leaving an 8x8 square to hit. The shortest track this
 is used on is 200pt (bankBrowser: 10 rows), so 24pt costs ~12% of the drag travel at worst.
+
+## 7. Plug-in panel colours
+
+One look across every plug-in panel (AllAlike `Docs/panel-layout.md`, 2026-11-17). Grey means only one thing: a
+control that does nothing at the moment (`RGB_PANEL_UNAVAILABLE`, with a grey label); nothing usable is grey, so no
+section is coloured grey. An Off button keeps `PANEL_OFF_DIM` of its section's colour, with `RGB_PANEL_OFF_TEXT` on it
+(`synthlib_button_off_colour()`, buttonPress.h §3). Sections the plug-ins share take a shared colour: PLUG-IN and
+HARDWARE `RGB_SECTION_PLUGIN`, OUTPUT `RGB_SECTION_OUTPUT`, the play sections (PLAY, VOICE, GLIDE, VIBRATO, UNISON, ARP)
+`RGB_SECTION_PLAY`.
+
+Each is a default behind `#ifndef`: a plug-in that wants its own defines it before the first SynthLib header -
+in its own header included first, or as `-D` in its `do-plugin`. The library itself draws nothing with them, so an
+override never needs the library rebuilt.
