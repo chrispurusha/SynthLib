@@ -127,6 +127,9 @@ SYNTHLIB_LOG_STATE tSynthLibLogSink gSynthLibLogSink  = NULL;
 #ifndef RGB_SECTION_PLAY
 #define RGB_SECTION_PLAY            {0.85, 0.55, 0.65}   // PLAY, VOICE, GLIDE, VIBRATO, UNISON, ARP
 #endif
+#ifndef RGB_SECTION_CONTROL
+#define RGB_SECTION_CONTROL         {0.80, 0.75, 0.45}   // the performance controllers: bend, wheel, velocity, pedal
+#endif
 
 // notes §3
 #define MODULE_SCROLLBAR_WIDTH      (11.0)
