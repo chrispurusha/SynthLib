@@ -65,6 +65,8 @@ section is coloured grey. An Off button keeps `PANEL_OFF_DIM` of its section's c
 (`synthlib_button_off_colour()`, buttonPress.h §3). Sections the plug-ins share take a shared colour: PLUG-IN and
 HARDWARE `RGB_SECTION_PLUGIN`, OUTPUT `RGB_SECTION_OUTPUT`, the play sections (PLAY, VOICE, GLIDE, VIBRATO, UNISON, ARP)
 `RGB_SECTION_PLAY`, the performance controllers (BEND / WHEEL, VELOCITY, CONTROL, PERFORMANCE) `RGB_SECTION_CONTROL`.
+The CLIP indicator beside a panel's title is `PANEL_CLIP_W` x `PANEL_CLIP_H` (two thirds of the 38 x 15 it was, owner
+2026-11-17), centred on the title line.
 
 Each is a default behind `#ifndef`: a plug-in that wants its own defines it before the first SynthLib header -
 in its own header included first, or as `-D` in its `do-plugin`. The library itself draws nothing with them, so an

@@ -130,6 +130,12 @@ SYNTHLIB_LOG_STATE tSynthLibLogSink gSynthLibLogSink  = NULL;
 #ifndef RGB_SECTION_CONTROL
 #define RGB_SECTION_CONTROL         {0.80, 0.75, 0.45}   // the performance controllers: bend, wheel, velocity, pedal
 #endif
+#ifndef PANEL_CLIP_W
+#define PANEL_CLIP_W                (25.0)               // the CLIP indicator beside the title, its label fitted to it
+#endif
+#ifndef PANEL_CLIP_H
+#define PANEL_CLIP_H                (10.0)
+#endif
 
 // notes §3
 #define MODULE_SCROLLBAR_WIDTH      (11.0)
