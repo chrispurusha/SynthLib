@@ -129,3 +129,12 @@ GLFW window) drop out, and puts FreeType in `build/windows-<arch>/deps`.
 
 To try a plug-in on Windows without a DAW, `tools/do-vst3hostwin.ps1` builds `tools/vst3hostwin.exe`, a small
 host with audio, MIDI in, the computer keyboard and both DPI modes (`Docs/code-notes/vst3hostwin.cpp.md`).
+
+## The Akai MPC and Force (2026-11-21)
+
+`plugin/synthlibPluginVst2.c` is the VST2 wrapper those machines need (they run Linux on ARM and load nothing
+else). It is not in `libSynthLib.a`: it needs the MPC plug-in SDK's `framework/mpc_vst2_abi.h` on the include
+path and compiles to nothing without it. A product builds for the MPC with its own script, compiling the few
+SynthLib files it needs from source with the SDK's zig, for `arm-linux-gnueabihf.2.31` (Cortex-A17) and
+`aarch64-linux-gnu.2.31` (Cortex-A55), with `SYNTHLIB_NO_EDITOR` defined. AllAlike's `tools/do-mpc` does this for
+any of its products (TiAlike and Pulse2Alike so far), reading the sources from each product's `do-plugin`.

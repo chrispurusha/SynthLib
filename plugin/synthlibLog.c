@@ -76,7 +76,7 @@ void synthlib_log_line(const char * format, ...) {
     // The executable's own name, so a line from Live is told from one from a test harness at a
     // glance rather than by pid alone. Read each time: getprogname() returns a pointer the process
     // already holds, and caching it in a static was a (benign) data race.
-#if defined (_WIN32)
+#if defined (_WIN32) || defined (__linux__)
     const char *          name      = NULL; // no getprogname(); the pid still tells processes apart
 #else
     const char *          name      = getprogname();
