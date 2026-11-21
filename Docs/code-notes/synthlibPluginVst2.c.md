@@ -1,8 +1,8 @@
 # synthlibPluginVst2.c
 
-The VST 2.4 binary interface around a `tSynthLibPluginDesc`, for the Akai MPC and Force: their standalone
-firmware hosts nothing else. No editor, no Mac or Windows code; a product builds it with its own script
-(TiAlike's `do-mpc`).
+The VST 2.4 binary interface around a `tSynthLibPluginDesc`, for the Akai MPC and Force: in
+standalone mode they host nothing else. No editor, no Mac or Windows code; a product builds it with its own script
+(AllAlike's `tools/do-mpc`).
 
 ## 1. Compiled only with the interface's description
 The interface is described by the MPC plug-in SDK's `framework/mpc_vst2_abi.h` (MIT, written without

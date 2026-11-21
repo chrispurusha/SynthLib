@@ -25,8 +25,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define EMU_BANK_MAX_PRESETS         (256)  // notes §2: the ones holding zones
-#define EMU_BANK_MAX_ZONES           (256)
+#define EMU_BANK_MAX_PRESETS         (1000) // notes §2: the ones holding zones (an E4B holds up to 1000)
+#define EMU_BANK_MAX_ZONES           (4096) // an E4B preset can hold thousands (2368 seen)
 #define EMU_BANK_PRESET_NAME_SIZE    (32)
 
 // notes §3: one sample, a float array per channel; data[1] == data[0] when mono
@@ -57,6 +57,10 @@ typedef struct {
     int32_t            keyLow, keyHigh;
     int32_t            velLow, velHigh;
     uint32_t           voice;    // the preset's voice it belongs to, from 0
+    double             tune;     // notes §8: semitones added on top of the root key (an E4B zone's and voice's tuning)
+    double             volume;   // notes §9: dB, the zone's level (0 = as recorded)
+    double             pan;      // -1..1
+    bool               oneShot;  // notes §9: plays to its end whatever the key does
     tEmuEnvelope       amp;      // notes §5: its voice's amplifier envelope
 } tEmuZone;
 
@@ -69,7 +73,7 @@ typedef struct tEmuBank tEmuBank;
 
 tEmuBank * emu_bank_open(const char * path, char * error, size_t errorLength);   // reads the bank, not its samples
 void emu_bank_free(tEmuBank * bank);
-bool emu_bank_is_bank_file(const char * name);                                   // by extension
+bool emu_bank_is_bank_file(const char * name);                                   // by extension: .exb, .e4b, .sfz
 uint32_t emu_bank_preset_count(const tEmuBank * bank);
 const char * emu_bank_preset_name(const tEmuBank * bank, uint32_t preset);
 const char * emu_bank_path(const tEmuBank * bank);

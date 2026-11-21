@@ -18,6 +18,7 @@
  */
 // Notes: Docs/code-notes/emuBank.c.md - "// notes §k" refers there.
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -50,6 +51,9 @@ struct tEmuBank {
     char         presetName[EMU_BANK_MAX_PRESETS][EMU_BANK_PRESET_NAME_SIZE];
     tEmuSample * pool[MAX_SAMPLES + 1];   // sample number -> its data, NULL until read (or unreadable)
     bool         poolTried[MAX_SAMPLES + 1];
+    bool         e4b;                     // notes §8: an E-mu EOS bank, samples inside it
+    uint32_t     sampleBody[MAX_SAMPLES + 1];
+    uint32_t     sampleLength[MAX_SAMPLES + 1];
 };
 
 static uint32_t read_u32_be(const uint8_t * p) {
@@ -353,10 +357,289 @@ static void preset_name(const uint8_t * body, uint32_t length, uint32_t number, 
     }
 }
 
+// ---- E-mu EOS banks (.E4B) - notes §8 -------------------------------------------------------------------------
+
+#define E4_PRESET_VOICES      (0x12)   // in an E4P1 body, after its 2-byte index
+#define E4_PRESET_HEADER      (0x52)
+#define E4_VOICE_HEADER       (0x11c)
+#define E4_ZONE_BYTES         (22)
+#define E4_VOICE_KEYS         (0x0c)   // low at +0, high at +3; velocities at 0x10 and 0x13
+#define E4_VOICE_TRANSPOSE    (0x20)   // then coarse tune, then fine tune
+#define E4_VOICE_AMP_ENV      (0x6c)   // six stages of a rate and a level, bytes
+#define E4_ZONE_SAMPLE        (0x08)
+#define E4_ZONE_FINE          (0x0a)   // 1/64 semitone, big-endian signed
+#define E4_ZONE_ROOT          (0x0c)
+#define E4_SAMPLE_START_L     (0x14)   // little-endian byte offsets from the sample's name: start L and R, end L and R,
+#define E4_SAMPLE_LOOP_L      (0x24)   // loop start L and R, loop end L and R
+#define E4_SAMPLE_RATE        (0x34)
+#define E4_SAMPLE_PITCH       (0x38)   // the sample's pitch word, 1/64 semitone; untuned: trunc(768 log2(rate / 44053))
+#define E4_SAMPLE_FLAGS       (0x3a)
+#define E4_FLAG_LOOP          (0x0001)
+#define E4_FLAG_LEFT          (0x0020)
+#define E4_FLAG_RIGHT         (0x0040)
+#define E4_PITCH_REFERENCE    (44053.0)
+#define E4_RATE_SCALE         (254.0)  // notes §8: a rate handed on as Emulator X stores it, 0.5 for 127
+
+static uint16_t read_u16_be(const uint8_t * p) {
+    return (uint16_t)(((uint32_t)p[0] << 8) | p[1]);
+}
+
+static uint16_t read_u16_le(const uint8_t * p) {
+    return (uint16_t)(p[0] | ((uint32_t)p[1] << 8));
+}
+
+static float e4_channel(const uint8_t * body, uint32_t length, uint32_t at) {
+    return (at + 1u < length) ? (float)(int16_t)read_u16_le(body + at) / 32768.0f : 0.0f;
+}
+
+// notes §8: one E3S1 sample - 16-bit little-endian frames, each channel a block of its own
+static tEmuSample * e4_sample(const tEmuBank * bank, uint32_t number) {
+    const uint8_t * b      = bank->data + bank->sampleBody[number];
+    uint32_t        length = bank->sampleLength[number];
+
+    if (length < E4_SAMPLE_FLAGS + 2u) {
+        return NULL;
+    }
+    uint16_t        flags  = read_u16_le(b + E4_SAMPLE_FLAGS);
+    bool            left   = (flags & E4_FLAG_LEFT) != 0u;
+    bool            right  = (flags & E4_FLAG_RIGHT) != 0u;
+    uint32_t        start  = read_u32_le(b + E4_SAMPLE_START_L + (left ? 0u : 4u));
+    uint32_t        end    = read_u32_le(b + E4_SAMPLE_START_L + 8u + (left ? 0u : 4u));
+
+    if ((end <= start) || (end > length)) {
+        return NULL;
+    }
+    tEmuSample *    s      = calloc(1, sizeof(tEmuSample));
+
+    if (s == NULL) {
+        return NULL;
+    }
+    s->channels  = (left && right) ? 2u : 1u;
+    s->frames    = (end - start) / 2u;
+    s->data[0]   = malloc(sizeof(float) * s->frames);
+    s->data[1]   = (s->channels == 2u) ? malloc(sizeof(float) * s->frames) : s->data[0];
+
+    if ((s->data[0] == NULL) || (s->data[1] == NULL)) {
+        sample_free(s);
+        return NULL;
+    }
+    uint32_t        startR = read_u32_le(b + E4_SAMPLE_START_L + 4u);
+
+    for (uint32_t i = 0; i < s->frames; i++) {
+        s->data[0][i] = e4_channel(b, length, start + (2u * i));
+
+        if (s->channels == 2u) {
+            s->data[1][i] = e4_channel(b, length, startR + (2u * i));
+        }
+    }
+
+    uint32_t        loopS  = read_u32_le(b + E4_SAMPLE_LOOP_L + (left ? 0u : 4u));
+    uint32_t        loopE  = read_u32_le(b + E4_SAMPLE_LOOP_L + 8u + (left ? 0u : 4u));
+
+    s->looped    = ((flags & E4_FLAG_LOOP) != 0u) && (loopS >= start) && (loopE > loopS) && (loopE <= end);
+    s->loopStart = s->looped ? (loopS - start) / 2u : 0u;
+    s->loopEnd   = s->looped ? (loopE - start) / 2u : s->frames;
+    // notes §8: the recorded rate, retuned by whatever the pitch word holds beyond the one written for that rate
+    double          rate   = (double)read_u32_le(b + E4_SAMPLE_RATE);
+    int32_t         plain  = (rate > 0.0) ? (int32_t)(768.0 * log2(rate / E4_PITCH_REFERENCE)) : 0;
+    int32_t         pitch  = (int16_t)read_u16_le(b + E4_SAMPLE_PITCH);
+
+    s->rate      = ((rate > 1000.0) ? rate : (E4_PITCH_REFERENCE * pow(2.0, pitch / 768.0))) * ((rate > 1000.0) ? pow(2.0, (pitch - plain) / 768.0) : 1.0);
+    s->number    = number;
+    return s;
+}
+
+static const tEmuSample * e4_pool_sample(tEmuBank * bank, uint32_t number) {
+    if ((number > MAX_SAMPLES) || (bank->sampleLength[number] == 0u)) {
+        return NULL;
+    }
+
+    if (!bank->poolTried[number]) {
+        bank->poolTried[number] = true;
+        bank->pool[number]      = e4_sample(bank, number);
+    }
+    return bank->pool[number];
+}
+
+static int32_t clamp_i(int32_t v, int32_t lo, int32_t hi) {
+    return (v < lo) ? lo : ((v > hi) ? hi : v);
+}
+
+// notes §8: a preset's voices, each a header and its zones; a zone plays within its own and its voice's ranges
+static void e4_preset(tEmuBank * bank, const uint8_t * body, uint32_t length, tEmuPreset * out) {
+    uint32_t voices = (length > E4_PRESET_VOICES + 2u) ? read_u16_be(body + E4_PRESET_VOICES) : 0u;
+    uint32_t pos    = E4_PRESET_HEADER;
+
+    for (uint32_t v = 0; (v < voices) && (pos + E4_VOICE_HEADER <= length); v++) {
+        const uint8_t * vh    = body + pos;
+        uint32_t        size  = read_u16_be(vh);
+        uint32_t        zones = vh[2];
+        tEmuEnvelope    amp   = {.present = true};
+        double          tune  = (double)(int8_t)vh[E4_VOICE_TRANSPOSE] + (double)(int8_t)vh[E4_VOICE_TRANSPOSE + 1]
+                                + ((double)(int8_t)vh[E4_VOICE_TRANSPOSE + 2] / 64.0);
+
+        for (int k = 0; k < EMU_ENV_STAGES; k++) {
+            amp.time[k]  = (float)(vh[E4_VOICE_AMP_ENV + (2 * k)] / E4_RATE_SCALE);
+            amp.level[k] = (float)floor((vh[E4_VOICE_AMP_ENV + (2 * k) + 1] & 0x7F) * 100.0 / 127.0 + 0.5);
+        }
+
+        for (uint32_t z = 0; (z < zones) && (out->zoneCount < EMU_BANK_MAX_ZONES); z++) {
+            const uint8_t *    zb     = vh + E4_VOICE_HEADER + (E4_ZONE_BYTES * z);
+
+            if ((pos + E4_VOICE_HEADER + (E4_ZONE_BYTES * (z + 1u))) > length) {
+                break;
+            }
+            const tEmuSample * sample = e4_pool_sample(bank, read_u16_be(zb + E4_ZONE_SAMPLE));
+
+            if (sample == NULL) {
+                continue;
+            }
+            tEmuZone *         zone   = &out->zone[out->zoneCount++];
+
+            zone->sample   = sample;
+            zone->rootNote = zb[E4_ZONE_ROOT];
+            zone->keyLow   = clamp_i(zb[0], vh[E4_VOICE_KEYS], 127);
+            zone->keyHigh  = clamp_i(zb[3], 0, vh[E4_VOICE_KEYS + 3]);
+            zone->velLow   = clamp_i(zb[4], vh[E4_VOICE_KEYS + 4], 127);
+            zone->velHigh  = clamp_i(zb[7], 0, vh[E4_VOICE_KEYS + 7]);
+            zone->voice    = v;
+            zone->tune     = tune + ((double)(int16_t)read_u16_be(zb + E4_ZONE_FINE) / 64.0);
+            zone->amp      = amp;
+        }
+
+        if (size < E4_VOICE_HEADER) {
+            break;
+        }
+        pos += size;
+    }
+}
+
+// notes §2: a preset counts when one of its voices holds a zone - some banks carry presets of text alone
+static bool e4_has_zones(const uint8_t * body, uint32_t length) {
+    uint32_t voices = read_u16_be(body + E4_PRESET_VOICES);
+    uint32_t pos    = E4_PRESET_HEADER;
+
+    for (uint32_t v = 0; (v < voices) && ((pos + E4_VOICE_HEADER) <= length); v++) {
+        uint32_t size = read_u16_be(body + pos);
+
+        if (body[pos + 2] > 0u) {
+            return true;
+        }
+
+        if (size < E4_VOICE_HEADER) {
+            break;
+        }
+        pos += size;
+    }
+
+    return false;
+}
+
+// one chunk: its type at `p`, a length counting the 2-byte index, the index, the body
+static void e4_chunk(tEmuBank * bank, const uint8_t * d, uint32_t size, uint32_t p) {
+    if ((p + 10u) > size) {
+        return;
+    }
+    uint32_t n     = read_u32_be(d + p + 4);
+    uint32_t index = read_u16_be(d + p + 8);
+    uint32_t body  = p + 10u;
+
+    if (n < 2u) {
+        return;
+    }
+
+    if (n > (size - p - 8u)) {   // notes §8: some converters count the chunk's header in its length - the last overruns
+        n = size - p - 8u;
+
+        if (n < 2u) {
+            return;
+        }
+    }
+
+    if ((memcmp(d + p, "E3S1", 4) == 0) && (index <= MAX_SAMPLES)) {
+        bank->sampleBody[index]   = body;
+        bank->sampleLength[index] = n - 2u;
+    } else if (  (memcmp(d + p, "E4P1", 4) == 0) && (bank->presetCount < EMU_BANK_MAX_PRESETS) && (n - 2u > E4_PRESET_HEADER)
+              && e4_has_zones(d + body, n - 2u)) {
+        uint32_t i = bank->presetCount++;
+        uint32_t k = 16;
+
+        bank->presetBody[i]   = body;
+        bank->presetLength[i] = n - 2u;
+
+        while ((k > 0u) && ((d[body + k - 1u] == ' ') || (d[body + k - 1u] == '\0'))) {
+            k--;
+        }
+        snprintf(bank->presetName[i], sizeof(bank->presetName[i]), "%.*s", (int)k, (const char *)(d + body));
+    }
+}
+
+// notes §8: the chunks from the table of contents when the bank has one (an entry whose offset does not land on its
+// own type is stale and passed over), else by walking them as older banks need
+static bool e4_open(tEmuBank * bank, const uint8_t * d, uint32_t size) {
+    if ((size >= 20u) && (memcmp(d + 12, "TOC1", 4) == 0)) {
+        uint32_t toc = read_u32_be(d + 16);
+
+        for (uint32_t k = 0; (k < (toc / 32u)) && ((20u + (32u * (k + 1u))) <= size); k++) {
+            const uint8_t * e  = d + 20u + (32u * k);
+            uint32_t        at = read_u32_be(e + 8);
+
+            if (((at + 4u) <= size) && (memcmp(d + at, e, 4) == 0)) {
+                e4_chunk(bank, d, size, at);
+            }
+        }
+    } else {
+        for (uint32_t p = 12; (p + 10u) <= size;) {
+            uint32_t n = read_u32_be(d + p + 4);
+
+            if ((n < 2u) || (n > (size - p - 8u))) {
+                break;
+            }
+            e4_chunk(bank, d, size, p);
+            p += 8u + n + (n & 1u);
+        }
+    }
+    // notes §2: and one of its zones names a sample the bank holds
+    uint32_t kept = 0;
+
+    for (uint32_t i = 0; i < bank->presetCount; i++) {
+        const uint8_t * body   = d + bank->presetBody[i];
+        uint32_t        length = bank->presetLength[i];
+        uint32_t        voices = read_u16_be(body + E4_PRESET_VOICES);
+        bool            any    = false;
+
+        for (uint32_t v = 0, pos = E4_PRESET_HEADER; (v < voices) && !any && ((pos + E4_VOICE_HEADER) <= length); v++) {
+            uint32_t size = read_u16_be(body + pos);
+
+            for (uint32_t z = 0; (z < body[pos + 2]) && ((pos + E4_VOICE_HEADER + (E4_ZONE_BYTES * (z + 1u))) <= length); z++) {
+                uint32_t number = read_u16_be(body + pos + E4_VOICE_HEADER + (E4_ZONE_BYTES * z) + E4_ZONE_SAMPLE);
+
+                any = any || ((number <= MAX_SAMPLES) && (bank->sampleLength[number] > 0u));
+            }
+
+            if (size < E4_VOICE_HEADER) {
+                break;
+            }
+            pos += size;
+        }
+
+        if (any) {
+            bank->presetBody[kept]   = bank->presetBody[i];
+            bank->presetLength[kept] = bank->presetLength[i];
+            memmove(bank->presetName[kept], bank->presetName[i], sizeof(bank->presetName[i]));
+            kept++;
+        }
+    }
+
+    bank->presetCount = kept;
+    bank->e4b         = true;
+    return bank->presetCount > 0u;
+}
+
 bool emu_bank_is_bank_file(const char * name) {
     const char * dot = strrchr(name, '.');
 
-    return (dot != NULL) && (strcasecmp(dot, ".exb") == 0);
+    return (dot != NULL) && ((strcasecmp(dot, ".exb") == 0) || (strcasecmp(dot, ".e4b") == 0));
 }
 
 // notes §2: the presets that hold zones; the empty ones a bank carries are passed over
@@ -390,8 +673,21 @@ tEmuBank * emu_bank_open(const char * given, char * error, size_t errorLength) {
     uint32_t   size = 0;
     uint8_t *  d    = (bank != NULL) ? read_whole_file(path, &size) : NULL;
 
+    if ((d != NULL) && (size >= 12u) && (memcmp(d, "FORM", 4) == 0) && (memcmp(d + 8, "E4B0", 4) == 0)) {   // notes §8
+        snprintf(bank->path, sizeof(bank->path), "%s", path);
+        bank->data = d;
+        bank->size = size;
+
+        if (!e4_open(bank, d, size)) {
+            snprintf(error, errorLength, "The bank holds no presets with samples.");
+            emu_bank_free(bank);
+            return NULL;
+        }
+        return bank;
+    }
+
     if ((d == NULL) || (size < 12u) || (memcmp(d, "FORM", 4) != 0) || (memcmp(d + 8, "E5B0", 4) != 0)) {
-        snprintf(error, errorLength, "%s", (d == NULL) ? "The file could not be read." : "Not an Emulator X bank.");
+        snprintf(error, errorLength, "%s", (d == NULL) ? "The file could not be read." : "Not an Emulator X or EOS bank.");
         free(d);
         free(bank);
         return NULL;
@@ -458,6 +754,11 @@ bool emu_bank_preset(tEmuBank * bank, uint32_t preset, tEmuPreset * out) {
 
     if ((bank == NULL) || (preset >= bank->presetCount)) {
         return false;
+    }
+
+    if (bank->e4b) {
+        e4_preset(bank, bank->data + bank->presetBody[preset], bank->presetLength[preset], out);
+        return out->zoneCount > 0u;
     }
     memset(&w, 0, sizeof(w));
     w.bank   = bank;

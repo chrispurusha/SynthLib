@@ -52,3 +52,33 @@ should: a piano's Decay 2 0.4113 is rate 104 (about 24 s to silence on the E5000
 1 s), a drone's release 0.464 rate 118. The values are not exact multiples of 1/254 (1,933 distinct), so Emulator X
 holds a continuous rate or converts by a slightly different curve; not yet confirmed against Emulator X itself.
 Each stage's trailing byte has been 0 in every envelope looked at.
+
+## 8. EOS banks (.E4B)
+An E-mu EOS 4 bank (E4XT, E5000, E6400 Ultra and their kin) is one file holding its presets and its samples: `FORM`
+`E4B0`, a table of contents (`TOC1`, 32-byte entries of type, length, offset and index; an entry whose offset does not
+land on its own type is stale and passed over; older banks have none and are walked chunk by chunk), then chunks of a
+type, a length counting a 2-byte index, the index, and the body. Some converters count the chunk's own header in its
+length, so the last chunk claims 8 bytes past the end of the file: its length is clipped to the file.
+
+- **E4P1**, a preset: its name in the first 16 bytes, the voice count at 0x12, voices from 0x52. A voice is a 284-byte
+  header and its 22-byte zones; the header's first word is the voice's whole size. Keys low/high at 0x0c/0x0f,
+  velocities at 0x10/0x13; transpose, coarse and fine tune (1/64 semitone) at 0x20-0x22; the amp envelope at 0x6c,
+  six stages of a rate (0-127, 0 the fastest) and a level (0-127, shown as percent). A zone: keys at 0/3, velocities
+  at 4/7, the sample's index at 8, fine tune at 10 (1/64 semitone, signed), root key at 12. A zone plays within its own
+  and its voice's ranges; its tuning is the voice's transpose + coarse + fine plus its own, in `tEmuZone.tune`.
+- **E3S1**, a sample, found by its index: a 16-byte name, then little-endian byte offsets from the name for start L
+  and R, end L and R (exclusive), loop start L and R, loop end L and R, the rate at 0x34, a pitch word at 0x38 and flags
+  at 0x3a (0x01 looped, 0x20 left, 0x40 right - both for stereo). The frames are 16-bit little-endian, each channel a
+  block of its own.
+- **Tuning.** EOS writes an untuned sample's pitch word as trunc(768 log2(rate / 44053)), in 1/64 semitone; a sample
+  retuned on the sampler holds a different word. So a sample plays at its rate times 2^((word - that) / 768): exactly
+  its rate when untuned, retuned when not. Whether some one-step differences are rounding rather than retuning is to
+  be confirmed on an E5000.
+- **Envelopes** are handed on as Emulator X stores them (§7), the rate over 254 and the level as percent, so one path
+  reads both formats.
+- A preset counts only when one of its zones names a sample the bank holds - some banks carry text-only presets
+  ("Credits"), others zones whose samples are missing. A bank holds up to 1000 presets; a preset can hold thousands of
+  zones (2,368 seen), hence EMU_BANK_MAX_ZONES 4096.
+
+Checked (2026-11-21) against an independent reader of the format on 400 random banks of a library of 18,000: every
+readable bank the same presets, zones, samples and loops, stereo included; 2,000 more read with no failure.
