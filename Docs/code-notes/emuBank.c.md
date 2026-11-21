@@ -82,3 +82,30 @@ length, so the last chunk claims 8 bytes past the end of the file: its length is
 
 Checked (2026-11-21) against an independent reader of the format on 400 random banks of a library of 18,000: every
 readable bank the same presets, zones, samples and loops, stereo included; 2,000 more read with no failure.
+
+## 9. SFZ instruments
+An `.sfz` is read as a bank of one preset, named after the file; its `<region>`s are the zones, each with its opcodes
+from itself and the `<group>`, `<master>`, `<global>` and `<control>` around it (the innermost that sets one wins; a
+header clears its own scope and those inside it; a header this reader does not know - `<curve>`, `<effect>` - and
+its opcodes are passed over, as are `#define` and `#include`). Comments (`//`, `/* */`) are blanked first. An
+opcode's value runs to the end of its line or to the next opcode or header, so a file name may hold spaces.
+
+- **Read:** `sample` (joined to `default_path`, relative to the .sfz's folder, Windows separators turned round),
+  `key` (or `lokey`, `hikey`, `pitch_keycenter` - numbers or note names, c4 = 60), `lovel`/`hivel` (velocity layers),
+  `transpose` and `tune` (cents) into `tune`, `volume` (dB), `pan` (-100..100), `loop_mode` (`no_loop`, `one_shot`,
+  `loop_continuous`, `loop_sustain`), `loop_start`/`loop_end` (or `loopstart`/`loopend`), frames, the end inclusive.
+  A region with no `loop_mode` loops when its file carries a loop (the WAV's `smpl` chunk).
+- **Envelope:** `ampeg_attack`, `ampeg_hold`, `ampeg_decay`, `ampeg_sustain` (%) and `ampeg_release`, in seconds, flagged
+  `seconds` in `tEmuEnvelope` (a player turns them into its own); SFZ's defaults for the ones not given (release
+  0.001 s, sustain 100%). A region with none of them keeps `present` false - the player's own default envelope.
+- **Release samples:** `trigger=release` marks a zone `release` - it sounds when the key is let go, not when it is
+  struck; the player chooses it by the velocity the key was struck with, as SFZ does.
+- **Not yet:** `offset`, `pitch_keytrack`, the other `trigger`s (`first`, `legato`), round robins (`seq_*`), `amp_veltrack`,
+  filters and modulation.
+- **Samples:** one per distinct file and loop, numbered from 1 and read when a preset first needs it: RIFF WAVE,
+  8/16/24/32-bit PCM or 32-bit float (WAVE_FORMAT_EXTENSIBLE's sub-format too), the first two channels kept.
+- **Playing:** a region's sample is pitched like any zone's - its rate times the key's distance from the root - so a
+  sample spread over keys is repitched as an E-mu sampler does it, never time-stretched.
+
+Checked (2026-11-21) on a library of 547 instruments (50,398 regions, 25,198 24-bit stereo WAVs): every instrument
+loads with every region; velocity layers, one-shot and per-region volume heard right through UltraAlike's voices.

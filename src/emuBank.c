@@ -27,7 +27,7 @@
 
 #include "emuBank.h"
 
-#define MAX_SAMPLES         (1000)
+#define MAX_SAMPLES         (4096)     // an E4B holds up to 1000; an SFZ names as many as it likes
 #define EBL_HEADER_BASE     (2)        // notes §3: the sample header's offsets count from here in the E5S1 chunk
 #define EBL_START_L         (0x48)     // then start R, end L, end R, loop start L and R, loop end L and R
 #define EBL_RATE            (0x68)
@@ -42,18 +42,22 @@
 #define E5EV_STAGE_BYTES    (9)
 
 struct tEmuBank {
-    char         path[2048];
-    uint8_t *    data;
-    uint32_t     size;
-    uint32_t     presetCount;
-    uint32_t     presetBody[EMU_BANK_MAX_PRESETS];
-    uint32_t     presetLength[EMU_BANK_MAX_PRESETS];
-    char         presetName[EMU_BANK_MAX_PRESETS][EMU_BANK_PRESET_NAME_SIZE];
-    tEmuSample * pool[MAX_SAMPLES + 1];   // sample number -> its data, NULL until read (or unreadable)
-    bool         poolTried[MAX_SAMPLES + 1];
-    bool         e4b;                     // notes §8: an E-mu EOS bank, samples inside it
-    uint32_t     sampleBody[MAX_SAMPLES + 1];
-    uint32_t     sampleLength[MAX_SAMPLES + 1];
+    char                path[2048];
+    uint8_t *           data;
+    uint32_t            size;
+    uint32_t            presetCount;
+    uint32_t            presetBody[EMU_BANK_MAX_PRESETS];
+    uint32_t            presetLength[EMU_BANK_MAX_PRESETS];
+    char                presetName[EMU_BANK_MAX_PRESETS][EMU_BANK_PRESET_NAME_SIZE];
+    tEmuSample *        pool[MAX_SAMPLES + 1]; // sample number -> its data, NULL until read (or unreadable)
+    bool                poolTried[MAX_SAMPLES + 1];
+    bool                e4b;                   // notes §8: an E-mu EOS bank, samples inside it
+    bool                sfz;                   // notes §9: an SFZ instrument, one preset, its samples WAV files
+    char *              text;                  // the SFZ's text, comments blanked
+    struct tSfzSample * sfzSample;             // notes §9: each distinct file and loop the regions name, by number from 1
+    uint32_t            sfzSampleCount;
+    uint32_t            sampleBody[MAX_SAMPLES + 1];
+    uint32_t            sampleLength[MAX_SAMPLES + 1];
 };
 
 static uint32_t read_u32_be(const uint8_t * p) {
@@ -369,6 +373,8 @@ static void preset_name(const uint8_t * body, uint32_t length, uint32_t number, 
 #define E4_ZONE_SAMPLE        (0x08)
 #define E4_ZONE_FINE          (0x0a)   // 1/64 semitone, big-endian signed
 #define E4_ZONE_ROOT          (0x0c)
+#define E4_ZONE_VOLUME        (0x0d)   // then pan
+#define E4_VOICE_VOLUME       (0x34)   // then pan
 #define E4_SAMPLE_START_L     (0x14)   // little-endian byte offsets from the sample's name: start L and R, end L and R,
 #define E4_SAMPLE_LOOP_L      (0x24)   // loop start L and R, loop end L and R
 #define E4_SAMPLE_RATE        (0x34)
@@ -504,6 +510,8 @@ static void e4_preset(tEmuBank * bank, const uint8_t * body, uint32_t length, tE
             zone->velHigh  = clamp_i(zb[7], 0, vh[E4_VOICE_KEYS + 7]);
             zone->voice    = v;
             zone->tune     = tune + ((double)(int16_t)read_u16_be(zb + E4_ZONE_FINE) / 64.0);
+            zone->volume   = (double)(int8_t)vh[E4_VOICE_VOLUME] + (double)(int8_t)zb[E4_ZONE_VOLUME];   // notes §8: dB, the voice's and the zone's
+            zone->pan      = fmax(-1.0, fmin(1.0, ((double)(int8_t)vh[E4_VOICE_VOLUME + 1] + (double)(int8_t)zb[E4_ZONE_VOLUME + 1]) / 64.0));
             zone->amp      = amp;
         }
 
@@ -636,10 +644,452 @@ static bool e4_open(tEmuBank * bank, const uint8_t * d, uint32_t size) {
     return bank->presetCount > 0u;
 }
 
+// ---- SFZ instruments - notes §9 --------------------------------------------------------------------------------
+
+typedef struct tSfzSample {
+    char    path[1024];
+    int     loopMode;           // 0 the file's own, 1 none, 2 one-shot, 3 continuous, 4 sustain
+    int64_t loopStart, loopEnd; // frames, -1 when not given
+} tSfzSample;
+
+#define SFZ_MAX_OPCODES    (64)
+
+typedef struct {
+    char name[32];
+    char value[1024];
+} tSfzOpcode;
+
+typedef struct {
+    tSfzOpcode op[SFZ_MAX_OPCODES];
+    int        count;
+} tSfzScope;
+
+static void sfz_set(tSfzScope * s, const char * name, const char * value) {
+    for (int i = 0; i < s->count; i++) {
+        if (strcmp(s->op[i].name, name) == 0) {
+            snprintf(s->op[i].value, sizeof(s->op[i].value), "%s", value);
+            return;
+        }
+    }
+
+    if (s->count < SFZ_MAX_OPCODES) {
+        snprintf(s->op[s->count].name, sizeof(s->op[s->count].name), "%s", name);
+        snprintf(s->op[s->count].value, sizeof(s->op[s->count].value), "%s", value);
+        s->count++;
+    }
+}
+
+static const char * sfz_get(const tSfzScope *const * scopes, int depth, const char * name) {
+    for (int d = depth - 1; d >= 0; d--) {   // the innermost scope that says
+        for (int i = 0; i < scopes[d]->count; i++) {
+            if (strcmp(scopes[d]->op[i].name, name) == 0) {
+                return scopes[d]->op[i].value;
+            }
+        }
+    }
+
+    return NULL;
+}
+
+// notes §9: a key as a number or a note name - c4 is 60, sharps with #, flats with b
+static int sfz_key(const char * v, int fallback) {
+    static const int kSteps[7] = {9, 11, 0, 2, 4, 5, 7};   // a b c d e f g
+
+    if (v == NULL) {
+        return fallback;
+    }
+
+    while (*v == ' ') {
+        v++;
+    }
+
+    if (((*v >= '0') && (*v <= '9')) || (*v == '-')) {
+        return atoi(v);
+    }
+    char             c         = (char)((*v >= 'A' && *v <= 'Z') ? (*v + 32) : *v);
+
+    if ((c < 'a') || (c > 'g')) {
+        return fallback;
+    }
+    int              n         = kSteps[c - 'a'];
+
+    v++;
+
+    if (*v == '#') {
+        n++;
+        v++;
+    } else if (*v == 'b') {
+        n--;
+        v++;
+    }
+    return n + (12 * (atoi(v) + 1));
+}
+
+static double sfz_num(const char * v, double fallback) {
+    return (v != NULL) ? atof(v) : fallback;
+}
+
+// notes §9: the text with comments blanked, so the opcodes are all that is left
+static void sfz_strip(char * t) {
+    for (char * p = t; *p != '\0'; p++) {
+        if ((p[0] == '/') && (p[1] == '/')) {
+            while ((*p != '\0') && (*p != '\n')) {
+                *p++ = ' ';
+            }
+
+            if (*p == '\0') {
+                break;
+            }
+        } else if ((p[0] == '/') && (p[1] == '*')) {
+            while ((*p != '\0') && !((p[0] == '*') && (p[1] == '/'))) {
+                if (*p != '\n') {
+                    *p = ' ';
+                }
+                p++;
+            }
+
+            if (*p != '\0') {
+                p[0] = ' ';
+                p[1] = ' ';
+                p++;
+            }
+        }
+    }
+}
+
+static bool sfz_name_char(char c) {
+    return ((c >= 'a') && (c <= 'z')) || ((c >= 'A') && (c <= 'Z')) || ((c >= '0') && (c <= '9')) || (c == '_');
+}
+
+// notes §9: an opcode's value runs to the end of its line or to the next opcode or header, so a file name may hold spaces
+static const char * sfz_value_end(const char * v) {
+    const char * end = v;
+
+    while ((*end != '\0') && (*end != '\n') && (*end != '\r') && (*end != '<')) {
+        if ((*end == ' ') || (*end == '\t')) {
+            const char * q = end;
+
+            while ((*q == ' ') || (*q == '\t')) {
+                q++;
+            }
+            const char * n = q;
+
+            while (sfz_name_char(*n)) {
+                n++;
+            }
+
+            if ((n > q) && (*n == '=')) {
+                break;
+            }
+        }
+        end++;
+    }
+
+    while ((end > v) && ((end[-1] == ' ') || (end[-1] == '\t'))) {
+        end--;
+    }
+    return end;
+}
+
+static uint32_t sfz_sample_number(tEmuBank * bank, const char * path, int loopMode, int64_t loopStart, int64_t loopEnd) {
+    for (uint32_t i = 0; i < bank->sfzSampleCount; i++) {
+        const tSfzSample * s = &bank->sfzSample[i];
+
+        if ((strcmp(s->path, path) == 0) && (s->loopMode == loopMode) && (s->loopStart == loopStart) && (s->loopEnd == loopEnd)) {
+            return i + 1u;
+        }
+    }
+
+    if (bank->sfzSampleCount >= MAX_SAMPLES) {
+        return 0u;
+    }
+    tSfzSample * s = &bank->sfzSample[bank->sfzSampleCount++];
+
+    snprintf(s->path, sizeof(s->path), "%s", path);
+    s->loopMode  = loopMode;
+    s->loopStart = loopStart;
+    s->loopEnd   = loopEnd;
+    return bank->sfzSampleCount;
+}
+
+// notes §9: a WAV file - 8-, 16-, 24- and 32-bit PCM or 32-bit float, any channel count (the first two kept), its
+// smpl chunk's first loop
+static tEmuSample * wav_load(const tSfzSample * want, uint32_t number) {
+    uint32_t  size = 0;
+    uint8_t * d    = read_whole_file(want->path, &size);
+
+    if ((d == NULL) || (size < 12u) || (memcmp(d, "RIFF", 4) != 0) || (memcmp(d + 8, "WAVE", 4) != 0)) {
+        free(d);
+        return NULL;
+    }
+    uint32_t  format = 0, channels = 0, rate = 0, bits = 0, dataAt = 0, dataLength = 0;
+    int64_t   loopS = -1, loopE = -1;
+
+    for (uint32_t p = 12; (p + 8u) <= size;) {
+        uint32_t n = read_u32_le(d + p + 4);
+
+        if (n > (size - p - 8u)) {
+            n = size - p - 8u;
+        }
+
+        if ((memcmp(d + p, "fmt ", 4) == 0) && (n >= 16u)) {
+            format   = read_u16_le(d + p + 8);
+            channels = read_u16_le(d + p + 10);
+            rate     = read_u32_le(d + p + 12);
+            bits     = read_u16_le(d + p + 22);
+
+            if ((format == 0xFFFEu) && (n >= 26u)) {   // WAVE_FORMAT_EXTENSIBLE: the sub-format's first word
+                format = read_u16_le(d + p + 8 + 24);
+            }
+        } else if (memcmp(d + p, "data", 4) == 0) {
+            dataAt     = p + 8u;
+            dataLength = n;
+        } else if ((memcmp(d + p, "smpl", 4) == 0) && (n >= 60u) && (read_u32_le(d + p + 8 + 28) > 0u)) {
+            loopS = read_u32_le(d + p + 8 + 36 + 8);
+            loopE = (int64_t)read_u32_le(d + p + 8 + 36 + 12) + 1;   // the loop's last frame, inclusive
+        }
+        p += 8u + n + (n & 1u);
+    }
+
+    uint32_t     bytes = bits / 8u;
+
+    if (  (dataAt == 0u) || (channels == 0u) || (rate == 0u) || ((format != 1u) && (format != 3u)) || (bytes == 0u) || (bytes > 4u)
+       || ((format == 3u) && (bytes != 4u))) {
+        free(d);
+        return NULL;
+    }
+    tEmuSample * s     = calloc(1, sizeof(tEmuSample));
+
+    if (s == NULL) {
+        free(d);
+        return NULL;
+    }
+    s->channels = (channels >= 2u) ? 2u : 1u;
+    s->frames   = dataLength / (bytes * channels);
+    s->data[0]  = malloc(sizeof(float) * (s->frames ? s->frames : 1u));
+    s->data[1]  = (s->channels == 2u) ? malloc(sizeof(float) * (s->frames ? s->frames : 1u)) : s->data[0];
+
+    if ((s->data[0] == NULL) || (s->data[1] == NULL)) {
+        sample_free(s);
+        free(d);
+        return NULL;
+    }
+
+    for (uint32_t i = 0; i < s->frames; i++) {
+        for (uint32_t c = 0; c < s->channels; c++) {
+            const uint8_t * q = d + dataAt + (((i * channels) + c) * bytes);
+            float           v;
+
+            if (format == 3u) {
+                uint32_t u = read_u32_le(q);
+
+                memcpy(&v, &u, sizeof(v));
+            } else if (bytes == 1u) {
+                v = ((float)q[0] - 128.0f) / 128.0f;
+            } else if (bytes == 2u) {
+                v = (float)(int16_t)read_u16_le(q) / 32768.0f;
+            } else if (bytes == 3u) {
+                v = (float)((int32_t)(((uint32_t)q[0] << 8) | ((uint32_t)q[1] << 16) | ((uint32_t)q[2] << 24)) >> 8) / 8388608.0f;
+            } else {
+                v = (float)((double)(int32_t)read_u32_le(q) / 2147483648.0);
+            }
+            s->data[c][i] = v;
+        }
+    }
+
+    free(d);
+
+    // notes §9: the region's loop over the file's - one-shot and no_loop never loop
+    int64_t ls    = (want->loopStart >= 0) ? want->loopStart : loopS;
+    int64_t le    = (want->loopEnd >= 0) ? (want->loopEnd + 1) : loopE;
+    bool    loops = (want->loopMode >= 3) || ((want->loopMode == 0) && (loopS >= 0));
+
+    s->looped    = loops && (ls >= 0) && (le > ls) && (le <= (int64_t)s->frames);
+    s->loopStart = s->looped ? (uint32_t)ls : 0u;
+    s->loopEnd   = s->looped ? (uint32_t)le : s->frames;
+    s->rate      = (double)rate;
+    s->number    = number;
+    return s;
+}
+
+static const tEmuSample * sfz_pool_sample(tEmuBank * bank, uint32_t number) {
+    if ((number == 0u) || (number > bank->sfzSampleCount) || (number > MAX_SAMPLES)) {
+        return NULL;
+    }
+
+    if (!bank->poolTried[number]) {
+        bank->poolTried[number] = true;
+        bank->pool[number]      = wav_load(&bank->sfzSample[number - 1u], number);
+    }
+    return bank->pool[number];
+}
+
+static void sfz_path(const tEmuBank * bank, const char * base, const char * sample, char * out, size_t size) {
+    char         joined[2048];
+    const char * slash = strrchr(bank->path, '/');
+    int          dir   = (slash != NULL) ? (int)(slash - bank->path + 1) : 0;
+
+    snprintf(joined, sizeof(joined), "%s%s", (base != NULL) ? base : "", sample);
+
+    for (char * p = joined; *p != '\0'; p++) {
+        *p = (*p == '\\') ? '/' : *p;   // Windows separators, as SFZ files from there carry
+    }
+
+    if (joined[0] == '/') {
+        snprintf(out, size, "%s", joined);
+    } else {
+        snprintf(out, size, "%.*s%s", dir, bank->path, joined);
+    }
+}
+
+// notes §9: every <region> as a zone, its opcodes from it and the <group>, <master>, <global> and <control> around it
+static void sfz_regions(tEmuBank * bank, tEmuPreset * out) {
+    static tSfzScope  control, global, master, group, region;
+    const tSfzScope * scopes[5] = {&control, &global, &master, &group, &region};
+    int               level     = -1;    // the header now open: 0 control .. 4 region
+    const char *      p         = bank->text;
+
+    memset(&control, 0, sizeof(control));
+    memset(&global, 0, sizeof(global));
+    memset(&master, 0, sizeof(master));
+    memset(&group, 0, sizeof(group));
+    memset(&region, 0, sizeof(region));
+
+    for ( ; ;) {
+        while ((*p == ' ') || (*p == '\t') || (*p == '\n') || (*p == '\r')) {
+            p++;
+        }
+
+        if ((*p == '<') || (*p == '\0')) {
+            if ((level == 4) && (out->zoneCount < EMU_BANK_MAX_ZONES)) {   // a region ends: it becomes a zone
+                const char * file = sfz_get(scopes, 5, "sample");
+
+                if (file != NULL) {
+                    char               path[2048];
+                    const char *       mode   = sfz_get(scopes, 5, "loop_mode");
+                    int                loop   = (mode == NULL) ? 0 : (strcmp(mode, "no_loop") == 0) ? 1 : (strcmp(mode, "one_shot") == 0) ? 2
+                                          : (strcmp(mode, "loop_continuous") == 0) ? 3 : (strcmp(mode, "loop_sustain") == 0) ? 4 : 0;
+                    const char *       ls     = sfz_get(scopes, 5, "loop_start");
+                    const char *       le     = sfz_get(scopes, 5, "loop_end");
+                    const char *       ls2    = (ls != NULL) ? ls : sfz_get(scopes, 5, "loopstart");
+                    const char *       le2    = (le != NULL) ? le : sfz_get(scopes, 5, "loopend");
+
+                    sfz_path(bank, sfz_get(scopes, 5, "default_path"), file, path, sizeof(path));
+                    uint32_t           number = sfz_sample_number(bank, path, loop, (ls2 != NULL) ? atoll(ls2) : -1, (le2 != NULL) ? atoll(le2) : -1);
+                    const tEmuSample * sample = sfz_pool_sample(bank, number);
+
+                    if (sample != NULL) {
+                        tEmuZone * z   = &out->zone[out->zoneCount++];
+                        int        key = sfz_key(sfz_get(scopes, 5, "key"), -1);
+
+                        memset(z, 0, sizeof(*z));
+                        z->sample   = sample;
+                        z->keyLow   = sfz_key(sfz_get(scopes, 5, "lokey"), (key >= 0) ? key : 0);
+                        z->keyHigh  = sfz_key(sfz_get(scopes, 5, "hikey"), (key >= 0) ? key : 127);
+                        z->rootNote = sfz_key(sfz_get(scopes, 5, "pitch_keycenter"), (key >= 0) ? key : 60);
+                        z->velLow   = (int32_t)sfz_num(sfz_get(scopes, 5, "lovel"), 0.0);
+                        z->velHigh  = (int32_t)sfz_num(sfz_get(scopes, 5, "hivel"), 127.0);
+                        z->tune     = sfz_num(sfz_get(scopes, 5, "transpose"), 0.0) + (sfz_num(sfz_get(scopes, 5, "tune"), 0.0) / 100.0);
+                        z->volume   = sfz_num(sfz_get(scopes, 5, "volume"), 0.0);
+                        z->pan      = fmax(-1.0, fmin(1.0, sfz_num(sfz_get(scopes, 5, "pan"), 0.0) / 100.0));
+                        z->oneShot  = (loop == 2);
+                        z->release  = (sfz_get(scopes, 5, "trigger") != NULL) && (strcmp(sfz_get(scopes, 5, "trigger"), "release") == 0);
+
+                        if (  (sfz_get(scopes, 5, "ampeg_attack") != NULL) || (sfz_get(scopes, 5, "ampeg_decay") != NULL)
+                           || (sfz_get(scopes, 5, "ampeg_sustain") != NULL) || (sfz_get(scopes, 5, "ampeg_release") != NULL)
+                           || (sfz_get(scopes, 5, "ampeg_hold") != NULL)) {    // notes §9: SFZ's own defaults for the rest
+                            z->amp.present  = true;
+                            z->amp.seconds  = true;
+                            z->amp.time[0]  = (float)sfz_num(sfz_get(scopes, 5, "ampeg_attack"), 0.0);
+                            z->amp.time[1]  = (float)sfz_num(sfz_get(scopes, 5, "ampeg_hold"), 0.0);
+                            z->amp.time[2]  = (float)sfz_num(sfz_get(scopes, 5, "ampeg_decay"), 0.0);
+                            z->amp.level[2] = (float)fmax(0.0, fmin(100.0, sfz_num(sfz_get(scopes, 5, "ampeg_sustain"), 100.0)));
+                            z->amp.time[4]  = (float)sfz_num(sfz_get(scopes, 5, "ampeg_release"), 0.001);
+                        }
+                        z->voice    = out->zoneCount - 1u;
+                    }
+                }
+            }
+
+            if (*p == '\0') {
+                break;
+            }
+            const char * close  = strchr(p, '>');
+
+            if (close == NULL) {
+                break;
+            }
+            int          length = (int)(close - p - 1);
+            int          next   = (strncmp(p + 1, "control", (size_t)length) == 0) ? 0 : (strncmp(p + 1, "global", (size_t)length) == 0) ? 1
+                                  : (strncmp(p + 1, "master", (size_t)length) == 0) ? 2 : (strncmp(p + 1, "group", (size_t)length) == 0) ? 3
+                                  : (strncmp(p + 1, "region", (size_t)length) == 0) ? 4 : -1;
+
+            if (next >= 0) {   // a header clears its own scope and the ones inside it
+                for (int d = next; d < 5; d++) {
+                    memset((tSfzScope *)scopes[d], 0, sizeof(tSfzScope));
+                }
+
+                level = next;
+            } else {
+                level = -1;    // a header this reader does not know (<curve>, <effect> ..): its opcodes are passed over
+            }
+            p = close + 1;
+            continue;
+        }
+        const char * eq  = p;
+
+        while (sfz_name_char(*eq)) {
+            eq++;
+        }
+
+        if ((*eq != '=') || (eq == p)) {   // not an opcode (a #define, a stray word): to the end of the line
+            while ((*p != '\0') && (*p != '\n')) {
+                p++;
+            }
+            continue;
+        }
+        const char * v   = eq + 1;
+        const char * end = sfz_value_end(v);
+
+        if (level >= 0) {
+            char name[32], value[1024];
+
+            snprintf(name, sizeof(name), "%.*s", (int)(eq - p), p);
+            snprintf(value, sizeof(value), "%.*s", (int)(end - v), v);
+            sfz_set((tSfzScope *)scopes[level], name, value);
+        }
+        p = (*end == '\0') ? end : end;
+
+        if (p == v) {
+            p++;
+        }
+    }
+}
+
+static bool sfz_open(tEmuBank * bank, uint8_t * d, uint32_t size) {
+    char *       text = malloc((size_t)size + 1u);
+    const char * leaf = strrchr(bank->path, '/');
+    const char * stem = (leaf != NULL) ? (leaf + 1) : bank->path;
+    const char * dot  = strrchr(stem, '.');
+
+    if (text == NULL) {
+        return false;
+    }
+    memcpy(text, d, size);
+    text[size]        = '\0';
+    sfz_strip(text);
+    bank->text        = text;
+    bank->sfzSample   = calloc(MAX_SAMPLES, sizeof(tSfzSample));
+    bank->sfz         = true;
+    bank->presetCount = 1u;
+    snprintf(bank->presetName[0], sizeof(bank->presetName[0]), "%.*s", (int)((dot != NULL) ? (dot - stem) : (int)strlen(stem)), stem);
+    return (bank->sfzSample != NULL) && (strstr(text, "<region>") != NULL);
+}
+
 bool emu_bank_is_bank_file(const char * name) {
     const char * dot = strrchr(name, '.');
 
-    return (dot != NULL) && ((strcasecmp(dot, ".exb") == 0) || (strcasecmp(dot, ".e4b") == 0));
+    return (dot != NULL) && ((strcasecmp(dot, ".exb") == 0) || (strcasecmp(dot, ".e4b") == 0) || (strcasecmp(dot, ".sfz") == 0));
 }
 
 // notes §2: the presets that hold zones; the empty ones a bank carries are passed over
@@ -666,12 +1116,27 @@ static void bank_file(const char * path, char * out, size_t size) {
 }
 
 tEmuBank * emu_bank_open(const char * given, char * error, size_t errorLength) {
-    char       path[2048];
+    char         path[2048];
 
     bank_file(given, path, sizeof(path));
-    tEmuBank * bank = calloc(1, sizeof(tEmuBank));
-    uint32_t   size = 0;
-    uint8_t *  d    = (bank != NULL) ? read_whole_file(path, &size) : NULL;
+    tEmuBank *   bank = calloc(1, sizeof(tEmuBank));
+    uint32_t     size = 0;
+    uint8_t *    d    = (bank != NULL) ? read_whole_file(path, &size) : NULL;
+
+    const char * dot  = strrchr(path, '.');
+
+    if ((d != NULL) && (dot != NULL) && (strcasecmp(dot, ".sfz") == 0)) {   // notes §9
+        snprintf(bank->path, sizeof(bank->path), "%s", path);
+
+        if (!sfz_open(bank, d, size)) {
+            snprintf(error, errorLength, "The SFZ holds no regions.");
+            free(d);
+            emu_bank_free(bank);
+            return NULL;
+        }
+        free(d);
+        return bank;
+    }
 
     if ((d != NULL) && (size >= 12u) && (memcmp(d, "FORM", 4) == 0) && (memcmp(d + 8, "E4B0", 4) == 0)) {   // notes §8
         snprintf(bank->path, sizeof(bank->path), "%s", path);
@@ -732,6 +1197,8 @@ void emu_bank_free(tEmuBank * bank) {
     }
 
     free(bank->data);
+    free(bank->text);
+    free(bank->sfzSample);
     free(bank);
 }
 
@@ -758,6 +1225,11 @@ bool emu_bank_preset(tEmuBank * bank, uint32_t preset, tEmuPreset * out) {
 
     if (bank->e4b) {
         e4_preset(bank, bank->data + bank->presetBody[preset], bank->presetLength[preset], out);
+        return out->zoneCount > 0u;
+    }
+
+    if (bank->sfz) {
+        sfz_regions(bank, out);
         return out->zoneCount > 0u;
     }
     memset(&w, 0, sizeof(w));

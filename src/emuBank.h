@@ -48,6 +48,7 @@ typedef struct {
     bool  present;
     float time[EMU_ENV_STAGES];    // notes §5: the stage's rate as Emulator X stores it, 0..1 - NOT seconds
     float level[EMU_ENV_STAGES];   // percent
+    bool  seconds;                 // notes §9: an SFZ's - time[0] attack, [1] hold, [2] decay, [4] release in seconds, level[2] the sustain
 } tEmuEnvelope;
 
 // notes §2: a sample mapped to keys and velocities
@@ -61,6 +62,7 @@ typedef struct {
     double             volume;   // notes §9: dB, the zone's level (0 = as recorded)
     double             pan;      // -1..1
     bool               oneShot;  // notes §9: plays to its end whatever the key does
+    bool               release;  // notes §9: an SFZ's trigger=release - sounds when the key is let go, not when struck
     tEmuEnvelope       amp;      // notes §5: its voice's amplifier envelope
 } tEmuZone;
 
